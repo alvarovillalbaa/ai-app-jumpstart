@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { creationBody, requestHash } from "../../lib/agent-access/signing";
+import { auditAccessibility } from "../helpers/accessibility";
 
 const auth = process.env.TEST_AUTH_ORIGIN!;
 const password = "Fixture-only-password-42!";
@@ -66,6 +67,7 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
   await login(page, alice.email);
   await send(page, "Private deterministic conversation");
   await expect(page.getByText("Deterministic owned response", { exact: true })).toHaveCount(1, { timeout: 30_000 });
+  await auditAccessibility(page, "completed chat turn");
   const path = new URL(page.url()).pathname;
   expect(path).toMatch(/^\/s\/[a-f0-9-]{36}$/);
   const lookup = await request.get(`/api/v1/conversations/${path.split("/").at(-1)}`, { headers: { authorization: `Bearer ${alice.token}` } });
@@ -254,6 +256,7 @@ test("structured form recovers a missing result projection, then saves and reope
   await expect(page.getByLabel("Title",{ exact: true })).toHaveValue("Deterministic title");
   expect(recoveries).toBe(1);
   await expect(page.getByLabel("Summary")).toHaveValue("Organized fixture notes.");
+  await auditAccessibility(page, "editable structured result");
   await page.getByLabel("Title",{ exact: true }).fill("Reviewed title");
   await expect(page.getByLabel("Title",{ exact: true })).toHaveValue("Reviewed title");
   const projected = await request.get(events,{ headers: { authorization: `Bearer ${alice.token}` } });
@@ -306,6 +309,7 @@ test("an approved tool saves one private artifact; denial saves none",async ({ p
   await send(page,"artifact-fixture: propose a private artifact");
   await expect(page.getByRole("button",{ name: "Approve",exact: true })).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("Exact approved plain-text payload.")).toBeVisible();
+  await auditAccessibility(page, "artifact approval request");
   const artifactsUrl = "/api/v1/artifacts";
   expect((await (await request.get(artifactsUrl,{ headers: { authorization: `Bearer ${alice.token}` } })).json()).items).toEqual([]);
   await page.getByRole("button",{ name: "Approve",exact: true }).click();
@@ -424,4 +428,17 @@ test("a rejected start shows the error and New chat clears its pending state", a
   await send(page, "Explicitly start a new conversation");
   await expect(page.getByText("Deterministic owned response", { exact: true })).toHaveCount(1, { timeout: 30_000 });
   expect(requests).toBe(2);
+});
+
+test("enabled workspace screens pass automated accessibility rules", async ({ page, request }) => {
+  const alice = await user(request);
+  await login(page, alice.email);
+  await expect(page.getByPlaceholder("Send a message…")).toBeVisible();
+  await auditAccessibility(page, "empty chat");
+
+  for (const [path, heading] of [["/conversations", "Conversations"], ["/structured", "Structured result"], ["/artifacts", "Artifacts"], ["/usage", "AI usage"]]) {
+    await page.goto(path);
+    await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+    await auditAccessibility(page, path);
+  }
 });

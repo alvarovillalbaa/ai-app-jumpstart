@@ -2,6 +2,7 @@ import { test, expect, type APIRequestContext, type Page } from "@playwright/tes
 import { randomUUID } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { auditAccessibility } from "../helpers/accessibility";
 
 const auth = process.env.TEST_AUTH_ORIGIN!;
 const adminHeaders = { authorization: `Bearer ${process.env.TEST_AUTH_ADMIN_KEY!}`, apikey: process.env.SUPABASE_PUBLISHABLE_KEY! };
@@ -123,4 +124,20 @@ test("confirmation requires a user action, rejects replay and clamps return path
   expect(replay.status()).toBe(400);
   const crossOrigin = await request.post("/auth/verify", { headers: { origin: "https://evil.example" }, data: { token_hash: tokenHash, type: "email" } });
   expect(crossOrigin.status()).toBe(403);
+});
+
+test("account entry and authenticated workspace pass automated accessibility rules", async ({ page, request }) => {
+  for (const [path, heading] of [["/login", "Sign in"], ["/signup", "Create account"], ["/recover", "Reset password"]]) {
+    await page.goto(path);
+    await expect(page.getByRole("heading", { name: heading })).toBeVisible();
+    await auditAccessibility(page, path);
+  }
+
+  const email = `accessible-${randomUUID()}@example.test`;
+  await confirmedUser(request, email);
+  await login(page, email);
+  await auditAccessibility(page, "signed-in account");
+  await page.goto("/account/password");
+  await expect(page.getByRole("heading", { name: "Update password" })).toBeVisible();
+  await auditAccessibility(page, "password update");
 });

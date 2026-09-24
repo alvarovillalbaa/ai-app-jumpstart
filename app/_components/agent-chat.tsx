@@ -146,6 +146,7 @@ export function AgentChat({
   return (
     <main className="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
       <ChatHeader canStartNewChat={activeSessionId !== undefined} managed={managed} />
+      {showConversationLayout ? <h1 className="sr-only">{AGENT_NAME}</h1> : null}
 
       {showConversationLayout ? (
         <Conversation
