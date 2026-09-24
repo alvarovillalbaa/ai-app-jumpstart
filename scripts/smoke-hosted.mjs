@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Client as EveClient } from "eve/client";
 
 function targetOrigin(value) {
   let url;
@@ -36,8 +37,91 @@ async function cliGet(origin, token, id) {
   return JSON.parse(stdout);
 }
 
-export async function runHostedSmoke({ url, token, otherToken, accounts = false }) {
+async function runAgentSmoke({ origin, token, otherToken, protection, request }) {
+  const operationId = randomUUID();
+  console.log(`Agent smoke operation: ${operationId}`);
+  const authorized = { authorization: `Bearer ${token}` };
+  const other = { authorization: `Bearer ${otherToken}` };
+  const created = await request("/api/v1/conversations", {
+    method: "POST", headers: { ...authorized, "content-type": "application/json" },
+    body: JSON.stringify({ operationId, message: "Reply with one short greeting. Do not use tools." }),
+  });
+  assert.ok([200, 202].includes(created.status), `Agent creation failed (HTTP ${created.status})`);
+  const initial = await created.json();
+  assert.equal(initial.operationId, operationId, "Agent creation returned a different operation");
+
+  // A starting operation may already have been dispatched. Never repeat POST.
+  const deadline = Date.now() + 30_000;
+  let conversation = initial;
+  while (conversation.status === "starting" && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 250));
+    const response = await request(`/api/v1/conversations/${operationId}`, { headers: authorized });
+    assert.equal(response.status, 200, `Agent binding failed (HTTP ${response.status})`);
+    conversation = await response.json();
+  }
+  assert.equal(conversation.status, "active", `Agent binding did not become active for ${operationId}`);
+  assert.ok(typeof conversation.sessionId === "string" && conversation.sessionId.length > 0);
+  assert.equal((await request(`/api/v1/conversations/${operationId}`, { headers: other })).status, 404,
+    "Other account can read the agent conversation");
+  const streamPath = `/eve/v1/session/${encodeURIComponent(conversation.sessionId)}/stream`;
+  assert.equal((await request(streamPath, { headers: other })).status, 401,
+    "Other account can stream the agent session");
+
+  const client = new EveClient({ host: origin, auth: { bearer: token }, headers: protection, redirect: "error" });
+  const session = client.sessions.attach(conversation.sessionId);
+  const seen = new Set();
+  let finalMessage = false;
+  try {
+    const signal = AbortSignal.timeout(120_000);
+    for await (const event of session.stream({ signal })) {
+      seen.add(event.type);
+      if (event.type === "message.completed" && typeof event.data.message === "string" && event.data.message.trim()) finalMessage = true;
+      if (event.type === "turn.failed" || event.type === "turn.cancelled" || event.type === "session.failed") {
+        throw new Error(`Agent turn ended with ${event.type}`);
+      }
+      if (event.type === "session.waiting") break;
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Agent turn ended with ")) throw error;
+    throw new Error(`Agent stream failed for operation ${operationId} (${error instanceof Error ? error.name : "unknown"}).`);
+  }
+  for (const type of ["step.completed", "turn.completed", "session.waiting"]) {
+    assert.ok(seen.has(type), `Agent stream missed ${type} for operation ${operationId}`);
+  }
+  assert.ok(finalMessage, `Agent stream had no finalized response for operation ${operationId}`);
+  const projectionPath = `/api/v1/conversations/${operationId}/events`;
+  assert.equal((await request(projectionPath, { headers: other })).status, 404,
+    "Other account can read agent projections");
+  const projectionDeadline = Date.now() + 15_000;
+  let projected = false;
+  do {
+    let cursor = null, completed = false, answered = false;
+    for (let pageNumber = 0; pageNumber < 100; pageNumber++) {
+      const query = new URLSearchParams({ limit: "50", ...(cursor === null ? {} : { after: String(cursor) }) });
+      const response = await request(`${projectionPath}?${query}`, { headers: authorized });
+      assert.equal(response.status, 200, `Agent projections failed (HTTP ${response.status})`);
+      const page = await response.json();
+      assert.ok(Array.isArray(page.items), "Agent projection page is invalid");
+      for (const entry of page.items) {
+        if (entry.payload?.kind === "run" && entry.payload.state === "completed") completed = true;
+        if (entry.payload?.kind === "message" && entry.payload.role === "assistant" &&
+            entry.payload.parts?.some(part => part.type === "text" && part.text?.trim())) answered = true;
+      }
+      if (page.nextCursor === null) break;
+      assert.ok(page.items.length && Number.isSafeInteger(page.nextCursor) && page.nextCursor > (cursor ?? 0),
+        "Agent projection pagination did not advance");
+      cursor = page.nextCursor;
+    }
+    projected = completed && answered;
+    if (!projected) await new Promise(resolve => setTimeout(resolve, 250));
+  } while (!projected && Date.now() < projectionDeadline);
+  assert.ok(projected, `Completed agent turn was not projected for operation ${operationId}`);
+  return { operationId, sessionId: conversation.sessionId };
+}
+
+export async function runHostedSmoke({ url, token, otherToken, accounts = false, agent = false }) {
   const origin = targetOrigin(url);
+  if (agent && !accounts) throw new Error("Agent smoke requires the two-account mode.");
   if (!token || !otherToken || token === otherToken) throw new Error("Set distinct APP_API_TOKEN and APP_API_OTHER_TOKEN with record read/write access for different owners.");
   const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
   const protection = bypass ? { "x-vercel-protection-bypass": bypass } : {};
@@ -57,9 +141,9 @@ export async function runHostedSmoke({ url, token, otherToken, accounts = false 
   const checks = await ready.json();
   assert.equal(checks.status, "ready");
   assert.equal(checks.checks?.data, "ok");
-  const agent = await request("/eve/v1/health");
-  assert.equal(agent.status, 200, "Eve health failed");
-  assert.equal((await agent.json()).status, "ready");
+  const agentHealth = await request("/eve/v1/health");
+  assert.equal(agentHealth.status, 200, "Eve health failed");
+  assert.equal((await agentHealth.json()).status, "ready");
   const page = await request("/records");
   assert.equal(page.status, 200, "Records page failed");
   assert.match(page.headers.get("content-type") ?? "", /text\/html/);
@@ -118,18 +202,19 @@ export async function runHostedSmoke({ url, token, otherToken, accounts = false 
   if (failure && cleanupFailure) throw new Error(`${message(failure)}; cleanup: ${message(cleanupFailure)}`);
   if (failure) throw failure;
   if (cleanupFailure) throw cleanupFailure;
-  return { origin, recordId: record.id };
+  const agentResult = agent ? await runAgentSmoke({ origin, token, otherToken, protection, request }) : undefined;
+  return { origin, recordId: record.id, agent: agentResult };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
-  if (args.length > 1 || (args[0] && args[0] !== "--accounts")) {
-    console.error("Supported option: --accounts.");
+  if (args.length > 1 || (args[0] && !["--accounts", "--agent"].includes(args[0]))) {
+    console.error("Supported options: --accounts (no model call) or --agent (one owned model turn).");
     process.exitCode = 2;
   } else {
-    const accounts = args[0] === "--accounts";
-    runHostedSmoke({ url: process.env.APP_API_URL, token: process.env.APP_API_TOKEN, otherToken: process.env.APP_API_OTHER_TOKEN, accounts })
-      .then(({ origin }) => console.log(`Hosted smoke passed for ${origin}: readiness, Eve, web, ${accounts ? "Supabase accounts, " : ""}REST, owner isolation, CLI and MCP.`))
+    const agent = args[0] === "--agent", accounts = agent || args[0] === "--accounts";
+    runHostedSmoke({ url: process.env.APP_API_URL, token: process.env.APP_API_TOKEN, otherToken: process.env.APP_API_OTHER_TOKEN, accounts, agent })
+      .then(({ origin }) => console.log(`Hosted smoke passed for ${origin}: readiness, Eve, web, ${accounts ? "Supabase accounts, " : ""}REST, owner isolation, CLI and MCP${agent ? ", one owned agent turn" : ""}.`))
       .catch(error => { console.error(message(error)); process.exitCode = 1; });
   }
 }

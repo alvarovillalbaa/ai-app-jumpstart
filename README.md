@@ -84,6 +84,8 @@ npm run test:workflow-compose
 
 After deployment, run the provider-neutral [`smoke:hosted` check](docs/hosting.md#post-deployment-data-smoke) with two temporary record credentials. For enabled Supabase accounts, run its `--accounts` mode with two distinct signed-in users. Both modes verify the web, agent, REST, CLI and MCP surfaces without a model call.
 
+On a reviewed staging account, `--agent` additionally verifies one authenticated model turn and cross-user stream denial; it can incur provider charges.
+
 ## License
 
 Original template code is licensed under [MIT](LICENSE). Copied AI Elements and shadcn/ui components retain their upstream terms; see [third-party notices](THIRD_PARTY_NOTICES.md). Installed dependencies have separate licenses.

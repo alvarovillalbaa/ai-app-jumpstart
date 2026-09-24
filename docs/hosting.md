@@ -48,7 +48,15 @@ npm run smoke:hosted -- --accounts
 
 This mode additionally requires both tokens to reach the registered-user-only usage endpoint and a configured account budget policy. It makes no model call and creates no conversation. Do not use a service-role key or an application record key as an account token. Use fresh tokens if the Auth session expires.
 
-Both modes check web/data/Eve health, the records page, anonymous denial, cross-owner list/read/edit/delete denial, and one owner's REST, CLI and MCP reads of a temporary record. The command deletes that record even if a later check fails. A lost create response can still leave a record behind; the command prints its unique title for manual review and never retries the write. It rejects remote HTTP and redirects. The account mode proves server-side token acceptance and owner isolation; it does not prove the browser signup/email flow, workflow replay, provider credentials or a paid model turn. Run those acceptance cases separately before release. For a protected Vercel deployment, export its automation bypass secret as `VERCEL_AUTOMATION_BYPASS_SECRET` in the operator shell; the smoke sends Vercel's [recommended header](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/protection-bypass-automation) on web, REST, CLI and MCP requests. Keep this secret out of URLs and logs.
+After reviewing the staging account's model allowance, run one real owned turn through the same deployed origin:
+
+```sh
+npm run smoke:hosted -- --agent
+```
+
+This explicit mode runs the two-account data smoke, creates one conversation for the first user, waits for its durable owner binding, checks that the second user cannot read its metadata, stream or projections, and requires a completed Eve model step, turn, nonempty response and captured application projections. It does not retry creation or send a follow-up. The conversation, usage and provider charge remain on the first account; use disposable staging users and inspect the printed operation ID if the run times out. A passing result proves that one turn worked at that deployment, not replay after replacement, every tool, or a fixed invoice ceiling.
+
+All modes check web/data/Eve health, the records page, anonymous denial, cross-owner list/read/edit/delete denial, and one owner's REST, CLI and MCP reads of a temporary record. The command deletes that record even if a later check fails. A lost create response can still leave a record behind; the command prints its unique title for manual review and never retries the write. It rejects remote HTTP and redirects. The `--accounts` mode proves server-side token acceptance and owner isolation without a model call; `--agent` additionally proves one owned turn. Neither proves the browser signup/email flow or workflow replay after replacement. Run those acceptance cases separately before release. For a protected Vercel deployment, export its automation bypass secret as `VERCEL_AUTOMATION_BYPASS_SECRET` in the operator shell; the smoke sends Vercel's [recommended header](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/protection-bypass-automation) on web, REST, CLI, MCP and Eve requests. Keep this secret out of URLs and logs.
 
 ## AWS / Azure / GCP / Amplify
 
