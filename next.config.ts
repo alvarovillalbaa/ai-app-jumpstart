@@ -6,8 +6,8 @@ const securityHeaders = [
   { key: "Referrer-Policy", value: "no-referrer" },
   { key: "X-Frame-Options", value: "DENY" },
   { key: "Permissions-Policy", value: "camera=(), geolocation=(), microphone=()" },
-  // These directives work with Next's inline hydration/theme scripts. Script/style
-  // restrictions require request nonces and a separate compatibility audit.
+  // API and other Next-served responses retain baseline directives. HTML pages
+  // get a request nonce and the enforced script/style policy in proxy.ts.
   { key: "Content-Security-Policy", value: "base-uri 'self'; object-src 'none'; frame-ancestors 'none'" },
 ];
 

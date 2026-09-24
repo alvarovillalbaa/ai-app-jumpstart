@@ -73,6 +73,27 @@ test("health and access control are observable", async ({ request }) => {
   expect((await request.get("/api/health/ready")).status()).toBe(200);
   expect((await request.get("/api/v1/records")).status()).toBe(401);
 });
+test("per-request CSP nonces allow hydration and theme changes", async ({ page }) => {
+  await page.addInitScript(() => {
+    const target = window as Window & { cspViolations?: string[] };
+    target.cspViolations = [];
+    window.addEventListener("securitypolicyviolation", event => target.cspViolations?.push(`${event.effectiveDirective}: ${event.blockedURI} ${event.sourceFile}:${event.lineNumber}`));
+  });
+  const first = await page.goto("/records");
+  const policy = first?.headers()["content-security-policy"] ?? "";
+  const nonce = policy.match(/script-src[^;]*'nonce-([^']+)'/)?.[1];
+  expect(nonce).toBeTruthy();
+  expect(policy).toContain("style-src-attr 'unsafe-inline'");
+  expect(await page.locator("script[nonce]").count()).toBeGreaterThan(0);
+  await page.getByRole("combobox", { name: "Theme" }).selectOption("dark");
+  await expect(page.locator("html")).toHaveClass(/dark/);
+  expect(await page.evaluate(() => (window as Window & { cspViolations?: string[] }).cspViolations)).toEqual([]);
+  const second = await page.reload();
+  expect(second?.headers()["content-security-policy"]).toContain("script-src");
+  expect(second?.headers()["content-security-policy"]).not.toContain(`'nonce-${nonce}'`);
+  await expect(page.locator("html")).toHaveClass(/dark/);
+  expect(await page.evaluate(() => (window as Window & { cspViolations?: string[] }).cspViolations)).toEqual([]);
+});
 test("compiled Eve keeps production session operations closed when account chat is disabled", async ({ request }) => {
   expect((await request.get("/eve/v1/health")).status()).toBe(200);
   const headers = { authorization: `Bearer ${"isolated-playwright-token-".repeat(3)}` };

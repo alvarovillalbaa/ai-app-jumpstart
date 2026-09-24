@@ -12,9 +12,12 @@ it("forwards refreshed request cookies and all response cookie chunks and cache 
     await cookies.setAll?.([{ name: "sb-session.0", value: "fresh", options: { path: "/", sameSite: "lax" } }], { "cache-control": "private, no-store", expires: "0", pragma: "no-cache" });
     await cookies.setAll?.([{ name: "sb-session.1", value: "second", options: { path: "/", sameSite: "lax" } }], {});
   };
-  const response = await refreshSession(new NextRequest("http://localhost:3000/account", { headers: { cookie: "sb-session.0=old" } }));
+  const forwarded = new Headers({ cookie: "sb-session.0=old", "x-nonce": "fixture-nonce", "Content-Security-Policy": "script-src 'nonce-fixture-nonce'" });
+  const response = await refreshSession(new NextRequest("http://localhost:3000/account", { headers: { cookie: "sb-session.0=old" } }), forwarded);
   expect(response.cookies.get("sb-session.0")?.value).toBe("fresh"); expect(response.cookies.get("sb-session.1")?.value).toBe("second");
   expect(response.headers.get("x-middleware-request-cookie")).toContain("sb-session.0=fresh");
   expect(response.headers.get("x-middleware-request-cookie")).toContain("sb-session.1=second");
+  expect(response.headers.get("x-middleware-request-x-nonce")).toBe("fixture-nonce");
+  expect(response.headers.get("x-middleware-request-content-security-policy")).toContain("nonce-fixture-nonce");
   expect(response.headers.get("cache-control")).toContain("no-store"); expect(response.headers.get("expires")).toBe("0"); expect(response.headers.get("pragma")).toBe("no-cache");
 });
