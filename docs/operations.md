@@ -32,4 +32,4 @@ This command cannot settle or refund a `reserved` operation. Investigate the run
 
 Record code commit, schema version, image digest and provider for releases. Use backward-compatible expand/contract migrations so code rollback remains possible. Rotate tokens by replacing digest entries and redeploying. Record deletion does not erase model-provider history or workflow state; full account retention tooling remains pending.
 
-Never commit `.env.local`, `.data`, `.eve`, generated `.output`, real credentials or production traces. Public template release still requires the acceptance audit in `IMPLEMENTATION.md`, dependency review, a license decision and clean-clone rehearsal.
+Never commit `.env.local`, `.data`, `.eve`, generated `.output`, real credentials or production traces. Public template release still requires the acceptance audit in `IMPLEMENTATION.md`, dependency review, a license decision and another clean-clone rehearsal of the final release revision.
