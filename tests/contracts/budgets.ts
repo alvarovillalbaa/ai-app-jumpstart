@@ -14,6 +14,31 @@ export function budgetContract(name: string, factory: () => Promise<BudgetStore>
     const owner = (value: Admission) => ({ tenant: value.tenant, subject: value.subject });
     const next = (value: Admission) => ({ ...value, operationId: randomUUID() });
     const view = (value: Admission) => store.snapshot({ ...owner(value), now: value.now });
+    it("pages historical reservations by owner across equal timestamps and settlements", async () => {
+      const entries = [
+        { ...input,estimateMicros: 20,operationId: randomUUID() },
+        { ...input,estimateMicros: 20,operationId: randomUUID() },
+        { ...input,estimateMicros: 20,operationId: randomUUID(),now: input.now+1 },
+      ];
+      for (const entry of entries) expect((await store.reserve(entry)).status).toBe("reserved");
+      const foreign = { ...input,subject: "bob",estimateMicros: 20,operationId: randomUUID() };
+      expect((await store.reserve(foreign)).status).toBe("reserved");
+      await store.settle({ ...owner(entries[0]),operationId: entries[0].operationId,actualMicros: 7 });
+      const results: Awaited<ReturnType<BudgetStore["listLedger"]>>["items"] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await store.listLedger({ ...owner(input),limit: 1,...(cursor ? { cursor } : {}) });
+        expect(page.items).toHaveLength(1);
+        results.push(...page.items);
+        cursor = page.nextCursor ?? undefined;
+      } while (cursor);
+      expect(results.map(row => row.operationId)).toEqual(entries.toSorted((a,b) => a.now-b.now || a.operationId.localeCompare(b.operationId)).map(row => row.operationId));
+      expect(results.find(row => row.operationId === entries[0].operationId)).toMatchObject({ status: "settled",actualMicros: 7 });
+      expect(JSON.stringify(results)).not.toContain(input.requestHash);
+      expect((await store.listLedger({ ...owner(input),subject: "bob" })).items.map(row => row.operationId)).toEqual([foreign.operationId]);
+      await expect(store.listLedger({ ...owner(input),limit: 101 })).rejects.toBeDefined();
+      await expect(store.listLedger({ ...owner(input),cursor: "invalid" })).rejects.toBeDefined();
+    });
     it("pages outstanding reservations oldest first across owners without exposing request hashes", async () => {
       const entries = [
         { ...input,estimateMicros: 20,operationId: randomUUID() },

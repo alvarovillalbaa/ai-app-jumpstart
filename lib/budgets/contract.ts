@@ -38,6 +38,16 @@ export function pageOfOutstanding(rows: z.infer<typeof outstandingEntry>[],limit
   const items = rows.slice(0,limit), last = items.at(-1);
   return outstandingPage.parse({ items,nextCursor: rows.length > limit && last ? `${last.createdAt}.${last.operationId}` : null });
 }
+export const ledgerOptions = accessOwner.extend({ limit: z.number().int().min(1).max(100).default(50),cursor: outstandingCursor.optional() }).strict();
+export const ledgerQueryOptions = ledgerOptions.omit({ tenant: true,subject: true });
+export const ledgerEntry = z.object({ operationId,createdAt: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  day: z.number().int().nonnegative(),policyId: z.string().min(1).max(100),estimateMicros: micros.positive(),
+  status: z.enum(["reserved","settled"]),actualMicros: micros.nullable() }).strict();
+export const ledgerPage = z.object({ items: z.array(ledgerEntry),nextCursor: outstandingCursor.nullable() }).strict();
+export function pageOfLedger(rows: z.infer<typeof ledgerEntry>[],limit: number) {
+  const items = rows.slice(0,limit), last = items.at(-1);
+  return ledgerPage.parse({ items,nextCursor: rows.length > limit && last ? `${last.createdAt}.${last.operationId}` : null });
+}
 export const attempt = attemptOwner.extend({ attemptId: bodyHash, maxAttempts: z.number().int().min(1).max(1000) }).strict();
 export type Admission = z.infer<typeof admission>;
 export type Settlement = z.infer<typeof settlement>;
@@ -55,6 +65,7 @@ export interface BudgetStore {
   getReservation(input: z.infer<typeof attemptOwner>): Promise<ReservationState | null>;
   inspectReservation(input: z.infer<typeof attemptOwner>): Promise<z.infer<typeof budgetInspection> | null>;
   listOutstanding(input: OutstandingOptions): Promise<z.infer<typeof outstandingPage>>;
+  listLedger(input: z.input<typeof ledgerOptions>): Promise<z.infer<typeof ledgerPage>>;
   settle(input: Settlement): Promise<boolean>;
   correctSettlement(input: z.infer<typeof settlementCorrection>): Promise<z.infer<typeof correctionResult>>;
   listCorrections(input: z.infer<typeof attemptOwner>): Promise<z.infer<typeof correctionEntry>[]>;
@@ -68,6 +79,7 @@ export const budgetCommand = z.discriminatedUnion("operation", [
   attemptOwner.extend({ operation: z.literal("budget.getReservation") }),
   attemptOwner.extend({ operation: z.literal("budget.inspectReservation") }),
   outstandingOptions.extend({ operation: z.literal("budget.listOutstanding") }),
+  ledgerOptions.extend({ operation: z.literal("budget.listLedger") }),
   settlement.extend({ operation: z.literal("budget.settle") }),
   settlementCorrection.extend({ operation: z.literal("budget.correctSettlement") }),
   attemptOwner.extend({ operation: z.literal("budget.listCorrections") }),

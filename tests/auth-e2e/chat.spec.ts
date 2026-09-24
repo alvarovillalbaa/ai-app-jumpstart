@@ -130,6 +130,12 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
   expect(usage.status()).toBe(200); const usageView = await usage.json();
   expect(usageView).toMatchObject({ chargedMicros: 60, reservedMicros: 0, active: 0, unknownCosts: 3,dailyLimitMicros: 60 });
   expect(await runCli(["usage"],{ APP_API_URL: process.env.APP_ORIGIN!,APP_API_TOKEN: alice.token })).toEqual(usageView);
+  const ledgerResponse = await request.get("/api/v1/usage/reservations?limit=100",{ headers: { authorization: `Bearer ${alice.token}` } });
+  expect(ledgerResponse.status()).toBe(200);
+  const aliceLedger = await ledgerResponse.json();
+  expect(aliceLedger.items.length).toBeGreaterThan(0);
+  expect(aliceLedger.items.every((row: { status: string }) => row.status === "settled")).toBe(true);
+  expect(await runCli(["usage","reservations","--limit","100"],{ APP_API_URL: process.env.APP_ORIGIN!,APP_API_TOKEN: alice.token })).toEqual(aliceLedger);
   const exportRecord = await request.post("/api/v1/records",{ headers: { authorization: `Bearer ${alice.token}` },data: { title: "Exported private record",content: "Only Alice may read this." } });
   expect(exportRecord.status()).toBe(201);
   const exportRecordId = (await exportRecord.json()).id;
@@ -149,7 +155,7 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
     const aliceFile = join(exportDirectory,"alice.ndjson"),bobFile = join(exportDirectory,"bob.ndjson");
     const env = { APP_API_URL: process.env.APP_ORIGIN! };
     expect(await runCli(["export","application",aliceFile],{ ...env,APP_API_TOKEN: alice.token })).toMatchObject({
-      counts: { profile: 1,records: 1,conversations: 1,uploads: 1,uploadUsage: 1,usage: 1 },
+      counts: { profile: 1,records: 1,conversations: 1,uploads: 1,uploadUsage: 1,reservations: aliceLedger.items.length,usage: 1 },
     });
     const aliceLines = (await readFile(aliceFile,"utf8")).trim().split("\n").map(line => JSON.parse(line));
     expect(aliceLines.some(line => line.type === "record" && line.value.id === exportRecordId)).toBe(true);
@@ -158,9 +164,10 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
     expect(aliceLines.some(line => line.type === "upload" && line.value.id === exportUploadId && line.value.state === "quarantined")).toBe(true);
     expect(aliceLines.some(line => line.type === "upload_usage" && line.value.files === 1)).toBe(true);
     expect(aliceLines.find(line => line.type === "account_profile")?.value).toEqual(aliceProfile);
+    expect(aliceLines.filter(line => line.type === "budget_reservation").map(line => line.value)).toEqual(aliceLedger.items);
     expect(await readFile(aliceFile,"utf8")).not.toContain("Alice's quarantined bytes are not exportable.");
     expect(await runCli(["export","application",bobFile],{ ...env,APP_API_TOKEN: bob.token })).toMatchObject({
-      counts: { profile: 1,records: 0,conversations: 0,projections: 0,artifacts: 0,uploads: 0,uploadUsage: 1,usage: 1 },
+      counts: { profile: 1,records: 0,conversations: 0,projections: 0,artifacts: 0,uploads: 0,uploadUsage: 1,reservations: 0,usage: 1 },
     });
     expect(await readFile(bobFile,"utf8")).not.toContain(exportRecordId);
     expect(await readFile(bobFile,"utf8")).not.toContain(receipt.operationId);
@@ -178,6 +185,9 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
     const tool = await usageMcp.callTool({ name: "usage_get",arguments: {} });
     expect(tool.isError).not.toBe(true);
     expect(JSON.parse((tool.content as { text: string }[])[0].text)).toEqual(usageView);
+    const ledgerTool = await usageMcp.callTool({ name: "usage_reservations",arguments: { limit: 100 } });
+    expect(ledgerTool.isError).not.toBe(true);
+    expect(JSON.parse((ledgerTool.content as { text: string }[])[0].text)).toEqual(aliceLedger);
     const resource = await usageMcp.readResource({ uri: "usage:///current" });
     expect("text" in resource.contents[0] && JSON.parse(resource.contents[0].text)).toEqual(usageView);
   } finally { await usageMcp.close(); }

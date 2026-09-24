@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { admission, settlement, settlementCorrection, correctionEntry, budgetInspection, lookup, snapshot, dayOf, refusal, attempt, attemptOwner, reservationState, outstandingOptions, outstandingEntry, pageOfOutstanding, type Admission, type Settlement, type BudgetStore, type AdmissionResult } from "./contract";
+import { admission, settlement, settlementCorrection, correctionEntry, budgetInspection, lookup, snapshot, dayOf, refusal, attempt, attemptOwner, reservationState, outstandingOptions, outstandingEntry, pageOfOutstanding, ledgerOptions, ledgerEntry, pageOfLedger, type Admission, type Settlement, type BudgetStore, type AdmissionResult } from "./contract";
 
 export function sqliteBudgetStore(path: string): BudgetStore {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
@@ -14,6 +14,7 @@ export function sqliteBudgetStore(path: string): BudgetStore {
       status TEXT NOT NULL CHECK(status IN ('reserved','settled')), actual_micros INTEGER CHECK(actual_micros>=0));
     CREATE INDEX IF NOT EXISTS budget_owner_day ON app_budget_reservations(tenant,subject,day);
     CREATE INDEX IF NOT EXISTS budget_owner_time ON app_budget_reservations(tenant,subject,created_at);
+    CREATE INDEX IF NOT EXISTS budget_owner_ledger ON app_budget_reservations(tenant,subject,created_at,operation_id);
     CREATE INDEX IF NOT EXISTS budget_owner_status ON app_budget_reservations(tenant,subject,status);
     CREATE INDEX IF NOT EXISTS budget_outstanding_time ON app_budget_reservations(status,created_at,operation_id);
     CREATE TABLE IF NOT EXISTS app_budget_attempts (operation_id TEXT NOT NULL, attempt_id TEXT NOT NULL, PRIMARY KEY(operation_id,attempt_id));
@@ -113,6 +114,15 @@ export function sqliteBudgetStore(path: string): BudgetStore {
         WHERE status='reserved' AND (? IS NULL OR created_at>? OR (created_at=? AND operation_id>?))
         ORDER BY created_at ASC,operation_id ASC LIMIT ?`).all(time ?? null,Number(time ?? 0),Number(time ?? 0),id ?? "",input.limit+1);
       return pageOfOutstanding(rows.map(row => outstandingEntry.parse(row)),input.limit);
+    },
+    async listLedger(raw) {
+      const input = ledgerOptions.parse(raw);
+      const [time,id] = input.cursor?.split(".") ?? [];
+      const rows = db.prepare(`SELECT operation_id AS operationId,created_at AS createdAt,day,policy_id AS policyId,
+        estimate_micros AS estimateMicros,status,actual_micros AS actualMicros FROM app_budget_reservations
+        WHERE tenant=? AND subject=? AND (? IS NULL OR created_at>? OR (created_at=? AND operation_id>?))
+        ORDER BY created_at ASC,operation_id ASC LIMIT ?`).all(input.tenant,input.subject,time ?? null,Number(time ?? 0),Number(time ?? 0),id ?? "",input.limit+1);
+      return pageOfLedger(rows.map(row => ledgerEntry.parse(row)),input.limit);
     },
     async snapshot(raw) { return read(lookup.parse(raw)); },
     async claimAttempt(raw) {

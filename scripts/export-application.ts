@@ -7,6 +7,7 @@ import { historyPage } from "../lib/agent-access/contract";
 import { artifactPage } from "../lib/agent-access/artifact-contract";
 import { projectionPage } from "../lib/agent-access/projection-contract";
 import { accountProfile } from "../lib/auth/profile";
+import { ledgerPage } from "../lib/budgets/contract";
 import { usageView } from "../lib/budgets/usage";
 import { recordId, recordInput } from "../lib/data/contract";
 import { uploadPage } from "../lib/uploads/catalog-contract";
@@ -33,7 +34,7 @@ export async function exportApplication(mode: Mode, output: string, call: Call) 
   const directory = await mkdtemp(join(dirname(destination), ".jumpstart-export-"));
   const temporary = join(directory, `${randomUUID()}.ndjson`);
   let file: Awaited<ReturnType<typeof open>> | undefined;
-  const counts = { profile: 0, records: 0, conversations: 0, projections: 0, artifacts: 0, uploads: 0, uploadUsage: 0, usage: 0 };
+  const counts = { profile: 0, records: 0, conversations: 0, projections: 0, artifacts: 0, uploads: 0, uploadUsage: 0, reservations: 0, usage: 0 };
   async function write(type: string, value: unknown) {
     if (!file) throw new Error("Export file is unavailable.");
     await file.writeFile(`${JSON.stringify({ type, value })}\n`);
@@ -58,12 +59,12 @@ export async function exportApplication(mode: Mode, output: string, call: Call) 
   try {
     file = await open(temporary, "wx", 0o600);
     await write("manifest", {
-      format: "ai-app-jumpstart-visible-data-v3", mode, exportedAt: new Date().toISOString(),
+      format: "ai-app-jumpstart-visible-data-v4", mode, exportedAt: new Date().toISOString(),
       consistency: "paged-live-reads; concurrent changes may appear or be missed",
       exclusions: mode === "application" ? [
         "Auth credentials, sessions, MFA factors, linked identity details and provider logs; profile is selected fields only",
         "Eve session/model history, workflow checkpoints, sandboxes and traces",
-        "Budget reservation, attempt, correction and historical daily ledgers",
+        "Budget model-attempt IDs, correction audit entries and historical daily aggregate rows; reservation history is included",
         "Deleted artifact tombstones and database backups",
         "Conversation projections are selected events, not a canonical transcript",
         "Private upload object bytes, deleted upload tombstones and derived data",
@@ -98,6 +99,11 @@ export async function exportApplication(mode: Mode, output: string, call: Call) 
       const uploads = uploadPage.parse(await call("/api/v1/uploads"));
       for (const item of uploads.items) { await write("upload", item); counts.uploads++; }
       await write("upload_usage", uploads.usage); counts.uploadUsage = 1;
+      await walk(
+        (cursor: string | null) => `/api/v1/usage/reservations?${new URLSearchParams({ limit: "100",...(cursor ? { cursor } : {}) })}`,
+        value => ledgerPage.parse(value),
+        async item => { await write("budget_reservation",item); counts.reservations++; },
+      );
       await write("usage", usage); counts.usage = 1;
     }
     await write("end", { counts });

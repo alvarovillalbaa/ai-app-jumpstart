@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { accessOwner, type AccessOwner } from "../agent-access/contract";
-import { micros, snapshot, type BudgetStore } from "./contract";
+import { micros, snapshot, ledgerQueryOptions, ledgerPage, type BudgetStore } from "./contract";
 
 export const usageView = snapshot.extend({ dailyLimitMicros: micros.positive() }).strict();
 export type UsageView = z.infer<typeof usageView>;
@@ -16,5 +16,9 @@ export class UsageService {
   async get(): Promise<UsageView> {
     const store = typeof this.store === "function" ? await this.store() : this.store;
     return usageView.parse({ ...await store.snapshot({ ...this.owner,now: this.clock() }),dailyLimitMicros: this.dailyLimitMicros });
+  }
+  async listReservations(options: z.input<typeof ledgerQueryOptions> = {}) {
+    const store = typeof this.store === "function" ? await this.store() : this.store;
+    return ledgerPage.parse(await store.listLedger({ ...this.owner,...ledgerQueryOptions.parse(options) }));
   }
 }

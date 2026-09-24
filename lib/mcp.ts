@@ -17,7 +17,7 @@ import { ArtifactService } from "./agent-access/artifacts";
 import { artifactOptions } from "./agent-access/artifact-contract";
 import { UsageService } from "./budgets/usage";
 import { getBudgetStore } from "./budgets/store";
-import type { BudgetStore } from "./budgets/contract";
+import { ledgerQueryOptions, type BudgetStore } from "./budgets/contract";
 import { UploadService } from "./uploads/service";
 import { getUploadCatalog } from "./uploads/catalog-store";
 import { createUploadObjects } from "./uploads/objects-store";
@@ -114,6 +114,10 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
       description: "Read the signed-in user's current UTC-day AI budget usage and configured daily limit. Unknown costs charge the estimate; these are not provider invoice totals.",
       inputSchema: z.object({}).strict(),annotations: { readOnlyHint: true,openWorldHint: false },
     },() => result(() => usage.get()));
+    server.registerTool("usage_reservations",{
+      description: "Page the signed-in owner's AI budget reservations, including historical estimates and settled costs. Corrections and model attempts are separate audit data.",
+      inputSchema: ledgerQueryOptions,annotations: { readOnlyHint: true,openWorldHint: false },
+    },input => result(() => usage.listReservations(input)));
     server.registerResource("usage","usage:///current",{
       description: "Private current AI budget usage",mimeType: "application/json",
     },async uri => {

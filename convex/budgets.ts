@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery, type QueryCtx } from "./_generated/server";
-import { admission, settlement, settlementCorrection, correctionEntry, lookup, dayOf, refusal, attempt, attemptOwner, outstandingOptions, outstandingEntry, pageOfOutstanding } from "../lib/budgets/contract";
+import { admission, settlement, settlementCorrection, correctionEntry, lookup, dayOf, refusal, attempt, attemptOwner, outstandingOptions, outstandingEntry, pageOfOutstanding, ledgerOptions, ledgerEntry, pageOfLedger } from "../lib/budgets/contract";
 
 async function state(ctx: QueryCtx, input: ReturnType<typeof lookup.parse>) {
   const day = dayOf(input.now);
@@ -91,6 +91,18 @@ export const listOutstanding = internalQuery({ args: { input: v.any() }, handler
     ].slice(0,input.limit+1);
   return pageOfOutstanding(rows.map(row => outstandingEntry.parse({ tenant: row.tenant,subject: row.subject,operationId: row.operationId,
     createdAt: row.createdAt,estimateMicros: row.estimateMicros,policyId: row.policyId })),input.limit);
+} });
+export const listLedger = internalQuery({ args: { input: v.any() }, handler: async (ctx,args) => {
+  const input = ledgerOptions.parse(args.input);
+  const [time,id] = input.cursor?.split(".") ?? [];
+  const rows = time === undefined
+    ? await ctx.db.query("budgetReservations").withIndex("by_owner_ledger",q => q.eq("tenant",input.tenant).eq("subject",input.subject)).take(input.limit+1)
+    : [
+      ...await ctx.db.query("budgetReservations").withIndex("by_owner_ledger",q => q.eq("tenant",input.tenant).eq("subject",input.subject).eq("createdAt",Number(time)).gt("operationId",id!)).take(input.limit+1),
+      ...await ctx.db.query("budgetReservations").withIndex("by_owner_ledger",q => q.eq("tenant",input.tenant).eq("subject",input.subject).gt("createdAt",Number(time))).take(input.limit+1),
+    ].slice(0,input.limit+1);
+  return pageOfLedger(rows.map(row => ledgerEntry.parse({ operationId: row.operationId,createdAt: row.createdAt,
+    day: row.day,policyId: row.policyId,estimateMicros: row.estimateMicros,status: row.status,actualMicros: row.actualMicros })),input.limit);
 } });
 export const claimAttempt = internalMutation({ args: { input: v.any() }, handler: async (ctx,args) => {
   const input = attempt.parse(args.input);

@@ -4,6 +4,7 @@ import { basename } from "node:path";
 import { historyOptions, historyPatch, operationId } from "../lib/agent-access/contract";
 import { projectionOptions } from "../lib/agent-access/projection-contract";
 import { artifactOptions } from "../lib/agent-access/artifact-contract";
+import { ledgerQueryOptions } from "../lib/budgets/contract";
 import { recordId, recordInput } from "../lib/data/contract";
 import { exportApplication } from "./export-application";
 import { z } from "zod";
@@ -24,7 +25,7 @@ export async function run(args: string[], env: Record<string, string | undefined
     artifacts: "npm run app -- artifacts <list [--limit N] [--cursor CURSOR] | get ARTIFACT_UUID | delete ARTIFACT_UUID>",
     uploads: "npm run app -- uploads <list | get UPLOAD_UUID | put FILE | delete UPLOAD_UUID> (private quarantine; no download)",
     account: "npm run app -- account profile (selected fields; current registered-user token required)",
-    usage: "npm run app -- usage (current UTC-day AI budget snapshot; verified user token required)",
+    usage: "npm run app -- usage [reservations [--limit N] [--cursor CURSOR]] (verified user token required)",
     export: "npm run app -- export <records | application> OUTPUT.ndjson (private, no-clobber; application includes upload metadata, never bytes)",
     environment: "APP_API_URL (default http://localhost:3000), APP_API_TOKEN (server-issued credential)",
     note: "Record files contain title/content and, for update, revision. Conversation updates contain revision plus title and/or archived. Uploads require uploads:read/write scopes or a registered user and an explicitly configured private object backend; quarantined bytes cannot be downloaded. Output is JSON. Errors exit nonzero. Writes are never automatically retried.",
@@ -84,6 +85,17 @@ export async function run(args: string[], env: Record<string, string | undefined
     return exportApplication(rest[0], rest[1], path => call(path));
   }
   if (command === "account" && rest.length === 1 && rest[0] === "profile") return call("/api/v1/account/profile");
+  if (command === "usage" && rest[0] === "reservations") {
+    const input: Record<string,unknown> = {},options = rest.slice(1);
+    for (let i=0;i<options.length;i++) {
+      const flag = options[i];
+      if ((flag !== "--limit" && flag !== "--cursor") || options[i+1] === undefined || Object.hasOwn(input,flag.slice(2))) throw new Error("Invalid usage reservation options.");
+      input[flag.slice(2)] = flag === "--limit" ? Number(options[++i]) : options[++i];
+    }
+    const checked = ledgerQueryOptions.safeParse(input);
+    if (!checked.success) throw new Error("Invalid usage reservation options.");
+    return call(`/api/v1/usage/reservations?${new URLSearchParams({ limit: String(checked.data.limit),...(checked.data.cursor ? { cursor: checked.data.cursor } : {}) })}`);
+  }
   if (command === "uploads") {
     const [action,...options] = rest;
     if (action === "list" && options.length === 0) return call("/api/v1/uploads");
