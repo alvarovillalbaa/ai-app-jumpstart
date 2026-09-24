@@ -57,6 +57,7 @@
     "test:vercel-build": "node scripts/test-vercel-build.mjs",
     "check:managed-config": "tsx --env-file-if-exists=.env.local scripts/check-managed-config.ts",
     "check:upload-storage": "tsx --env-file-if-exists=.env.local scripts/check-upload-storage.ts",
+    "check:upload-scanner": "tsx --env-file-if-exists=.env.local scripts/check-upload-scanner.ts",
     "check:budget-policy": "tsx --env-file-if-exists=.env.local scripts/check-budget-policy.ts",
     "smoke:hosted": "node scripts/smoke-hosted.mjs",
     "test:auth": "node scripts/test-auth.mjs",

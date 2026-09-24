@@ -7,6 +7,8 @@ import { UploadService } from "../uploads/service";
 import type { UploadCatalog } from "../uploads/catalog-contract";
 import type { PrivateUploadObjects } from "../uploads/contract";
 import { MAX_API_UPLOAD_BYTES } from "../uploads/validation";
+import { createUploadScanner } from "../uploads/scanner";
+import type { UploadScanner } from "../uploads/scanner";
 export { MAX_API_UPLOAD_BYTES } from "../uploads/validation";
 
 async function uploadBody(request: Request) {
@@ -42,10 +44,11 @@ function uploadHeaders(request: Request) {
 }
 
 export function uploadHandlers(catalog: () => Promise<UploadCatalog> = getUploadCatalog,
-  objects: () => Promise<PrivateUploadObjects> = createUploadObjects) {
+  objects: () => Promise<PrivateUploadObjects> = createUploadObjects,
+  scanner: () => Promise<UploadScanner | null> = createUploadScanner) {
   async function service(request: Request) {
     const principal = await authenticate(request);
-    return new UploadService(await catalog(),objects,principal);
+    return new UploadService(await catalog(),objects,principal,scanner);
   }
   return {
     list: (request: Request) => handle(request,async () => {

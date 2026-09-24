@@ -4,11 +4,13 @@ import { uploadId } from "./schema";
 import { UploadIntake } from "./intake";
 import type { UploadCatalog } from "./catalog-contract";
 import type { PrivateUploadObjects } from "./contract";
+import type { UploadScanner } from "./scanner";
 
 /** The public service exposes metadata only; quarantined bytes have no read route. */
 export class UploadService {
-  constructor(private catalog: UploadCatalog,private objects: () => Promise<PrivateUploadObjects>,private principal: Principal) {}
-  private async intake() { return new UploadIntake(this.catalog,await this.objects()); }
+  constructor(private catalog: UploadCatalog,private objects: () => Promise<PrivateUploadObjects>,private principal: Principal,
+    private scanner: () => Promise<UploadScanner | null> = async () => null) {}
+  private async intake(scan = false) { return new UploadIntake(this.catalog,await this.objects(),undefined,scan ? await this.scanner() : null); }
   private owner(scope: "uploads:read" | "uploads:write") {
     if (!this.principal.tenant || !this.principal.subject || !this.principal.scopes.includes(scope)) {
       throw new AppError(403,"forbidden","This credential does not permit this operation.");
@@ -17,7 +19,7 @@ export class UploadService {
   }
   async accept(name: string,mediaType: string,bytes: Uint8Array) {
     const owner = this.owner("uploads:write");
-    return (await this.intake()).accept(owner,name,mediaType,bytes);
+    return (await this.intake(true)).accept(owner,name,mediaType,bytes);
   }
   async list() { return this.catalog.list(this.owner("uploads:read")); }
   async usage() { return this.catalog.usage(this.owner("uploads:read")); }

@@ -13,7 +13,7 @@ docker compose up --build -d
 docker compose logs -f app
 ```
 
-Compose reads `.env.local` and binds loopback port 3000. PostgreSQL mode also needs `POSTGRES_PASSWORD` in local `.env` for Compose interpolation:
+Compose reads `.env.local` and binds loopback port 3000. For opt-in upload scanning, mount a private ClamAV Unix socket into the app container, set `UPLOAD_SCANNER_PROVIDER=clamd` and `UPLOAD_CLAMD_SOCKET` to its in-container path, and run `npm run check:upload-scanner` inside the same runtime environment. The default Compose files do not start a scanner. PostgreSQL mode also needs `POSTGRES_PASSWORD` in local `.env` for Compose interpolation:
 
 ```sh
 docker compose -f compose.yaml -f compose.postgres.yaml up --build -d
@@ -28,7 +28,7 @@ Before linking a project, run `npm run test:vercel-build` in a checkout without 
 With the intended managed runtime settings in the operator shell or private `.env.local`, run `npm run check:managed-config`. It reuses the application's data/Auth/chat validators and requires explicit HTTPS origins, Supabase as both the application data and identity provider, an explicit chat switch, and the default Vercel Workflow world. Use `npm run check:managed-config -- --require-chat` when the release must support owned agent turns; also run `npm run check:budget-policy` to inspect its attributed quote. These commands make no network request, link no project and cannot validate key validity, migration state, Auth redirects, current provider prices or runtime reachability. Follow them with migration preview/review and the post-deployment smoke below.
 
 1. Provision a separate Supabase project per environment/organization. Set its private `DATABASE_URL`, review `npm run db:migrate -- --dry-run` and a restorable backup, then apply `npm run db:migrate` from one release job.
-2. Configure Vercel with `DATA_PROVIDER=supabase`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `AUTH_PROVIDER=supabase`, `SUPABASE_PUBLISHABLE_KEY`, `APP_ORIGIN` and appropriate model credentials. `APP_API_KEYS` is optional for administrator-issued API/CLI/MCP credentials. To enable private upload quarantine, also set `UPLOAD_STORAGE_PROVIDER=supabase` after applying migrations and provisioning the private bucket as described in [uploads](uploads.md); no unscanned file can be downloaded. Follow [account setup](authentication.md) for SMTP and redirect URLs. Separate Preview and Production secrets.
+2. Configure Vercel with `DATA_PROVIDER=supabase`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `AUTH_PROVIDER=supabase`, `SUPABASE_PUBLISHABLE_KEY`, `APP_ORIGIN` and appropriate model credentials. `APP_API_KEYS` is optional for administrator-issued API/CLI/MCP credentials. To enable private upload quarantine, also set `UPLOAD_STORAGE_PROVIDER=supabase` after applying migrations and provisioning the private bucket as described in [uploads](uploads.md); no quarantined file can be downloaded. The Unix-socket scanner is for self-hosted processes and is not a managed Vercel scanning service. Follow [account setup](authentication.md) for SMTP and redirect URLs. Separate Preview and Production secrets.
 3. Use `npx eve link --non-interactive --project NAME` and `npx eve deploy --non-interactive --yes --project NAME`. `withEve` generates the integrated service output.
 4. Keep `EVE_WORKFLOW_PROVIDER` unset/default for the managed Vercel world. Configure opt-in [account chat](account-chat.md), then verify web liveness, data readiness, authenticated cross-user API/MCP access and a real owned agent turn.
 

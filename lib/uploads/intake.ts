@@ -4,11 +4,13 @@ import { AppError } from "../http/errors";
 import type { PrivateUploadObjects } from "./contract";
 import { DEFAULT_UPLOAD_QUOTA, uploadQuota, type UploadCatalog, type UploadQuota } from "./catalog-contract";
 import { checkUpload } from "./validation";
+import type { UploadScanner } from "./scanner";
 
 /** Internal quarantine lifecycle. Only a new catalog reservation may write bytes. */
 export class UploadIntake {
   private quota: UploadQuota;
-  constructor(private catalog: UploadCatalog, private objects: PrivateUploadObjects, quota: UploadQuota = DEFAULT_UPLOAD_QUOTA) {
+  constructor(private catalog: UploadCatalog, private objects: PrivateUploadObjects, quota: UploadQuota = DEFAULT_UPLOAD_QUOTA,
+    private scanner: UploadScanner | null = null) {
     this.quota = uploadQuota.parse(quota);
   }
 
@@ -21,7 +23,16 @@ export class UploadIntake {
       sha256: file.sha256,createdAt: Date.now() },this.quota);
     if (result === "quota") throw new AppError(429,"upload_quota","Upload storage quota is full.");
     if (result !== "reserved") throw new AppError(409,"upload_conflict","Upload reservation could not be created.");
+    let writeStarted = false;
     try {
+      if (this.scanner) {
+        let verdict;
+        try { verdict = await this.scanner.scan(file.bytes); }
+        catch { throw new AppError(503,"scanner_unavailable","Upload scanner is unavailable."); }
+        if (verdict === "infected") throw new AppError(422,"upload_rejected","Upload did not pass malware scanning.");
+        if (verdict !== "clean") throw new AppError(503,"scanner_unavailable","Upload scanner is unavailable.");
+      }
+      writeStarted = true;
       await this.objects.put(owner,id,file.bytes);
       if (!await this.catalog.markStored(owner,id)) throw new Error("Upload metadata could not enter quarantine.");
       const stored = await this.catalog.get(owner,id);
@@ -32,7 +43,7 @@ export class UploadIntake {
       // until cleanup succeeds; a later remove() can retry the same object ID.
       try {
         if (await this.catalog.beginDelete(owner,id)) {
-          await this.objects.delete(owner,id);
+          if (writeStarted) await this.objects.delete(owner,id);
           await this.catalog.finishDelete(owner,id);
         }
       } catch {

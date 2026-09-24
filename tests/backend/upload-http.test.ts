@@ -69,3 +69,22 @@ it("rejects invalid content and oversized streams before any quota reservation",
     expect(objects.put).not.toHaveBeenCalled();
   } finally { await catalog.close(); }
 });
+
+it("keeps metadata readable while a configured scanner rejects or is unavailable",async () => {
+  vi.stubEnv("AUTH_PROVIDER","api-key");
+  vi.stubEnv("APP_API_KEYS",JSON.stringify([key(alice,"alice",["uploads:read","uploads:write"])]));
+  const catalog = sqliteUploadCatalog(":memory:"),objects = { put: vi.fn(async () => {}),get: vi.fn(async () => null),delete: vi.fn(async () => false) };
+  const scan = vi.fn().mockResolvedValueOnce("infected").mockRejectedValueOnce(new Error("daemon down"));
+  const api = uploadHandlers(async () => catalog,async () => objects,async () => ({ scan }));
+  try {
+    const infected = await api.create(request(root,alice,"POST",Buffer.from("test")));
+    expect(infected.status).toBe(422);
+    expect((await infected.json()).error).toMatchObject({ code: "upload_rejected" });
+    const unavailable = await api.create(request(root,alice,"POST",Buffer.from("test")));
+    expect(unavailable.status).toBe(503);
+    expect((await unavailable.json()).error).toMatchObject({ code: "scanner_unavailable" });
+    expect(await (await api.list(request(root,alice))).json()).toEqual({ items: [],usage: { files: 0,bytes: 0 } });
+    expect(objects.put).not.toHaveBeenCalled();
+    expect(objects.delete).not.toHaveBeenCalled();
+  } finally { await catalog.close(); }
+});
