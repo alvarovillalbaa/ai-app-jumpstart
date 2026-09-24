@@ -14,6 +14,8 @@ The [AI usage view](docs/usage-budgets.md) at `/usage` shows the account's curre
 
 ## Start locally
 
+For browser accounts and a Supabase-backed application, follow the [fresh-clone guide](docs/getting-started.md) for either local or hosted Supabase. The following path is the smaller SQLite/API-key example.
+
 ```sh
 npm ci
 cp .env.example .env.local
@@ -55,6 +57,8 @@ All share validation, owner isolation, scopes, pagination and revision checks. W
 Run `npm run db:migrate -- --dry-run` with the target `DATABASE_URL` to review pending SQL, then run `npm run db:migrate` after backup review and before PostgreSQL/Supabase use. Remote migrations never run per request. SQLite is not for ephemeral serverless or shared network filesystems. Application data and Eve workflow storage are separate.
 
 Read [database setup](docs/databases.md), [hosting](docs/hosting.md), [operations](docs/operations.md), and [testing](docs/testing.md).
+
+The [extension recipes](docs/extending.md) show where to add a tool, model, connection, schema change or UI route.
 
 ## Validate
 

@@ -44,9 +44,9 @@ Browser session events clear the old account's records and draft form by remount
 
 CLI and MCP can use a current Supabase access token or an administrator-issued API key. Supabase access tokens expire; those clients currently require the caller to supply a refreshed token. Do not put a database key or Supabase service credential into `APP_API_TOKEN`.
 
-## Agent ownership remains separate
+## Account chat
 
-Signing in does not yet enable production chat. Eve's channel allows local development only while conversation creation, reconciliation and usage reservations remain unfinished. The portable ownership store, signed creation protocol and route authorizer are implemented and tested separately; see [agent session access](agent-session-access.md). Supabase RLS cannot enforce access to an Eve stream. Do not replace the channel guard with anonymous access or a transport-only OIDC fallback.
+Signing in enables private records. Account chat remains disabled until the operator configures the shared ownership store, signed creation broker, runtime origin and reviewed budget policy, then sets `AI_CHAT_ENABLED=true` on both services. The enabled Eve channel verifies owner identity and signed creation; it does not use the local development authenticator. See [account chat](account-chat.md) and [agent session access](agent-session-access.md). Supabase RLS does not authorize an Eve stream.
 
 ## Validate
 
