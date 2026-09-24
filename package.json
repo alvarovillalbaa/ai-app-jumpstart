@@ -53,6 +53,7 @@
     "test:convex": "node scripts/test-convex.mjs",
     "test:providers": "npm run test:postgres && npm run test:supabase && npm run test:convex",
     "test:container": "node scripts/test-container.mjs",
+    "test:vercel-build": "node scripts/test-vercel-build.mjs",
     "smoke:hosted": "node scripts/smoke-hosted.mjs",
     "test:auth": "node scripts/test-auth.mjs",
     "test:chat": "node scripts/test-auth.mjs --chat",

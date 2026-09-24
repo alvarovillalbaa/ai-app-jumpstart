@@ -23,6 +23,8 @@ The migration job completes before app startup. `docker compose down -v` destroy
 
 ## Maintainer-managed Vercel + Supabase
 
+Before linking a project, run `npm run test:vercel-build` in a checkout without `.env.local`. It builds Next in Vercel mode, runs the generated Eve service build command, and checks the public agent route, Workflow callback, Node 24 runtime and streaming metadata. This is a credential-free local build contract; it does not create a Vercel project, apply migrations, test hosted Supabase or prove a deployed agent turn.
+
 1. Provision a separate Supabase project per environment/organization. Set its private `DATABASE_URL`, review `npm run db:migrate -- --dry-run` and a restorable backup, then apply `npm run db:migrate` from one release job.
 2. Configure Vercel with `DATA_PROVIDER=supabase`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `AUTH_PROVIDER=supabase`, `SUPABASE_PUBLISHABLE_KEY`, `APP_ORIGIN` and appropriate model credentials. `APP_API_KEYS` is optional for administrator-issued API/CLI/MCP credentials. Follow [account setup](authentication.md) for SMTP and redirect URLs. Separate Preview and Production secrets.
 3. Use `npx eve link --non-interactive --project NAME` and `npx eve deploy --non-interactive --yes --project NAME`. `withEve` generates the integrated service output.
