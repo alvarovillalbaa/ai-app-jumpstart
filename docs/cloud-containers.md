@@ -2,19 +2,22 @@
 
 The same Node/Docker application can run on AWS ECS/Fargate, Azure Container Apps or Google Cloud Run. The example definitions under `deploy/` use a PostgreSQL workflow build, Supabase application data and Auth, one continuously running instance, and provider-managed secret references. They contain no live account identifiers or credentials. JSON syntax has been checked; none has been submitted to a cloud control plane. Infrastructure provisioning, IAM, networking, domains and provider acceptance remain required.
 
-For separate Next and Eve services, use the [streaming ingress recipe](hosting.md#split-next-and-eve-behind-one-streaming-ingress). Route the two Eve prefixes directly at ingress; the Next rewrite buffered a delayed SSE fixture locally. A [Compose overlay](../compose.streaming.yaml) proves this path with co-located app and Eve processes on a private network. The AWS/Azure/GCP manifests below still expose only Next's port 3000; adapt their ingress or add a Caddy sidecar before claiming live SSE, and verify a real owned turn after deployment.
+For separate Next and Eve services, use the [streaming ingress recipe](hosting.md#split-next-and-eve-behind-one-streaming-ingress). Route the two Eve prefixes directly at ingress; the Next rewrite buffered a delayed SSE fixture locally. A [Compose overlay](../compose.streaming.yaml) proves this path with co-located app and Eve processes on a private network. The AWS/Azure/GCP manifests below now send traffic to a Caddy ingress container on port 8080, which routes Eve and Workflow paths directly to the co-located Eve process. The packaged proxy passes the local route and delayed-SSE test, but a real owned turn through each provider load balancer remains unverified.
 
 ## Shared release preparation
 
-Build an image for the destination architecture and pin its registry digest. The AWS example selects x86-64; build Linux amd64 for that definition and for the documented Cloud Run path:
+Build both the app and ingress images for the destination architecture and pin their registry digests. The AWS example selects x86-64; build Linux amd64 for that definition and for the documented Cloud Run path:
 
 ```sh
 docker buildx build --platform linux/amd64 \
   --build-arg EVE_WORKFLOW_PROVIDER=postgres \
   -t YOUR_REGISTRY/jumpstart:YOUR_RELEASE --push .
+docker buildx build --platform linux/amd64 \
+  -f deploy/ingress.Dockerfile \
+  -t YOUR_REGISTRY/jumpstart-ingress:YOUR_RELEASE --push .
 ```
 
-This command publishes an image when you run it. Use your organization's approved registry and credentials. The image copies pruned runtime dependencies and excludes the build-only Turbopack cache. A PostgreSQL Workflow image built before the later structured-result recovery UI edit was loaded locally for `linux/amd64` and passed the ten-migration two-database Compose contract under emulation, including the artifact retention schema. An earlier ARM64 Workflow image also passed that contract; a fresh current-source default-world ARM64 image passed the runtime and nine-chat-browser contracts, including result recovery. Reproduce the amd64 architecture and Compose checks against the latest source without publishing:
+These commands publish images when you run them. Use your organization's approved registry and credentials. The app image copies pruned runtime dependencies and excludes the build-only Turbopack cache. A PostgreSQL Workflow image built before the later structured-result recovery UI edit was loaded locally for `linux/amd64` and passed the ten-migration two-database Compose contract under emulation, including the artifact retention schema. An earlier ARM64 Workflow image also passed that contract; a fresh current-source default-world ARM64 image passed the runtime and nine-chat-browser contracts, including result recovery. Reproduce the amd64 architecture and Compose checks against the latest source without publishing:
 
 ```sh
 docker buildx build --platform linux/amd64 \
@@ -31,11 +34,11 @@ If your Docker CLI does not discover the Buildx plugin, the standalone `docker-b
 
 Prepare a private workflow PostgreSQL database and run `npm run workflow:migrate` with its explicit URL/prefix. Prepare application migrations independently. Store the references needed by the example in the selected cloud's secret manager: workflow connection, application URL/key, Supabase Auth URL/public key, signing keyring, reviewed budget policy with a cost basis, and model credential. Run `npm run check:budget-policy` against that private policy before release. Grant only the workload identities that need the secrets access. For PostgreSQL application data replace `DATA_PROVIDER=supabase` and its two data references with `DATA_PROVIDER=postgres` and `DATABASE_URL`; for Convex use `DATA_PROVIDER=convex`, `CONVEX_SITE_URL` and `CONVEX_BACKEND_SECRET`. Supabase Auth remains independent of that choice.
 
-Copy the appropriate example to an environment-owned file, replace every `REPLACE_…` marker, set a unique workflow job prefix, and review it. Pin secret versions where the provider supports them. Keep the image/world, application database and workflow database selection together. All three manifests set `WORKFLOW_EXPECTED_PROVIDER=postgres`; the supervisor checks the build marker before starting and refuses a default-world image or missing PostgreSQL workflow URL. The examples enable account chat and therefore require all [account-chat settings](account-chat.md) before startup. The broker contacts the co-located Eve process at `http://127.0.0.1:4274`; clients use the public HTTPS app origin. Preserve the `/eve/` and `/.well-known/workflow/` route prefixes and streaming responses through ingress.
+Copy the appropriate example to an environment-owned file, replace every `REPLACE_…` marker (including both image digests), set a unique workflow job prefix, and review it. Pin secret versions where the provider supports them. Keep the image/world, application database and workflow database selection together. All three manifests set `WORKFLOW_EXPECTED_PROVIDER=postgres`; the supervisor checks the build marker before starting and refuses a default-world image or missing PostgreSQL workflow URL. The examples enable account chat and therefore require all [account-chat settings](account-chat.md) before startup. The broker and proxy contact the co-located Eve process at `127.0.0.1:4274`; the proxy reaches Next at `127.0.0.1:3000`. Both containers share the provider task/replica network, and clients use the public HTTPS app origin. `APP_AGENT_READINESS=local` makes the app readiness check include Eve. Preserve the `/eve/` and `/.well-known/workflow/` route prefixes and streaming responses through ingress. Keep ports 3000 and 4274 private; the proxy is the only ingress target.
 
 ## AWS ECS/Fargate
 
-Start from `deploy/aws/task-definition.example.json`. Provision the cluster, VPC/subnets, egress to the databases/providers, security groups, log group, TLS ALB and an IP target group on port 3000. The execution role needs image-pull, log-write and selected secret-read permissions; use a separate least-privilege task role. Configure ALB readiness at `/api/health/ready`, which checks both application data and the co-located Eve process in this image, an idle timeout suitable for SSE, and connection draining for replacement. These are required resources, not created by the task definition.
+Start from `deploy/aws/task-definition.example.json`. Provision the cluster, VPC/subnets, egress to the databases/providers, security groups, log group, TLS ALB and an IP target group on port 8080. Restrict the task security group to accept load-balancer traffic on 8080, not app/Eve ports. The execution role needs image-pull, log-write and selected secret-read permissions; use a separate least-privilege task role. Configure ALB readiness at `/api/health/ready`, which checks both application data and the co-located Eve process in this image, an idle timeout suitable for SSE, and connection draining for replacement. These are required resources, not created by the task definition.
 
 ```sh
 aws ecs register-task-definition --cli-input-json file://YOUR_TASK_DEFINITION.json
@@ -45,7 +48,7 @@ Create/update an ECS service with the returned task-definition revision, Fargate
 
 ## Azure Container Apps
 
-Start from `deploy/azure/container-app.example.json`. Provision a Container Apps environment with a dedicated workload profile that keeps at least one profile instance running, an application replica minimum of one, a user-assigned managed identity, and Key Vault access for that identity. Configure registry pull access separately for private images. The example uses versioned Key Vault references and HTTPS ingress on container port 3000. Bind the chosen custom domain/certificate and configure matching Supabase redirects.
+Start from `deploy/azure/container-app.example.json`. Provision a Container Apps environment with a dedicated workload profile that keeps at least one profile instance running, an application replica minimum of one, a user-assigned managed identity, and Key Vault access for that identity. Configure registry pull access separately for private images. The example uses versioned Key Vault references and HTTPS ingress to the Caddy container on port 8080. Size the dedicated workload profile for both containers (the example requests 2.25 CPU and 4.5 GiB per replica). Bind the chosen custom domain/certificate and configure matching Supabase redirects.
 
 ```sh
 az containerapp create --name YOUR_APP --resource-group YOUR_RESOURCE_GROUP \
@@ -56,7 +59,7 @@ JSON is valid YAML input. For an existing application, use the reviewed `az cont
 
 ## Google Cloud Run
 
-Start from `deploy/gcp/service.example.json`. Provision a runtime service account, restricted Secret Manager access, registry access, database connectivity and the public domain. The definition disables CPU throttling, keeps one minimum instance, sets port 3000 and allows up to a one-hour request. Its startup and readiness probes check application data and the co-located Eve process; liveness checks only the web process. Cloud Run can send traffic immediately after startup succeeds, before its first readiness probe, so startup must use the combined check. PostgreSQL workers need CPU when no HTTP request is active; minimum instances alone do not establish that. See [Cloud Run health checks](https://docs.cloud.google.com/run/docs/configuring/healthchecks), [billing settings](https://docs.cloud.google.com/run/docs/configuring/billing-settings) and the [YAML reference](https://docs.cloud.google.com/run/docs/reference/yaml/v1).
+Start from `deploy/gcp/service.example.json`. Provision a runtime service account, restricted Secret Manager access, registry access, database connectivity and the public domain. The definition disables CPU throttling, keeps one minimum instance, sends public traffic to the Caddy container on port 8080 and allows up to a one-hour request. It starts the app before the proxy and allocates CPU and memory to both containers. The app and proxy startup/readiness probes check application data and the co-located Eve process; liveness checks the web process. Cloud Run can send traffic immediately after startup succeeds, before its first readiness probe, so startup must use the combined check. PostgreSQL workers need CPU when no HTTP request is active; minimum instances alone do not establish that. See [Cloud Run health checks](https://docs.cloud.google.com/run/docs/configuring/healthchecks), [billing settings](https://docs.cloud.google.com/run/docs/configuring/billing-settings) and the [YAML reference](https://docs.cloud.google.com/run/docs/reference/yaml/v1).
 
 ```sh
 gcloud run services replace YOUR_SERVICE.json --region YOUR_REGION --project YOUR_PROJECT
@@ -66,7 +69,7 @@ Configure the service invoker policy deliberately. A public browser application 
 
 ## Acceptance for every provider
 
-Record the deployed image digest, region, application revision, workflow package versions and migration results. Verify liveness and database readiness, then use two real test users to exercise sign-in, create, stream, follow up, reload, cross-user denial, cancellation and quota exhaustion. Replace the running instance and verify history and a new owned turn. Exercise network loss/reconnect through the real load balancer, test graceful shutdown and backup restore, and review logs for secrets or prompt content. A green deployment or health response is not proof of these behaviors. Keep paid model smoke tests explicitly budgeted.
+Record both deployed image digests, region, application revision, workflow package versions and migration results. Verify liveness, combined readiness and `/eve/v1/health` through the public origin, then use two real test users to exercise sign-in, create, stream with distinct chunks before completion, follow up, reload, cross-user denial, cancellation and quota exhaustion. Replace the running instance and verify history and a new owned turn. Exercise network loss/reconnect through the real load balancer, test graceful shutdown and backup restore, and review logs for secrets or prompt content. A green deployment or health response is not proof of these behaviors. Keep paid model smoke tests explicitly budgeted.
 
 ## Amplify
 

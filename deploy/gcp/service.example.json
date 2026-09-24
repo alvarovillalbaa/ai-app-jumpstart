@@ -7,15 +7,28 @@
       "metadata": { "annotations": {
         "run.googleapis.com/cpu-throttling": "false",
         "autoscaling.knative.dev/minScale": "1",
-        "autoscaling.knative.dev/maxScale": "1"
+        "autoscaling.knative.dev/maxScale": "1",
+        "run.googleapis.com/container-dependencies": "{\"ingress\":[\"app\"]}"
       } },
       "spec": {
         "serviceAccountName": "REPLACE_WITH_SERVICE_ACCOUNT_EMAIL",
         "timeoutSeconds": 3600,
         "containerConcurrency": 40,
         "containers": [{
+          "name": "ingress",
+          "image": "REPLACE_WITH_INGRESS_IMAGE_AT_SHA256_DIGEST",
+          "ports": [{ "containerPort": 8080 }],
+          "resources": { "limits": { "cpu": "1", "memory": "512Mi" } },
+          "startupProbe": { "httpGet": { "path": "/api/health/ready", "port": 8080 }, "periodSeconds": 10, "failureThreshold": 18, "timeoutSeconds": 5 },
+          "livenessProbe": { "httpGet": { "path": "/api/health/live", "port": 8080 }, "periodSeconds": 30, "failureThreshold": 3, "timeoutSeconds": 2 },
+          "readinessProbe": { "httpGet": { "path": "/api/health/ready", "port": 8080 }, "periodSeconds": 10, "failureThreshold": 3, "successThreshold": 2, "timeoutSeconds": 5 },
+          "env": [
+            { "name": "NEXT_UPSTREAM", "value": "127.0.0.1:3000" },
+            { "name": "EVE_UPSTREAM", "value": "127.0.0.1:4274" }
+          ]
+        }, {
+          "name": "app",
           "image": "REPLACE_WITH_POSTGRES_WORKFLOW_IMAGE_AT_SHA256_DIGEST",
-          "ports": [{ "containerPort": 3000 }],
           "resources": { "limits": { "cpu": "2", "memory": "4Gi" } },
           "startupProbe": { "httpGet": { "path": "/api/health/ready", "port": 3000 }, "periodSeconds": 10, "failureThreshold": 18, "timeoutSeconds": 5 },
           "livenessProbe": { "httpGet": { "path": "/api/health/live", "port": 3000 }, "periodSeconds": 30, "failureThreshold": 3, "timeoutSeconds": 2 },
@@ -25,6 +38,7 @@
             { "name": "DATA_PROVIDER", "value": "supabase" },
             { "name": "AUTH_PROVIDER", "value": "supabase" },
             { "name": "AI_CHAT_ENABLED", "value": "true" },
+            { "name": "APP_AGENT_READINESS", "value": "local" },
             { "name": "AI_RUNTIME_ORIGIN", "value": "http://127.0.0.1:4274" },
             { "name": "WORKFLOW_EXPECTED_PROVIDER", "value": "postgres" },
             { "name": "WORKFLOW_POSTGRES_JOB_PREFIX", "value": "jumpstart_staging" },

@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const caddyImage = "caddy@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d";
 const nodeImage = "node@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6";
 const suffix = randomUUID().slice(0, 12);
+const caddyImage = `jumpstart-ingress-test:${suffix}`;
 const network = `jumpstart-split-${suffix}`;
 const eve = `jumpstart-eve-${suffix}`;
 const next = `jumpstart-next-${suffix}`;
@@ -13,8 +14,30 @@ const ingress = `jumpstart-ingress-${suffix}`;
 const docker = (...args) => execFileSync("docker", args, { encoding: "utf8", timeout: 180_000 }).trim();
 const cleanup = (...args) => { try { docker(...args); } catch { /* best effort for disposable resources */ } };
 
+const readManifest = path => JSON.parse(readFileSync(resolve(path), "utf8"));
+const aws = readManifest("deploy/aws/task-definition.example.json");
+const azure = readManifest("deploy/azure/container-app.example.json");
+const gcp = readManifest("deploy/gcp/service.example.json");
+const cloudRoutes = [
+  { app: aws.containerDefinitions.find(c => c.name === "app"), ingress: aws.containerDefinitions.find(c => c.name === "ingress"), port: aws.containerDefinitions.find(c => c.name === "ingress")?.portMappings?.[0]?.containerPort },
+  { app: azure.properties.template.containers.find(c => c.name === "app"), ingress: azure.properties.template.containers.find(c => c.name === "ingress"), port: azure.properties.configuration.ingress.targetPort },
+  { app: gcp.spec.template.spec.containers.find(c => c.name === "app"), ingress: gcp.spec.template.spec.containers.find(c => c.name === "ingress"), port: gcp.spec.template.spec.containers.find(c => c.name === "ingress")?.ports?.[0]?.containerPort },
+];
+for (const { app, ingress: proxy, port } of cloudRoutes) {
+  assert.equal(port, 8080, "public ingress must target Caddy");
+  assert.equal(proxy.image, "REPLACE_WITH_INGRESS_IMAGE_AT_SHA256_DIGEST");
+  const env = proxy.environment ?? proxy.env;
+  assert.equal(env.find(e => e.name === "NEXT_UPSTREAM")?.value, "127.0.0.1:3000");
+  assert.equal(env.find(e => e.name === "EVE_UPSTREAM")?.value, "127.0.0.1:4274");
+  const appEnv = app.environment ?? app.env;
+  assert.equal(appEnv.find(e => e.name === "APP_AGENT_READINESS")?.value, "local");
+}
+assert.equal(aws.containerDefinitions.find(c => c.name === "ingress").dependsOn[0].condition, "HEALTHY");
+assert.deepEqual(JSON.parse(gcp.spec.template.metadata.annotations["run.googleapis.com/container-dependencies"]), { ingress: ["app"] });
+
 let networkCreated = false;
 try {
+  docker("build", "--file", "deploy/ingress.Dockerfile", "--tag", caddyImage, ".");
   docker("network", "create", network);
   networkCreated = true;
   docker("run", "--detach", "--rm", "--network", network, "--name", eve,
@@ -24,8 +47,8 @@ try {
     "--volume", `${resolve("scripts/fixtures/split-next-upstream.mjs")}:/fixture.mjs:ro`,
     nodeImage, "node", "/fixture.mjs");
   docker("run", "--detach", "--rm", "--network", network, "--name", ingress,
-    "--publish", "127.0.0.1::8080", "--env", `EVE_UPSTREAM=${eve}:4274`, "--env", `NEXT_UPSTREAM=${next}:3000`,
-    "--volume", `${resolve("deploy/split-app.Caddyfile")}:/etc/caddy/Caddyfile:ro`, caddyImage);
+    "--publish", "127.0.0.1::8080", "--user", "1000:1000", "--env", `EVE_UPSTREAM=${eve}:4274`, "--env", `NEXT_UPSTREAM=${next}:3000`,
+    caddyImage);
 
   const mapped = docker("port", ingress, "8080/tcp");
   assert.match(mapped, /^127\.0\.0\.1:\d+$/);
@@ -69,4 +92,5 @@ try {
   cleanup("rm", "--force", next);
   cleanup("rm", "--force", eve);
   if (networkCreated) cleanup("network", "rm", network);
+  cleanup("image", "rm", caddyImage);
 }

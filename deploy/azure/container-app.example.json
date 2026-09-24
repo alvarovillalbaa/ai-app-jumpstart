@@ -10,7 +10,7 @@
     "workloadProfileName": "REPLACE_WITH_DEDICATED_WORKLOAD_PROFILE_NAME",
     "configuration": {
       "activeRevisionsMode": "Single",
-      "ingress": { "external": true, "targetPort": 3000, "transport": "auto", "allowInsecure": false },
+      "ingress": { "external": true, "targetPort": 8080, "transport": "auto", "allowInsecure": false },
       "secrets": [
         { "name": "workflow-database", "keyVaultUrl": "https://REPLACE_VAULT.vault.azure.net/secrets/workflow-database/REPLACE_VERSION", "identity": "REPLACE_WITH_MANAGED_IDENTITY_RESOURCE_ID" },
         { "name": "data-url", "keyVaultUrl": "https://REPLACE_VAULT.vault.azure.net/secrets/data-url/REPLACE_VERSION", "identity": "REPLACE_WITH_MANAGED_IDENTITY_RESOURCE_ID" },
@@ -38,6 +38,7 @@
           { "name": "DATA_PROVIDER", "value": "supabase" },
           { "name": "AUTH_PROVIDER", "value": "supabase" },
           { "name": "AI_CHAT_ENABLED", "value": "true" },
+          { "name": "APP_AGENT_READINESS", "value": "local" },
           { "name": "AI_RUNTIME_ORIGIN", "value": "http://127.0.0.1:4274" },
           { "name": "WORKFLOW_EXPECTED_PROVIDER", "value": "postgres" },
           { "name": "WORKFLOW_POSTGRES_JOB_PREFIX", "value": "jumpstart_staging" },
@@ -49,6 +50,19 @@
           { "name": "AI_CREATION_SIGNING_JSON", "secretRef": "creation-signing" },
           { "name": "AI_BUDGET_POLICY_JSON", "secretRef": "budget-policy" },
           { "name": "AI_GATEWAY_API_KEY", "secretRef": "model-key" }
+        ]
+      }, {
+        "name": "ingress",
+        "image": "REPLACE_WITH_INGRESS_IMAGE_AT_SHA256_DIGEST",
+        "resources": { "cpu": 0.25, "memory": "0.5Gi" },
+        "probes": [
+          { "type": "Startup", "httpGet": { "path": "/api/health/ready", "port": 8080 }, "periodSeconds": 10, "failureThreshold": 18, "timeoutSeconds": 5 },
+          { "type": "Liveness", "httpGet": { "path": "/api/health/live", "port": 8080 }, "periodSeconds": 30, "failureThreshold": 3, "timeoutSeconds": 2 },
+          { "type": "Readiness", "httpGet": { "path": "/api/health/ready", "port": 8080 }, "periodSeconds": 10, "failureThreshold": 3, "timeoutSeconds": 5 }
+        ],
+        "env": [
+          { "name": "NEXT_UPSTREAM", "value": "127.0.0.1:3000" },
+          { "name": "EVE_UPSTREAM", "value": "127.0.0.1:4274" }
         ]
       }]
     }
