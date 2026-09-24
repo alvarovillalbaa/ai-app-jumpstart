@@ -26,7 +26,7 @@ it("exports every paged record for one owner to a private file without replacing
     expect(await run(["export", "records", output], env, request)).toMatchObject({ mode: "records", counts: { records: 105 } });
     const exported = await lines(output);
     expect(exported).toHaveLength(107);
-    expect(exported[0].value).toMatchObject({ format: "ai-app-jumpstart-visible-data-v1", mode: "records" });
+    expect(exported[0].value).toMatchObject({ format: "ai-app-jumpstart-visible-data-v2", mode: "records" });
     expect(exported.filter(line => line.type === "record").map(line => line.value.title)).not.toContain("Foreign");
     expect(exported.at(-1).value.counts.records).toBe(105);
     expect((await stat(output)).mode & 0o077).toBe(0);
@@ -37,7 +37,7 @@ it("exports every paged record for one owner to a private file without replacing
 
 it("exports visible account data, including archived conversations and paged projections", async () => {
   const directory = await mkdtemp(join(tmpdir(), "jumpstart-export-account-"));
-  const operation = randomUUID(), archivedOperation = randomUUID(), record = randomUUID(), artifact = randomUUID();
+  const operation = randomUUID(), archivedOperation = randomUUID(), record = randomUUID(), artifact = randomUUID(), upload = randomUUID();
   const event = (id: string, index: number) => ({ schemaVersion: 1, eventId: id, at: "2026-09-24T10:00:00.000Z",
     turnId: "turn_0", sequence: 0, payload: { kind: "message", role: "user", parts: [{ type: "text", text: `part ${index}` }] }, ingestionIndex: index });
   const first = event("evt_01ARZ3NDEKTSV4RRFFQ69G5FAV", 1), second = event("evt_01ARZ3NDEKTSV4RRFFQ69G5FAW", 2);
@@ -59,17 +59,21 @@ it("exports visible account data, including archived conversations and paged pro
     if (path.pathname === "/api/v1/artifacts") return Response.json({ items: [{ id: artifact, operationId: operation,
       sourceSessionId: "session-1", sourceCallId: "call-1", title: "Note", content: "artifact text",
       mediaType: "text/plain", createdAt: 1 }], nextCursor: null });
+    if (path.pathname === "/api/v1/uploads") return Response.json({ items: [{ id: upload, name: "private.txt",
+      mediaType: "text/plain", size: 4, sha256: "a".repeat(64), createdAt: 1, state: "quarantined" }], usage: { files: 1, bytes: 4 } });
     throw new Error(`Unexpected export request: ${path.pathname}`);
   });
   try {
     const output = join(directory, "account.ndjson");
     expect(await run(["export", "application", output], { APP_API_TOKEN: "current-account-token" }, request)).toMatchObject({
-      counts: { records: 1, conversations: 2, projections: 2, artifacts: 1, usage: 1 },
+      counts: { records: 1, conversations: 2, projections: 2, artifacts: 1, uploads: 1, uploadUsage: 1, usage: 1 },
     });
     const exported = await lines(output);
-    expect(exported.map(line => line.type)).toEqual(["manifest", "record", "conversation", "projection", "projection", "conversation", "artifact", "usage", "end"]);
+    expect(exported.map(line => line.type)).toEqual(["manifest", "record", "conversation", "projection", "projection", "conversation", "artifact", "upload", "upload_usage", "usage", "end"]);
     expect(exported[0].value.exclusions).toEqual(expect.arrayContaining([expect.stringContaining("Eve session/model history")]));
     expect(exported.find(line => line.type === "artifact")?.value.content).toBe("artifact text");
+    expect(exported.find(line => line.type === "upload")?.value).toMatchObject({ id: upload, state: "quarantined" });
+    expect(exported.find(line => line.type === "upload_usage")?.value).toEqual({ files: 1, bytes: 4 });
     expect(request.mock.calls[0]?.[0].toString()).toContain("/api/v1/usage");
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

@@ -53,7 +53,7 @@ An update file contains `{"revision":1,"title":"New title"}`, `{"revision":1,"ar
 
 ### Export visible application data
 
-With a record read token, download all owner-scoped records. With a current registered-user token and account chat enabled, download records plus conversation metadata, selected stream projections, saved artifacts and the current usage snapshot:
+With a record read token, download all owner-scoped records. With a current registered-user token and account chat enabled, download records plus conversation metadata, selected stream projections, saved artifacts, active private-upload metadata and both upload and AI usage snapshots:
 
 ```sh
 mkdir -p .data
@@ -61,9 +61,9 @@ npm run app -- export records .data/records-export.ndjson
 npm run app -- export application .data/application-export.ndjson
 ```
 
-The command reads existing authenticated REST pages and writes newline-delimited JSON. The first line is a versioned `manifest`, each following line has a `type` and `value`, and the final `end` line has counts. It pages until each available collection ends, including archived conversations and each conversation's projections. The output is mode `0600` and is published only after all pages succeed; it never replaces an existing file. Keep the file private and outside version control. Each page is a live read, so concurrent changes may appear or be missed; a nonadvancing cursor or more than 10,000 pages for one collection fails without publishing a partial file. A failed or expired token also fails the export.
+The command reads existing authenticated REST pages and writes newline-delimited JSON. The first line is a versioned `manifest` (`ai-app-jumpstart-visible-data-v2`), each following line has a `type` and `value`, and the final `end` line has counts. It pages until each available collection ends, including archived conversations and each conversation's projections. The upload section records all active catalog entries in their current `pending`, `quarantined` or `deleting` state, followed by one `upload_usage` line. The output is mode `0600` and is published only after all reads succeed; it never replaces an existing file. Keep the file private and outside version control. Each page is a live read, so concurrent changes may appear or be missed; a nonadvancing cursor or more than 10,000 pages for one collection fails without publishing a partial file. A failed or expired token also fails the export.
 
-This is an **application-visible data export**, not a complete account export or backup. It does not include Supabase Auth profile/credentials, Eve's model history or workflow checkpoints, full budget ledgers, deleted artifact tombstones, provider logs or database backups. Projections contain selected captured events, not a canonical transcript. The manifest lists these omissions so recipients do not mistake the file for complete erasure or a compliance-grade snapshot. Full export and deletion still require coordinated provider/runtime retention work.
+This is an **application-visible data export**, not a complete account export or backup. Quarantined upload bytes are never included or made downloadable by this command. It also omits deleted upload tombstones and derived data, Supabase Auth profile/credentials, Eve's model history or workflow checkpoints, full budget ledgers, deleted artifact tombstones, provider logs and database backups. Projections contain selected captured events, not a canonical transcript. The manifest lists these omissions so recipients do not mistake the file for complete erasure or a compliance-grade snapshot. Full export and deletion still require coordinated provider/runtime retention work.
 
 ## MCP
 

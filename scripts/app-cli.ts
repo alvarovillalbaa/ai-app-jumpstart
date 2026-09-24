@@ -24,7 +24,7 @@ export async function run(args: string[], env: Record<string, string | undefined
     artifacts: "npm run app -- artifacts <list [--limit N] [--cursor CURSOR] | get ARTIFACT_UUID | delete ARTIFACT_UUID>",
     uploads: "npm run app -- uploads <list | get UPLOAD_UUID | put FILE | delete UPLOAD_UUID> (private quarantine; no download)",
     usage: "npm run app -- usage (current UTC-day AI budget snapshot; verified user token required)",
-    export: "npm run app -- export <records | application> OUTPUT.ndjson (private, no-clobber paged export)",
+    export: "npm run app -- export <records | application> OUTPUT.ndjson (private, no-clobber; application includes upload metadata, never bytes)",
     environment: "APP_API_URL (default http://localhost:3000), APP_API_TOKEN (server-issued credential)",
     note: "Record files contain title/content and, for update, revision. Conversation updates contain revision plus title and/or archived. Uploads require uploads:read/write scopes or a registered user and an explicitly configured private object backend; quarantined bytes cannot be downloaded. Output is JSON. Errors exit nonzero. Writes are never automatically retried.",
   };

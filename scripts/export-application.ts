@@ -8,6 +8,7 @@ import { artifactPage } from "../lib/agent-access/artifact-contract";
 import { projectionPage } from "../lib/agent-access/projection-contract";
 import { usageView } from "../lib/budgets/usage";
 import { recordId, recordInput } from "../lib/data/contract";
+import { uploadPage } from "../lib/uploads/catalog-contract";
 
 type Mode = "records" | "application";
 type Call = (path: string) => Promise<unknown>;
@@ -30,7 +31,7 @@ export async function exportApplication(mode: Mode, output: string, call: Call) 
   const directory = await mkdtemp(join(dirname(destination), ".jumpstart-export-"));
   const temporary = join(directory, `${randomUUID()}.ndjson`);
   let file: Awaited<ReturnType<typeof open>> | undefined;
-  const counts = { records: 0, conversations: 0, projections: 0, artifacts: 0, usage: 0 };
+  const counts = { records: 0, conversations: 0, projections: 0, artifacts: 0, uploads: 0, uploadUsage: 0, usage: 0 };
   async function write(type: string, value: unknown) {
     if (!file) throw new Error("Export file is unavailable.");
     await file.writeFile(`${JSON.stringify({ type, value })}\n`);
@@ -55,7 +56,7 @@ export async function exportApplication(mode: Mode, output: string, call: Call) 
   try {
     file = await open(temporary, "wx", 0o600);
     await write("manifest", {
-      format: "ai-app-jumpstart-visible-data-v1", mode, exportedAt: new Date().toISOString(),
+      format: "ai-app-jumpstart-visible-data-v2", mode, exportedAt: new Date().toISOString(),
       consistency: "paged-live-reads; concurrent changes may appear or be missed",
       exclusions: mode === "application" ? [
         "Supabase Auth profile, credentials and provider logs",
@@ -63,7 +64,8 @@ export async function exportApplication(mode: Mode, output: string, call: Call) 
         "Budget reservation, attempt, correction and historical daily ledgers",
         "Deleted artifact tombstones and database backups",
         "Conversation projections are selected events, not a canonical transcript",
-      ] : ["Conversation, artifact, usage, Auth, Eve and budget data"],
+        "Private upload object bytes, deleted upload tombstones and derived data",
+      ] : ["Conversation, artifact, upload, usage, Auth, Eve and budget data"],
     });
     await walk(
       (cursor: string | null) => `/api/v1/records?${new URLSearchParams({ limit: "100", ...(cursor ? { after: cursor } : {}) })}`,
@@ -90,6 +92,9 @@ export async function exportApplication(mode: Mode, output: string, call: Call) 
         value => artifactPage.parse(value),
         async item => { await write("artifact", item); counts.artifacts++; },
       );
+      const uploads = uploadPage.parse(await call("/api/v1/uploads"));
+      for (const item of uploads.items) { await write("upload", item); counts.uploads++; }
+      await write("upload_usage", uploads.usage); counts.uploadUsage = 1;
       await write("usage", usage); counts.usage = 1;
     }
     await write("end", { counts });

@@ -133,22 +133,32 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
   const exportRecord = await request.post("/api/v1/records",{ headers: { authorization: `Bearer ${alice.token}` },data: { title: "Exported private record",content: "Only Alice may read this." } });
   expect(exportRecord.status()).toBe(201);
   const exportRecordId = (await exportRecord.json()).id;
+  const exportUpload = await request.post("/api/v1/uploads",{ headers: {
+    authorization: `Bearer ${alice.token}`, "content-type": "application/octet-stream",
+    "x-upload-name": "private-export.txt", "x-upload-media-type": "text/plain",
+  }, data: Buffer.from("Alice's quarantined bytes are not exportable.\n") });
+  expect(exportUpload.status()).toBe(201);
+  const exportUploadId = (await exportUpload.json()).id;
   const exportDirectory = await mkdtemp(join(tmpdir(),"jumpstart-account-export-"));
   try {
     const aliceFile = join(exportDirectory,"alice.ndjson"),bobFile = join(exportDirectory,"bob.ndjson");
     const env = { APP_API_URL: process.env.APP_ORIGIN! };
     expect(await runCli(["export","application",aliceFile],{ ...env,APP_API_TOKEN: alice.token })).toMatchObject({
-      counts: { records: 1,conversations: 1,usage: 1 },
+      counts: { records: 1,conversations: 1,uploads: 1,uploadUsage: 1,usage: 1 },
     });
     const aliceLines = (await readFile(aliceFile,"utf8")).trim().split("\n").map(line => JSON.parse(line));
     expect(aliceLines.some(line => line.type === "record" && line.value.id === exportRecordId)).toBe(true);
     expect(aliceLines.some(line => line.type === "conversation" && line.value.operationId === receipt.operationId)).toBe(true);
     expect(aliceLines.some(line => line.type === "projection" && line.value.operationId === receipt.operationId)).toBe(true);
+    expect(aliceLines.some(line => line.type === "upload" && line.value.id === exportUploadId && line.value.state === "quarantined")).toBe(true);
+    expect(aliceLines.some(line => line.type === "upload_usage" && line.value.files === 1)).toBe(true);
+    expect(await readFile(aliceFile,"utf8")).not.toContain("Alice's quarantined bytes are not exportable.");
     expect(await runCli(["export","application",bobFile],{ ...env,APP_API_TOKEN: bob.token })).toMatchObject({
-      counts: { records: 0,conversations: 0,projections: 0,artifacts: 0,usage: 1 },
+      counts: { records: 0,conversations: 0,projections: 0,artifacts: 0,uploads: 0,uploadUsage: 1,usage: 1 },
     });
     expect(await readFile(bobFile,"utf8")).not.toContain(exportRecordId);
     expect(await readFile(bobFile,"utf8")).not.toContain(receipt.operationId);
+    expect(await readFile(bobFile,"utf8")).not.toContain(exportUploadId);
   } finally { await rm(exportDirectory,{ recursive: true,force: true }); }
   const usageMcp = new Client({ name: "usage-browser-contract",version: "1" });
   try {
