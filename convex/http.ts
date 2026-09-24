@@ -62,6 +62,7 @@ http.route({ path: "/app/records", method: "POST", handler: httpAction(async (ct
       case "upload.get": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.uploads.get,input)); }
       case "upload.list": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.uploads.list,input)); }
       case "upload.beginDelete": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.uploads.beginDelete,input)); }
+      case "upload.claimStalePending": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.uploads.claimStalePending,input)); }
       case "upload.finishDelete": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.uploads.finishDelete,input)); }
       case "upload.usage": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.uploads.usage,input)); }
       case "budget.claimAttempt": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.budgets.claimAttempt, { input })); }

@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { accessOwner } from "../agent-access/contract";
-import { uploadEntry, uploadList, uploadQuota, uploadReservation, uploadUsage, type UploadCatalog } from "./catalog-contract";
+import { uploadEntry, uploadList, uploadQuota, uploadReservation, uploadUsage, staleUploadCutoff, type UploadCatalog } from "./catalog-contract";
 import { uploadId } from "./schema";
 
 type Row = { id: string;tenant: string;subject: string;name: string;media_type: string;size: number;sha256: string;created_at: number;state: string };
@@ -62,6 +62,11 @@ export function sqliteUploadCatalog(path: string): UploadCatalog {
       return uploadList.parse(rows.map(entry));
     },
     async beginDelete(owner,id) { return transition(owner,id,["pending","quarantined"],"deleting"); },
+    async claimStalePending(owner,rawId,rawCutoff) {
+      const checked = accessOwner.parse(owner),id = uploadId.parse(rawId),cutoff = staleUploadCutoff.parse(rawCutoff);
+      return db.prepare("UPDATE app_uploads SET state='deleting' WHERE tenant=? AND subject=? AND id=? AND state='pending' AND created_at<=?")
+        .run(checked.tenant,checked.subject,id,cutoff).changes === 1;
+    },
     async finishDelete(owner,id) { return transition(owner,id,["deleting"],"deleted"); },
     async usage(owner) { const checked = accessOwner.parse(owner);return uploadUsage.parse(usage.get(checked.tenant,checked.subject)); },
     async close() { db.close(); },

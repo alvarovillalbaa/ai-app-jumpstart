@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -76,4 +77,29 @@ it("compensates an ambiguous blob write, and holds quota if cleanup fails",async
     await expect(intake.accept(owner,"bad.svg","image/svg+xml",encoder.encode("<svg/>"))).rejects.toBeDefined();
     expect(await intake.usage(owner)).toEqual({ files: 0,bytes: 0 });
   } finally { log.mockRestore();await catalog.close(); }
+});
+
+it("holds quota after a failed stale-pending cleanup and permits deletion retry",async () => {
+  const catalog = sqliteUploadCatalog(":memory:"),stored = new Map<string,Uint8Array>();
+  const row = { id: randomUUID(),name: "old.txt",mediaType: "text/plain" as const,size: 6,
+    sha256: "a".repeat(64),createdAt: 1_000 };
+  let failDelete = true;
+  const objects: PrivateUploadObjects = {
+    async put(owner,id,bytes) { stored.set(uploadObjectKey(owner,id),bytes); },
+    async get(owner,id) { return stored.get(uploadObjectKey(owner,id)) ?? null; },
+    async delete(owner,id) { if (failDelete) { failDelete = false;throw new Error("storage unavailable"); }
+      return stored.delete(uploadObjectKey(owner,id)); },
+  };
+  try {
+    const intake = new UploadIntake(catalog,objects);
+    expect(await catalog.reserve(owner,row,{ maxBytes: 6,maxFiles: 1 })).toBe("reserved");
+    await objects.put(owner,row.id,encoder.encode("secret"));
+    await expect(intake.removeStalePending(other,row.id,2_000)).resolves.toBe(false);
+    await expect(intake.removeStalePending(owner,row.id,2_000)).rejects.toThrow("storage unavailable");
+    expect(await catalog.get(owner,row.id)).toMatchObject({ state: "deleting" });
+    expect(await catalog.usage(owner)).toEqual({ files: 1,bytes: 6 });
+    expect(await intake.remove(owner,row.id)).toBe(true);
+    expect(stored.size).toBe(0);
+    expect(await catalog.usage(owner)).toEqual({ files: 0,bytes: 0 });
+  } finally { await catalog.close(); }
 });

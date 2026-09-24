@@ -6,6 +6,8 @@ import { DEFAULT_UPLOAD_QUOTA, uploadQuota, type UploadCatalog, type UploadQuota
 import { checkUpload } from "./validation";
 import type { UploadScanner } from "./scanner";
 
+export const STALE_PENDING_UPLOAD_MS = 24 * 60 * 60 * 1000;
+
 /** Internal quarantine lifecycle. Only a new catalog reservation may write bytes. */
 export class UploadIntake {
   private quota: UploadQuota;
@@ -65,6 +67,12 @@ export class UploadIntake {
     if (!await this.catalog.beginDelete(owner,id)) return false;
     await this.objects.delete(owner,id);
     if (!await this.catalog.finishDelete(owner,id)) throw new Error("Upload deletion could not be finalized.");
+    return true;
+  }
+  async removeStalePending(owner: AccessOwner,id: string,cutoff: number) {
+    if (!await this.catalog.claimStalePending(owner,id,cutoff)) return false;
+    await this.objects.delete(owner,id);
+    if (!await this.catalog.finishDelete(owner,id)) throw new Error("Stale upload deletion could not be finalized.");
     return true;
   }
 }

@@ -6,6 +6,7 @@ import { afterEach,expect,it,vi } from "vitest";
 import { uploadHandlers,MAX_API_UPLOAD_BYTES } from "../../lib/http/uploads";
 import { sqliteUploadCatalog } from "../../lib/uploads/catalog-sqlite";
 import { localUploadObjects } from "../../lib/uploads/local";
+import { STALE_PENDING_UPLOAD_MS } from "../../lib/uploads/intake";
 
 const root = "http://localhost:3000/api/v1/uploads";
 const alice = "upload-alice-token-".repeat(3),bob = "upload-bob-token-".repeat(3),records = "records-only-token-".repeat(3);
@@ -45,6 +46,30 @@ it("keeps raw bytes quarantined while exposing owner-only metadata, usage and de
     expect((await api.delete(request(`${root}/${row.id}`,alice,"DELETE"),row.id)).status).toBe(204);
     expect(await objects.get({ tenant: "test",subject: "alice" },row.id)).toBeNull();
     expect((await api.get(request(`${root}/${row.id}`,alice),row.id)).status).toBe(404);
+  } finally { await catalog.close();await rm(directory,{ recursive: true,force: true }); }
+});
+
+it("lets an owner remove an abandoned pending upload after the grace period",async () => {
+  vi.stubEnv("AUTH_PROVIDER","api-key");
+  vi.stubEnv("APP_API_KEYS",JSON.stringify([key(alice,"alice",["uploads:read","uploads:write"]),
+    key(bob,"bob",["uploads:read","uploads:write"])]));
+  const directory = await mkdtemp(join(tmpdir(),"jumpstart-upload-recovery-"));
+  const catalog = sqliteUploadCatalog(":memory:"),objects = localUploadObjects(directory),api = uploadHandlers(async () => catalog,async () => objects);
+  const owner = { tenant: "test",subject: "alice" },quota = { maxBytes: 10,maxFiles: 2 };
+  const old = { id: randomUUID(),name: "old.txt",mediaType: "text/plain" as const,size: 6,sha256: "a".repeat(64),
+    createdAt: Date.now()-STALE_PENDING_UPLOAD_MS-1_000 };
+  const recent = { ...old,id: randomUUID(),size: 4,createdAt: Date.now() };
+  try {
+    expect(await catalog.reserve(owner,old,quota)).toBe("reserved");
+    expect(await catalog.reserve(owner,recent,quota)).toBe("reserved");
+    await objects.put(owner,old.id,new TextEncoder().encode("secret"));
+    expect((await api.delete(request(`${root}/${recent.id}`,alice,"DELETE"),recent.id)).status).toBe(409);
+    expect((await api.delete(request(`${root}/${old.id}`,bob,"DELETE"),old.id)).status).toBe(404);
+    expect((await api.delete(request(`${root}/${old.id}`,alice,"DELETE"),old.id)).status).toBe(204);
+    expect(await objects.get(owner,old.id)).toBeNull();
+    expect(await catalog.get(owner,old.id)).toMatchObject({ state: "deleted" });
+    expect(await catalog.get(owner,recent.id)).toMatchObject({ state: "pending" });
+    expect(await catalog.usage(owner)).toEqual({ files: 1,bytes: 4 });
   } finally { await catalog.close();await rm(directory,{ recursive: true,force: true }); }
 });
 

@@ -61,6 +61,28 @@ export function uploadCatalogContract(name: string, factory: () => Promise<Uploa
       expect(await catalog.beginDelete(owner,randomUUID())).toBe(false);
     });
 
+    it("claims only old pending uploads for their owner without racing quarantine", async () => {
+      const old = input(),fresh = input(4),quarantined = input(),other = { ...owner,subject: "bob" };
+      old.createdAt = 1_000;fresh.createdAt = 3_000;quarantined.createdAt = 1_000;
+      expect(await catalog.reserve(owner,old,quota)).toBe("reserved");
+      expect(await catalog.reserve(owner,fresh,quota)).toBe("reserved");
+      expect(await catalog.reserve(owner,quarantined,quota)).toBe("quota");
+      expect(await catalog.claimStalePending(other,old.id,2_000)).toBe(false);
+      expect(await catalog.claimStalePending(owner,old.id,999)).toBe(false);
+      expect(await catalog.claimStalePending(owner,old.id,2_000)).toBe(true);
+      expect(await catalog.claimStalePending(owner,old.id,2_000)).toBe(false);
+      expect(await catalog.markStored(owner,old.id)).toBe(false);
+      expect(await catalog.usage(owner)).toEqual({ files: 2,bytes: 10 });
+      expect(await catalog.finishDelete(owner,old.id)).toBe(true);
+      expect(await catalog.reserve(owner,quarantined,quota)).toBe("reserved");
+      expect(await catalog.claimStalePending(owner,fresh.id,2_000)).toBe(false);
+      expect(await catalog.markStored(owner,fresh.id)).toBe(true);
+      expect(await catalog.claimStalePending(owner,fresh.id,4_000)).toBe(false);
+      expect(await catalog.markStored(owner,quarantined.id)).toBe(true);
+      expect(await catalog.claimStalePending(owner,quarantined.id,4_000)).toBe(false);
+      await expect(catalog.claimStalePending(owner,fresh.id,-1)).rejects.toBeDefined();
+    });
+
     it("rejects invalid metadata and quota values before writing", async () => {
       await expect(catalog.reserve(owner,{ ...input(),name: "../escape.txt" },quota)).rejects.toBeDefined();
       await expect(catalog.reserve(owner,input(),{ maxBytes: 0,maxFiles: 1 })).rejects.toBeDefined();

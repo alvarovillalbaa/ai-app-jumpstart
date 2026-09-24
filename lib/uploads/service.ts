@@ -1,7 +1,7 @@
 import type { Principal } from "../data/service";
 import { AppError } from "../http/errors";
 import { uploadId } from "./schema";
-import { UploadIntake } from "./intake";
+import { STALE_PENDING_UPLOAD_MS, UploadIntake } from "./intake";
 import type { UploadCatalog } from "./catalog-contract";
 import type { PrivateUploadObjects } from "./contract";
 import type { UploadScanner } from "./scanner";
@@ -32,6 +32,10 @@ export class UploadService {
     const owner = this.owner("uploads:write"),id = uploadId.parse(rawId);
     const row = await this.catalog.get(owner,id);
     if (!row || row.state === "deleted") throw new AppError(404,"not_found","Upload not found.");
-    if (!await (await this.intake()).remove(owner,id)) throw new AppError(409,"upload_busy","Upload is still being written. Retry later.");
+    const intake = await this.intake();
+    const removed = row.state === "pending"
+      ? await intake.removeStalePending(owner,id,Date.now()-STALE_PENDING_UPLOAD_MS)
+      : await intake.remove(owner,id);
+    if (!removed) throw new AppError(409,"upload_busy","Upload is still being written. Retry later.");
   }
 }

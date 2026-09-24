@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery, type QueryCtx } from "./_generated/server";
 import { accessOwner, type AccessOwner } from "../lib/agent-access/contract";
-import { uploadEntry, uploadList, uploadQuota, uploadReservation, uploadUsage } from "../lib/uploads/catalog-contract";
+import { uploadEntry, uploadList, uploadQuota, uploadReservation, uploadUsage, staleUploadCutoff } from "../lib/uploads/catalog-contract";
 import { uploadId } from "../lib/uploads/schema";
 
 const ownerFields = { tenant: v.string(),subject: v.string() };
@@ -62,6 +62,15 @@ export const beginDelete = internalMutation({
     if (!row) return false;
     if (row.state === "pending" || row.state === "quarantined") { await ctx.db.patch(row._id,{ state: "deleting" });return true; }
     return row.state === "deleting";
+  },
+});
+export const claimStalePending = internalMutation({
+  args: { ...ownerFields,id: v.string(),cutoff: v.number() },
+  handler: async (ctx,args) => {
+    const cutoff = staleUploadCutoff.parse(args.cutoff),row = await ownedRow(ctx,args,args.id);
+    if (!row || row.state !== "pending" || row.createdAt > cutoff) return false;
+    await ctx.db.patch(row._id,{ state: "deleting" });
+    return true;
   },
 });
 export const finishDelete = internalMutation({
