@@ -23,6 +23,7 @@ export async function run(args: string[], env: Record<string, string | undefined
     conversations: "npm run app -- conversations <list [--archived] [--limit N] [--cursor CURSOR] | get OPERATION_UUID | events OPERATION_UUID [AFTER_INGESTION_INDEX] | update OPERATION_UUID JSON_FILE>",
     artifacts: "npm run app -- artifacts <list [--limit N] [--cursor CURSOR] | get ARTIFACT_UUID | delete ARTIFACT_UUID>",
     uploads: "npm run app -- uploads <list | get UPLOAD_UUID | put FILE | delete UPLOAD_UUID> (private quarantine; no download)",
+    account: "npm run app -- account profile (selected fields; current registered-user token required)",
     usage: "npm run app -- usage (current UTC-day AI budget snapshot; verified user token required)",
     export: "npm run app -- export <records | application> OUTPUT.ndjson (private, no-clobber; application includes upload metadata, never bytes)",
     environment: "APP_API_URL (default http://localhost:3000), APP_API_TOKEN (server-issued credential)",
@@ -82,6 +83,7 @@ export async function run(args: string[], env: Record<string, string | undefined
   if (command === "export" && rest.length === 2 && (rest[0] === "records" || rest[0] === "application")) {
     return exportApplication(rest[0], rest[1], path => call(path));
   }
+  if (command === "account" && rest.length === 1 && rest[0] === "profile") return call("/api/v1/account/profile");
   if (command === "uploads") {
     const [action,...options] = rest;
     if (action === "list" && options.length === 0) return call("/api/v1/uploads");

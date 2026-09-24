@@ -139,12 +139,17 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
   }, data: Buffer.from("Alice's quarantined bytes are not exportable.\n") });
   expect(exportUpload.status()).toBe(201);
   const exportUploadId = (await exportUpload.json()).id;
+  const profileResponse = await request.get("/api/v1/account/profile",{ headers: { authorization: `Bearer ${alice.token}` } });
+  expect(profileResponse.status()).toBe(200);
+  const aliceProfile = await profileResponse.json();
+  expect(aliceProfile).toMatchObject({ id: alice.id,email: alice.email });
+  expect(await runCli(["account","profile"],{ APP_API_URL: process.env.APP_ORIGIN!,APP_API_TOKEN: alice.token })).toEqual(aliceProfile);
   const exportDirectory = await mkdtemp(join(tmpdir(),"jumpstart-account-export-"));
   try {
     const aliceFile = join(exportDirectory,"alice.ndjson"),bobFile = join(exportDirectory,"bob.ndjson");
     const env = { APP_API_URL: process.env.APP_ORIGIN! };
     expect(await runCli(["export","application",aliceFile],{ ...env,APP_API_TOKEN: alice.token })).toMatchObject({
-      counts: { records: 1,conversations: 1,uploads: 1,uploadUsage: 1,usage: 1 },
+      counts: { profile: 1,records: 1,conversations: 1,uploads: 1,uploadUsage: 1,usage: 1 },
     });
     const aliceLines = (await readFile(aliceFile,"utf8")).trim().split("\n").map(line => JSON.parse(line));
     expect(aliceLines.some(line => line.type === "record" && line.value.id === exportRecordId)).toBe(true);
@@ -152,17 +157,24 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
     expect(aliceLines.some(line => line.type === "projection" && line.value.operationId === receipt.operationId)).toBe(true);
     expect(aliceLines.some(line => line.type === "upload" && line.value.id === exportUploadId && line.value.state === "quarantined")).toBe(true);
     expect(aliceLines.some(line => line.type === "upload_usage" && line.value.files === 1)).toBe(true);
+    expect(aliceLines.find(line => line.type === "account_profile")?.value).toEqual(aliceProfile);
     expect(await readFile(aliceFile,"utf8")).not.toContain("Alice's quarantined bytes are not exportable.");
     expect(await runCli(["export","application",bobFile],{ ...env,APP_API_TOKEN: bob.token })).toMatchObject({
-      counts: { records: 0,conversations: 0,projections: 0,artifacts: 0,uploads: 0,uploadUsage: 1,usage: 1 },
+      counts: { profile: 1,records: 0,conversations: 0,projections: 0,artifacts: 0,uploads: 0,uploadUsage: 1,usage: 1 },
     });
     expect(await readFile(bobFile,"utf8")).not.toContain(exportRecordId);
     expect(await readFile(bobFile,"utf8")).not.toContain(receipt.operationId);
     expect(await readFile(bobFile,"utf8")).not.toContain(exportUploadId);
+    expect(await readFile(bobFile,"utf8")).not.toContain(alice.id);
   } finally { await rm(exportDirectory,{ recursive: true,force: true }); }
   const usageMcp = new Client({ name: "usage-browser-contract",version: "1" });
   try {
     await usageMcp.connect(new StreamableHTTPClientTransport(new URL("/api/mcp",process.env.APP_ORIGIN!),{ requestInit: { headers: { authorization: `Bearer ${alice.token}` } } }));
+    const profileTool = await usageMcp.callTool({ name: "account_profile",arguments: {} });
+    expect(profileTool.isError).not.toBe(true);
+    expect(JSON.parse((profileTool.content as { text: string }[])[0].text)).toEqual(aliceProfile);
+    const profileResource = await usageMcp.readResource({ uri: "account:///profile" });
+    expect("text" in profileResource.contents[0] && JSON.parse(profileResource.contents[0].text)).toEqual(aliceProfile);
     const tool = await usageMcp.callTool({ name: "usage_get",arguments: {} });
     expect(tool.isError).not.toBe(true);
     expect(JSON.parse((tool.content as { text: string }[])[0].text)).toEqual(usageView);

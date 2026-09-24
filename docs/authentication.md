@@ -40,6 +40,8 @@ The request-scoped SSR client uses `getUser()`; it does not authorize from the c
 
 The server derives ownership from the configured identity-provider origin and verified user ID. It ignores `user_metadata`, and rejects anonymous accounts. This is a single-organization account model: team membership, roles and entitlements require additional authoritative policy. Changing the identity-provider origin changes the owner namespace and requires a planned data migration.
 
+`GET /api/v1/account/profile` revalidates the current bearer token against Auth and returns only selected profile fields with `Cache-Control: no-store`. The same snapshot is available through the CLI and an account-only MCP tool/resource, and appears in the application-visible export. User-editable metadata stays data, never an authorization source. Provider credentials, linked identity details, MFA factors and sessions are outside this snapshot; see [export limits](data-access.md#export-visible-application-data).
+
 Browser session events clear the old account's records and draft form by remounting that screen on account changes. A late token lookup cannot issue an API request for a newly selected account. Sign-out revokes the current session, clears the browser session and refreshes server navigation. API and MCP require explicit bearer credentials; they do not authorize using ambient cookies.
 
 CLI and MCP can use a current Supabase access token or an administrator-issued API key. Supabase access tokens expire; those clients currently require the caller to supply a refreshed token. Do not put a database key or Supabase service credential into `APP_API_TOKEN`.

@@ -3,7 +3,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { z } from "zod";
 import { recordInput, recordUpdate } from "./data/contract";
 import { RecordService } from "./data/service";
-import { authenticate } from "./http/auth";
+import { authenticate, bearerToken } from "./http/auth";
 import { AppError } from "./http/errors";
 import { handle, readJson } from "./http/handler";
 import { getRepository } from "./data/repository";
@@ -22,8 +22,12 @@ import { UploadService } from "./uploads/service";
 import { getUploadCatalog } from "./uploads/catalog-store";
 import { createUploadObjects } from "./uploads/objects-store";
 import type { UploadCatalog } from "./uploads/catalog-contract";
+import { authSettings } from "./auth/settings";
+import { verifySupabaseIdentity } from "./auth/identity";
+import { profileSnapshot, type AccountProfile } from "./auth/profile";
 
-export function createMcpServer(service: RecordService, history?: ConversationHistoryService,artifacts?: ArtifactService,usage?: UsageService,uploads?: UploadService) {
+export function createMcpServer(service: RecordService, history?: ConversationHistoryService,artifacts?: ArtifactService,usage?: UsageService,uploads?: UploadService,
+  profile?: () => Promise<AccountProfile>) {
   const server = new McpServer({ name: "ai-app-jumpstart-data", version: "1.0.0" });
   async function result(action: () => Promise<unknown>) {
     try { return { content: [{ type: "text" as const, text: JSON.stringify(await action()) }] }; }
@@ -141,6 +145,18 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
       catch { throw new Error("Upload unavailable."); }
     });
   }
+  if (profile) {
+    server.registerTool("account_profile",{
+      description: "Read selected profile fields for the currently verified account. Excludes credentials, sessions, MFA factors and provider identity details.",
+      inputSchema: z.object({}).strict(),annotations: { readOnlyHint: true,openWorldHint: false },
+    },() => result(profile));
+    server.registerResource("account-profile","account:///profile",{
+      description: "Selected current account profile fields",mimeType: "application/json",
+    },async uri => {
+      try { return { contents: [{ uri: uri.href,mimeType: "application/json",text: JSON.stringify(await profile()) }] }; }
+      catch { throw new Error("Account profile unavailable."); }
+    });
+  }
   return server;
 }
 
@@ -158,7 +174,16 @@ export function mcpHandler(repository: () => Promise<RecordRepository> = getRepo
     const artifacts = ownedStore ? new ArtifactService(ownedStore,owner) : undefined;
     const usage = settings ? new UsageService(budgetStore,owner,settings.budget.policy.dailyMicros) : undefined;
     const uploads = process.env.UPLOAD_STORAGE_PROVIDER ? new UploadService(await uploadCatalog(),createUploadObjects,principal) : undefined;
-    const server = createMcpServer(new RecordService(await repository(), principal), history, artifacts, usage,uploads);
+    const profile = principal.credentialType === "user" ? async () => {
+      const auth = authSettings();
+      if (!auth) throw new AppError(503,"auth_unconfigured","Configure Supabase sign-in for account profiles.");
+      const current = await verifySupabaseIdentity(bearerToken(request),auth);
+      if (current.principal.tenant !== owner.tenant || current.principal.subject !== owner.subject) {
+        throw new AppError(401,"unauthorized","Your session expired. Sign in again.");
+      }
+      return profileSnapshot(current.user);
+    } : undefined;
+    const server = createMcpServer(new RecordService(await repository(), principal), history, artifacts, usage,uploads,profile);
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     await server.connect(transport);
     try { return await transport.handleRequest(request, { parsedBody }); }

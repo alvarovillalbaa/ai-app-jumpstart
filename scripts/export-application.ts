@@ -6,6 +6,7 @@ import { z } from "zod";
 import { historyPage } from "../lib/agent-access/contract";
 import { artifactPage } from "../lib/agent-access/artifact-contract";
 import { projectionPage } from "../lib/agent-access/projection-contract";
+import { accountProfile } from "../lib/auth/profile";
 import { usageView } from "../lib/budgets/usage";
 import { recordId, recordInput } from "../lib/data/contract";
 import { uploadPage } from "../lib/uploads/catalog-contract";
@@ -25,13 +26,14 @@ export async function exportApplication(mode: Mode, output: string, call: Call) 
   const destination = resolve(output);
   if (existsSync(destination)) throw new Error("Export destination already exists; choose a new file.");
 
-  // This also proves that application mode has a current registered-user token
-  // and enabled account chat before creating a local file.
+  // Verify the current registered user and enabled account chat before creating
+  // a local file. Neither a record API key nor a stale token can export a profile.
+  const profile = mode === "application" ? accountProfile.parse(await call("/api/v1/account/profile")) : null;
   const usage = mode === "application" ? usageView.parse(await call("/api/v1/usage")) : null;
   const directory = await mkdtemp(join(dirname(destination), ".jumpstart-export-"));
   const temporary = join(directory, `${randomUUID()}.ndjson`);
   let file: Awaited<ReturnType<typeof open>> | undefined;
-  const counts = { records: 0, conversations: 0, projections: 0, artifacts: 0, uploads: 0, uploadUsage: 0, usage: 0 };
+  const counts = { profile: 0, records: 0, conversations: 0, projections: 0, artifacts: 0, uploads: 0, uploadUsage: 0, usage: 0 };
   async function write(type: string, value: unknown) {
     if (!file) throw new Error("Export file is unavailable.");
     await file.writeFile(`${JSON.stringify({ type, value })}\n`);
@@ -56,10 +58,10 @@ export async function exportApplication(mode: Mode, output: string, call: Call) 
   try {
     file = await open(temporary, "wx", 0o600);
     await write("manifest", {
-      format: "ai-app-jumpstart-visible-data-v2", mode, exportedAt: new Date().toISOString(),
+      format: "ai-app-jumpstart-visible-data-v3", mode, exportedAt: new Date().toISOString(),
       consistency: "paged-live-reads; concurrent changes may appear or be missed",
       exclusions: mode === "application" ? [
-        "Supabase Auth profile, credentials and provider logs",
+        "Auth credentials, sessions, MFA factors, linked identity details and provider logs; profile is selected fields only",
         "Eve session/model history, workflow checkpoints, sandboxes and traces",
         "Budget reservation, attempt, correction and historical daily ledgers",
         "Deleted artifact tombstones and database backups",
@@ -67,6 +69,7 @@ export async function exportApplication(mode: Mode, output: string, call: Call) 
         "Private upload object bytes, deleted upload tombstones and derived data",
       ] : ["Conversation, artifact, upload, usage, Auth, Eve and budget data"],
     });
+    if (profile) { await write("account_profile", profile); counts.profile = 1; }
     await walk(
       (cursor: string | null) => `/api/v1/records?${new URLSearchParams({ limit: "100", ...(cursor ? { after: cursor } : {}) })}`,
       value => recordPage.parse(value),

@@ -13,8 +13,8 @@ export const authFetch: typeof fetch = (input, init) => fetch(input, {
   signal: init?.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(8000)]) : AbortSignal.timeout(8000),
 });
 
-/** Framework-neutral: reusable by Next handlers and Eve's independent runtime. */
-export async function verifySupabaseToken(token: string, settings: PublicAuthSettings): Promise<Principal> {
+/** Fetches the current user from Auth; never trusts editable metadata as an owner. */
+export async function verifySupabaseIdentity(token: string, settings: PublicAuthSettings): Promise<{ user: User; principal: Principal }> {
   const client = createClient(settings.url, settings.publishableKey, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     global: { fetch: authFetch },
@@ -25,5 +25,10 @@ export async function verifySupabaseToken(token: string, settings: PublicAuthSet
     throw new AppError(401, "unauthorized", "Your session expired. Sign in again.");
   }
   if (!data.user) throw new AppError(401, "unauthorized", "Sign in to continue.");
-  return userPrincipal(data.user, settings);
+  return { user: data.user, principal: userPrincipal(data.user, settings) };
+}
+
+/** Framework-neutral: reusable by Next handlers and Eve's independent runtime. */
+export async function verifySupabaseToken(token: string, settings: PublicAuthSettings): Promise<Principal> {
+  return (await verifySupabaseIdentity(token, settings)).principal;
 }

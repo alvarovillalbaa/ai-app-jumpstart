@@ -40,6 +40,8 @@ npm run app -- delete RECORD_UUID 2
 
 Use `npm run --silent app -- list` for JSON pipelines. Files contain the REST payload. The CLI rejects remote HTTP, follows no redirects, retries no writes, and exits nonzero on failures. Credentials are never command arguments. For a protected Vercel deployment, an optional `VERCEL_AUTOMATION_BYPASS_SECRET` environment value is sent as an HTTP header to the configured `APP_API_URL`; set it only for the intended Vercel target.
 
+A current registered-user token can read selected Supabase Auth profile fields at `GET /api/v1/account/profile`, `npm run app -- account profile`, or the MCP `account_profile` tool and `account:///profile` resource. The snapshot includes contact addresses, account timestamps, linked provider names and user-editable metadata. It excludes credentials, sessions, MFA factors, provider identity details and arbitrary server-controlled Auth metadata. User metadata is exported as data and never grants application permissions. API keys, anonymous accounts and revoked tokens cannot read the profile.
+
 For conversation metadata, set `APP_API_TOKEN` to a current registered-user access token and run:
 
 ```sh
@@ -53,7 +55,7 @@ An update file contains `{"revision":1,"title":"New title"}`, `{"revision":1,"ar
 
 ### Export visible application data
 
-With a record read token, download all owner-scoped records. With a current registered-user token and account chat enabled, download records plus conversation metadata, selected stream projections, saved artifacts, active private-upload metadata and both upload and AI usage snapshots:
+With a record read token, download all owner-scoped records. With a current registered-user token and account chat enabled, download the selected account profile plus records, conversation metadata, selected stream projections, saved artifacts, active private-upload metadata and both upload and AI usage snapshots:
 
 ```sh
 mkdir -p .data
@@ -61,9 +63,9 @@ npm run app -- export records .data/records-export.ndjson
 npm run app -- export application .data/application-export.ndjson
 ```
 
-The command reads existing authenticated REST pages and writes newline-delimited JSON. The first line is a versioned `manifest` (`ai-app-jumpstart-visible-data-v2`), each following line has a `type` and `value`, and the final `end` line has counts. It pages until each available collection ends, including archived conversations and each conversation's projections. The upload section records all active catalog entries in their current `pending`, `quarantined` or `deleting` state, followed by one `upload_usage` line. The output is mode `0600` and is published only after all reads succeed; it never replaces an existing file. Keep the file private and outside version control. Each page is a live read, so concurrent changes may appear or be missed; a nonadvancing cursor or more than 10,000 pages for one collection fails without publishing a partial file. A failed or expired token also fails the export.
+The command reads existing authenticated REST pages and writes newline-delimited JSON. The first line is a versioned `manifest` (`ai-app-jumpstart-visible-data-v3`), each following line has a `type` and `value`, and the final `end` line has counts. Application mode writes one `account_profile` line before owner-scoped records. It pages until each available collection ends, including archived conversations and each conversation's projections. The upload section records all active catalog entries in their current `pending`, `quarantined` or `deleting` state, followed by one `upload_usage` line. The output is mode `0600` and is published only after all reads succeed; it never replaces an existing file. Keep the file private and outside version control. Each page is a live read, so concurrent changes may appear or be missed; a nonadvancing cursor or more than 10,000 pages for one collection fails without publishing a partial file. A failed or expired token also fails the export.
 
-This is an **application-visible data export**, not a complete account export or backup. Quarantined upload bytes are never included or made downloadable by this command. It also omits deleted upload tombstones and derived data, Supabase Auth profile/credentials, Eve's model history or workflow checkpoints, full budget ledgers, deleted artifact tombstones, provider logs and database backups. Projections contain selected captured events, not a canonical transcript. The manifest lists these omissions so recipients do not mistake the file for complete erasure or a compliance-grade snapshot. Full export and deletion still require coordinated provider/runtime retention work.
+This is an **application-visible data export**, not a complete account export or backup. Quarantined upload bytes are never included or made downloadable by this command. It also omits deleted upload tombstones and derived data, the rest of the Supabase Auth user record, credentials, linked identity details, sessions and MFA factors, Eve's model history or workflow checkpoints, full budget ledgers, deleted artifact tombstones, provider logs and database backups. Projections contain selected captured events, not a canonical transcript. The manifest lists these omissions so recipients do not mistake the file for complete erasure or a compliance-grade snapshot. Full export and deletion still require coordinated provider/runtime retention work.
 
 ## MCP
 

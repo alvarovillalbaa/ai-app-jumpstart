@@ -19,11 +19,16 @@ export async function authenticate(request: Request, env: NodeJS.ProcessEnv = pr
   try { keys = credentials.parse(JSON.parse(env.APP_API_KEYS ?? "[]")); }
   catch { throw new AppError(503, "auth_unconfigured", "Configure APP_API_KEYS before using application data."); }
   if (!keys.length && !settings) throw new AppError(503, "auth_unconfigured", "Configure APP_API_KEYS or Supabase sign-in before using application data.");
-  const token = request.headers.get("authorization")?.match(/^Bearer ([^\s]+)$/i)?.[1];
-  if (!token || token.length < 32 || token.length > 16384) throw new AppError(401, "unauthorized", "A valid bearer credential is required.");
+  const token = bearerToken(request);
   const digest = createHash("sha256").update(token).digest();
   const key = keys.find(key => timingSafeEqual(digest, Buffer.from(key.sha256, "hex")));
   if (!key && settings) return { ...await verifySupabaseToken(token, settings), credentialType: "user" };
   if (!key) throw new AppError(401, "unauthorized", "A valid bearer credential is required.");
   return { tenant: key.tenant, subject: key.subject, scopes: key.scopes, credentialType: "api-key" };
+}
+
+export function bearerToken(request: Request) {
+  const token = request.headers.get("authorization")?.match(/^Bearer ([^\s]+)$/i)?.[1];
+  if (!token || token.length < 32 || token.length > 16384) throw new AppError(401, "unauthorized", "A valid bearer credential is required.");
+  return token;
 }
