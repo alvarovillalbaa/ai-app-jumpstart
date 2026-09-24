@@ -4,6 +4,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
+import { createServer } from "node:net";
+import { once } from "node:events";
 
 // Honors DOCKER_CONTEXT/DOCKER_HOST without changing the operator's defaults.
 const image = process.env.TEST_CONTAINER_IMAGE ?? "ai-app-jumpstart:test";
@@ -41,21 +43,22 @@ try {
     console.log("Building the production container...");
     await docker("build", "-t", image, ".");
   }
-  await writeFile(join(directory, "env"), `APP_API_KEYS=${JSON.stringify(keys)}\nDATA_PROVIDER=sqlite\nSQLITE_PATH=/app/.data/app.sqlite\n`, { mode: 0o600 });
+  const listener = createServer();
+  listener.listen(0, "127.0.0.1"); await once(listener, "listening");
+  const hostPort = listener.address().port;
+  await new Promise(resolve => listener.close(resolve));
+  const origin = `http://127.0.0.1:${hostPort}`;
+  await writeFile(join(directory, "env"), `APP_ORIGIN=${origin}\nAPP_API_KEYS=${JSON.stringify(keys)}\nDATA_PROVIDER=sqlite\nSQLITE_PATH=/app/.data/app.sqlite\n`, { mode: 0o600 });
   await docker("volume", "create", volume);
-  await docker("run", "--detach", "--init", "--name", name, "--publish", "127.0.0.1::3000", "--env-file", join(directory, "env"), "--mount", `type=volume,source=${volume},target=/app/.data`, image);
-  const publishedOrigin = async () => `http://127.0.0.1:${(await docker("port", name, "3000/tcp")).split(":").at(-1)}`;
-  let origin = await publishedOrigin();
+  await docker("run", "--detach", "--init", "--name", name, "--publish", `127.0.0.1:${hostPort}:3000`, "--env-file", join(directory, "env"), "--mount", `type=volume,source=${volume},target=/app/.data`, image);
   await ready(origin);
   assert.notEqual(await docker("exec", name, "id", "-u"), "0", "App must run as a non-root user");
-  const headers = { authorization: `Bearer ${tokens[0]}`, "content-type": "application/json" };
+  const headers = { authorization: `Bearer ${tokens[0]}`, "content-type": "application/json", origin };
   const created = await fetch(`${origin}/api/v1/records`, { method: "POST", headers, body: JSON.stringify({ title: "Persisted container record", content: "API, MCP and CLI share this record." }) });
   assert.equal(created.status, 201);
   const record = await created.json();
   assert.equal((await fetch(`${origin}/api/v1/records/${record.id}`, { headers: { authorization: `Bearer ${tokens[1]}` } })).status, 404);
   await docker("restart", "--time", "20", name);
-  // Docker may allocate a different ephemeral host port after restarting.
-  origin = await publishedOrigin();
   await ready(origin);
   const restored = await fetch(`${origin}/api/v1/records/${record.id}`, { headers });
   assert.equal(restored.status, 200);

@@ -6,6 +6,8 @@ Application data and Eve workflow state are separate. Selecting Supabase for rec
 
 Use Node 24, `npm ci`, `npm run build:local`, `npm start`. The integrated runtime requires both Next output and Eve's `.output`. The start script verifies the compiled Workflow world, launches Eve, waits for its health endpoint, then launches Next; failure of either process stops both. Do not substitute bare `next start`: the saved rewrites do not start Eve in this pinned version. Next forwards both `/eve/` and `/.well-known/workflow/` to the local runtime. Persist `.data` for SQLite and `.eve` for local workflows. Use one instance with local storage; do not share SQLite WAL across replicas. Configure TLS, streaming proxy behavior, restart policies and backups.
 
+Set `APP_ORIGIN` explicitly in every production environment to the browser-facing application origin, without credentials, path, query or fragment. Remote origins must use HTTPS; loopback HTTP is allowed for local checks. The same rule applies to the server-side Supabase URL and the Convex HTTP-actions origin before backend credentials are used. A missing production origin or an unsafe provider URL makes application readiness fail instead of silently using localhost or sending a credential over plaintext HTTP. Configure the same application origin on a separately hosted Eve service when it uses the shared application store.
+
 ```sh
 docker compose up --build -d
 docker compose logs -f app

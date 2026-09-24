@@ -1,6 +1,6 @@
 # Operations
 
-`/api/health/live` proves the web process responds. `/api/health/ready` checks the application database/schema and, when `npm start` supervises a co-located Eve process, its loopback health route. The startup supervisor sets this topology automatically; split-service and Vercel deployments report the application data check only and must monitor Eve separately. Readiness does not certify Auth configuration, model credentials, Workflow database operations or a completed agent turn. Check `/eve/v1/health` separately and complete a real agent turn.
+`/api/health/live` proves the web process responds. `/api/health/ready` checks application configuration and database/schema and, when `npm start` supervises a co-located Eve process, its loopback health route. The startup supervisor sets this topology automatically; split-service and Vercel deployments report the application data check only and must monitor Eve separately. Missing production `APP_ORIGIN` and unsafe remote provider URLs fail the data check. Readiness does not certify Auth configuration, model credentials, Workflow database operations or a completed agent turn. Check `/eve/v1/health` separately and complete a real agent turn.
 
 Data requests emit generated request ID, method, status and duration. Logs omit bodies, credentials, identities and URLs. Collect these JSON events in platform logs. Enabled account chat has durable daily, active-run and per-minute budget admission; general API rate limiting, distributed tracing and alerting remain pending.
 
