@@ -48,6 +48,14 @@ it("uses opaque owner keys and private file permissions", async () => {
   expect((await stat(join(root,key))).mode & 0o777).toBe(0o600);
 });
 
+it("publishes one whole local object when concurrent writes race", async () => {
+  const root = await mkdtemp(join(tmpdir(),"jumpstart-uploads-"));directories.push(root);
+  const store = localUploadObjects(root),id = randomUUID();
+  const results = await Promise.allSettled([store.put(owner,id,encoder.encode("one")),store.put(owner,id,encoder.encode("two"))]);
+  expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+  expect(["one","two"]).toContain(new TextDecoder().decode((await store.get(owner,id))!));
+});
+
 it("refuses a shared or symlinked local storage root", async () => {
   const root = await mkdtemp(join(tmpdir(),"jumpstart-uploads-"));directories.push(root);
   await chmod(root,0o755);

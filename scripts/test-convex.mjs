@@ -43,6 +43,9 @@ try {
   await cp(join(root, "lib/agent-access/contract.ts"), join(directory, "lib/agent-access/contract.ts"));
   await cp(join(root, "lib/agent-access/projection-contract.ts"), join(directory, "lib/agent-access/projection-contract.ts"));
   await cp(join(root, "lib/agent-access/artifact-contract.ts"), join(directory, "lib/agent-access/artifact-contract.ts"));
+  await mkdir(join(directory, "lib/uploads"), { recursive: true });
+  await cp(join(root, "lib/uploads/schema.ts"), join(directory, "lib/uploads/schema.ts"));
+  await cp(join(root, "lib/uploads/catalog-contract.ts"), join(directory, "lib/uploads/catalog-contract.ts"));
   await mkdir(join(directory, "lib/budgets"), { recursive: true });
   await cp(join(root, "lib/budgets/contract.ts"), join(directory, "lib/budgets/contract.ts"));
   const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8"));

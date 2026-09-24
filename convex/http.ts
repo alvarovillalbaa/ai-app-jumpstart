@@ -5,6 +5,7 @@ import { internal } from "./_generated/api";
 import { listInput, recordId, recordInput, recordUpdate } from "../lib/data/contract";
 import { accessCommand } from "../lib/agent-access/contract";
 import { budgetCommand } from "../lib/budgets/contract";
+import { uploadCatalogCommand } from "../lib/uploads/catalog-contract";
 
 const owner = z.object({ tenant: z.string().min(1).max(200), subject: z.string().min(1).max(200) });
 const command = z.discriminatedUnion("operation", [
@@ -51,11 +52,17 @@ http.route({ path: "/app/records", method: "POST", handler: httpAction(async (ct
     raw = JSON.parse(text);
   } catch { return json({ error: "invalid_input" }, 400); }
   finally { reader.releaseLock(); }
-  const parsed = z.union([command, accessCommand, budgetCommand]).safeParse(raw);
+  const parsed = z.union([command, accessCommand, budgetCommand, uploadCatalogCommand]).safeParse(raw);
   if (!parsed.success) return json({ error: "invalid_input" }, 400);
   try {
     // Narrow each command before dispatch; Convex argument validators also run.
     switch (parsed.data.operation) {
+      case "upload.reserve": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.uploads.reserve,input)); }
+      case "upload.markStored": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.uploads.markStored,input)); }
+      case "upload.get": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.uploads.get,input)); }
+      case "upload.beginDelete": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.uploads.beginDelete,input)); }
+      case "upload.finishDelete": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.uploads.finishDelete,input)); }
+      case "upload.usage": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.uploads.usage,input)); }
       case "budget.claimAttempt": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.budgets.claimAttempt, { input })); }
       case "budget.attemptCount": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.budgets.attemptCount, { input })); }
       case "budget.getReservation": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.budgets.getReservation, { input })); }

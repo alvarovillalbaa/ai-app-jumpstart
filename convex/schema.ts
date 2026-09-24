@@ -2,6 +2,9 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 export default defineSchema({
+  uploads: defineTable({ id: v.string(),tenant: v.string(),subject: v.string(),name: v.string(),mediaType: v.string(),
+    size: v.number(),sha256: v.string(),createdAt: v.number(),state: v.union(v.literal("pending"),v.literal("quarantined"),v.literal("deleting"),v.literal("deleted")) })
+    .index("by_external_id",["id"]).index("by_owner_state",["tenant","subject","state"]),
   artifacts: defineTable({ id: v.string(),tenant: v.string(),subject: v.string(),operationId: v.string(),sessionId: v.string(),callId: v.string(),inputHash: v.string(),title: v.string(),content: v.string(),createdAt: v.number(),deletedAt: v.optional(v.number()) })
     .index("by_external_id",["id"]).index("by_operation_call",["operationId","callId"]).index("by_owner_time",["tenant","subject","createdAt","id"]),
   conversationEvents: defineTable({ operationId: v.string(),eventId: v.string(),ordinal: v.number(),payload: v.string() }).index("by_operation_event",["operationId","eventId"]).index("by_operation_ordinal",["operationId","ordinal"]),

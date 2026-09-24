@@ -1,12 +1,7 @@
 import { createHash } from "node:crypto";
-import { z } from "zod";
 import { accessOwner, type AccessOwner } from "../agent-access/contract";
-
-export const uploadId = z.uuid();
-export const uploadName = z.string().trim().min(1).max(120).refine(value =>
-  !/[\\/\u0000-\u001f\u007f]/u.test(value) &&
-  !Array.from(value).some(char => { const code = char.codePointAt(0)!; return code >= 0xd800 && code <= 0xdfff; }),
-"Use a plain filename without path separators or control characters.");
+import { uploadId } from "./schema";
+export { uploadId, uploadName } from "./schema";
 
 /** The owner is never embedded in a caller-supplied or public object path. */
 export function uploadObjectKey(owner: AccessOwner, rawId: string) {

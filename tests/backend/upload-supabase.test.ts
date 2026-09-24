@@ -6,7 +6,7 @@ import { MAX_UPLOAD_BYTES } from "../../lib/uploads/validation";
 import { uploadObjectContract } from "../contracts/uploads";
 
 type Storage = Parameters<typeof supabaseUploadObjects>[0];
-const missing = Object.assign(new Error("not found"), { status: 404 });
+const missing = Object.assign(new Error("not found"), { status: 400,statusCode: "404" });
 
 function fakeStorage(initial: "private" | "public" | "missing" = "private") {
   let bucket = initial;

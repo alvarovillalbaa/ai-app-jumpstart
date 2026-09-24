@@ -320,6 +320,42 @@ export type Database = {
         }
         Relationships: []
       }
+      app_uploads: {
+        Row: {
+          created_at: number
+          id: string
+          media_type: string
+          name: string
+          sha256: string
+          size: number
+          state: string
+          subject: string
+          tenant: string
+        }
+        Insert: {
+          created_at: number
+          id: string
+          media_type: string
+          name: string
+          sha256: string
+          size: number
+          state: string
+          subject: string
+          tenant: string
+        }
+        Update: {
+          created_at?: number
+          id?: string
+          media_type?: string
+          name?: string
+          sha256?: string
+          size?: number
+          state?: string
+          subject?: string
+          tenant?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -367,6 +403,10 @@ export type Database = {
           p_tenant: string
           p_title: string
         }
+        Returns: Json
+      }
+      app_upload_command: {
+        Args: { command: string; input: Json }
         Returns: Json
       }
     }

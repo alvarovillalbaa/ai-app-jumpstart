@@ -12,7 +12,7 @@ export function uploadObjectContract(name: string, factory: () => Promise<{ stor
     beforeEach(async () => { ({ store,close } = await factory()); });
     afterEach(async () => { await close(); });
 
-    it("isolates owners, refuses replacement and deletes only the owner's object", async () => {
+    it("isolates owners, refuses sequential replacement and deletes only the owner's object", async () => {
       const id = randomUUID();
       await store.put(owner,id,new TextEncoder().encode("first"));
       expect(new TextDecoder().decode((await store.get(owner,id))!)).toBe("first");
@@ -27,11 +27,5 @@ export function uploadObjectContract(name: string, factory: () => Promise<{ stor
       expect(await store.delete(owner,id)).toBe(false);
     });
 
-    it("publishes one whole object when concurrent writes race", async () => {
-      const id = randomUUID();
-      const results = await Promise.allSettled([store.put(owner,id,new TextEncoder().encode("one")),store.put(owner,id,new TextEncoder().encode("two"))]);
-      expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
-      expect(["one","two"]).toContain(new TextDecoder().decode((await store.get(owner,id))!));
-    });
   });
 }

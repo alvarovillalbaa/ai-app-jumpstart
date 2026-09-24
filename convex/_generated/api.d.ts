@@ -12,6 +12,7 @@ import type * as access from "../access.js";
 import type * as budgets from "../budgets.js";
 import type * as http from "../http.js";
 import type * as records from "../records.js";
+import type * as uploads from "../uploads.js";
 
 import type {
   ApiFromModules,
@@ -24,6 +25,7 @@ declare const fullApi: ApiFromModules<{
   budgets: typeof budgets;
   http: typeof http;
   records: typeof records;
+  uploads: typeof uploads;
 }>;
 
 /**

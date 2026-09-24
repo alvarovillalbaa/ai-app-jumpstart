@@ -6,6 +6,8 @@ import { MAX_UPLOAD_BYTES } from "./validation";
 export const SUPABASE_UPLOAD_BUCKET = "app-private-uploads";
 const CONTENT_TYPE = "application/octet-stream";
 type Storage = SupabaseClient["storage"];
+const notFound = (error: { status?: number;statusCode?: string } | null) =>
+  error?.status === 404 || error?.statusCode === "404";
 
 /** Check the bucket on every operation so a changed public setting fails closed. */
 export async function verifyPrivateUploadBucket(storage: Storage) {
@@ -21,7 +23,7 @@ export async function verifyPrivateUploadBucket(storage: Storage) {
 /** Provision only on an explicit operator command; never change an existing bucket silently. */
 export async function provisionPrivateUploadBucket(storage: Storage) {
   const { error } = await storage.getBucket(SUPABASE_UPLOAD_BUCKET);
-  if (error?.status === 404) {
+  if (notFound(error)) {
     const result = await storage.createBucket(SUPABASE_UPLOAD_BUCKET, {
       public: false, fileSizeLimit: MAX_UPLOAD_BYTES, allowedMimeTypes: [CONTENT_TYPE],
     });
@@ -54,7 +56,7 @@ export function supabaseUploadObjects(storage: Storage): PrivateUploadObjects {
       const key = uploadObjectKey(owner, id);
       await verifyPrivateUploadBucket(storage);
       const { data, error } = await storage.from(SUPABASE_UPLOAD_BUCKET).download(key);
-      if (error?.status === 404) return null;
+      if (notFound(error)) return null;
       if (error) throw error;
       if (data.size > MAX_UPLOAD_BYTES) throw new Error("Stored upload exceeds the maximum size.");
       return new Uint8Array(await data.arrayBuffer());

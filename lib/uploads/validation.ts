@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { uploadName } from "./contract";
+import { uploadName, type UploadMediaType } from "./schema";
 
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
-export type UploadMediaType = "text/plain" | "image/png" | "image/jpeg" | "application/pdf";
+export type { UploadMediaType } from "./schema";
 export type CheckedUpload = { name: string; mediaType: UploadMediaType; size: number; sha256: string; bytes: Uint8Array };
 
 function starts(bytes: Uint8Array, signature: number[]) { return signature.every((value, index) => bytes[index] === value); }

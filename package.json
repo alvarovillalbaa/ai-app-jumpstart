@@ -50,6 +50,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:postgres": "node scripts/test-postgres.mjs",
     "test:supabase": "node scripts/test-postgres.mjs --supabase",
+    "test:upload-storage:live": "vitest run --config vitest.upload-live.config.ts",
     "test:convex": "node scripts/test-convex.mjs",
     "test:providers": "npm run test:postgres && npm run test:supabase && npm run test:convex",
     "test:container": "node scripts/test-container.mjs",

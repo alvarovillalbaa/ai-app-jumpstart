@@ -62,7 +62,7 @@ Run `npm run db:migrate -- --dry-run` with the target `DATABASE_URL` to review p
 
 Read [database setup](docs/databases.md), [hosting](docs/hosting.md), [operations](docs/operations.md), and [testing](docs/testing.md).
 
-The [extension recipes](docs/extending.md) show where to add a tool, model, connection, schema change or UI route.
+The [extension recipes](docs/extending.md) show where to add a tool, model, connection, schema change or UI route. The [private upload plan](docs/uploads.md) records the tested quarantine foundation and the scanner, API and UI work still required before attachments can be enabled.
 
 ## Validate
 

@@ -20,6 +20,7 @@ it("denies table reads and forged inserts to anonymous and authenticated databas
       ["app_internal_nonces", { id: "b".repeat(64), expires_at: Date.now() + 60000 }],
       ["app_conversation_events",{ operation_id: crypto.randomUUID(),event_id: "evt_00000000000000000000000001",payload: "{}" }],
       ["app_artifacts",{ id: crypto.randomUUID(),operation_id: crypto.randomUUID(),session_id: "forged",call_id: "forged",input_hash: "a".repeat(64),title: "forged",content: "forged",created_at: Date.now() }],
+      ["app_uploads",{ id: crypto.randomUUID(),tenant: "victim",subject: "victim",name: "forged.txt",media_type: "text/plain",size: 1,sha256: "a".repeat(64),created_at: Date.now(),state: "pending" }],
     ] as const) {
       expect((await client.from(table).select("*")).error?.code).toBe("42501");
       expect((await client.from(table).insert(row)).error?.code).toBe("42501");
@@ -33,6 +34,7 @@ it("denies table reads and forged inserts to anonymous and authenticated databas
     expect((await client.rpc("app_append_conversation_event",{ p_tenant: "victim",p_subject: "victim",p_operation: crypto.randomUUID(),p_session: "session",p_event: "evt_00000000000000000000000001",p_payload: "{}" })).error?.code).toBe("42501");
     expect((await client.rpc("app_save_artifact",{ p_tenant: "victim",p_subject: "victim",p_operation: crypto.randomUUID(),p_session: "session",p_call: "forged",p_hash: "a".repeat(64),p_id: crypto.randomUUID(),p_title: "forged",p_content: "forged",p_created: Date.now() })).error?.code).toBe("42501");
     expect((await client.rpc("app_delete_artifact",{ p_tenant: "victim",p_subject: "victim",p_id: crypto.randomUUID(),p_deleted: Date.now() })).error?.code).toBe("42501");
+    expect((await client.rpc("app_upload_command",{ command: "usage",input: { tenant: "victim",subject: "victim" } })).error?.code).toBe("42501");
     for (const command of ["claimAttempt","attemptCount"]) expect((await client.rpc("app_budget_attempt_command", { command, input: { tenant: "victim", subject: "victim", operationId: crypto.randomUUID() } })).error?.code).toBe("42501");
     expect((await client.rpc("app_budget_correct_settlement",{ input: { tenant: "victim",subject: "victim",
       operationId: crypto.randomUUID(),correctionId: crypto.randomUUID(),expectedActualMicros: null,
