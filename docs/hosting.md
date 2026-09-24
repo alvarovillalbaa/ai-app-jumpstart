@@ -36,7 +36,15 @@ The same read/write smoke works against Vercel, a self-hosted Node service, or a
 npm run smoke:hosted
 ```
 
-The command checks web/data/Eve health, the records page, anonymous denial, cross-owner list/read/edit/delete denial, and one owner's REST, CLI and MCP reads of a temporary record. It deletes that record even if a later check fails. A lost create response can still leave a record behind; the command prints its unique title for manual review and never retries the write. It rejects remote HTTP and redirects. This is a data-surface check, not proof of Supabase browser Auth, workflow replay, provider credentials or a paid model turn; run those acceptance cases separately before release. For a protected Vercel deployment, export its automation bypass secret as `VERCEL_AUTOMATION_BYPASS_SECRET` in the operator shell; the smoke sends Vercel's [recommended header](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/protection-bypass-automation) on web, REST, CLI and MCP requests. Keep this secret out of URLs and logs.
+For a deployment with Supabase accounts and `AI_CHAT_ENABLED=true`, sign in two distinct temporary staging users through the configured Auth provider and put their current access tokens into the same two shell variables. Run:
+
+```sh
+npm run smoke:hosted -- --accounts
+```
+
+This mode additionally requires both tokens to reach the registered-user-only usage endpoint and a configured account budget policy. It makes no model call and creates no conversation. Do not use a service-role key or an application record key as an account token. Use fresh tokens if the Auth session expires.
+
+Both modes check web/data/Eve health, the records page, anonymous denial, cross-owner list/read/edit/delete denial, and one owner's REST, CLI and MCP reads of a temporary record. The command deletes that record even if a later check fails. A lost create response can still leave a record behind; the command prints its unique title for manual review and never retries the write. It rejects remote HTTP and redirects. The account mode proves server-side token acceptance and owner isolation; it does not prove the browser signup/email flow, workflow replay, provider credentials or a paid model turn. Run those acceptance cases separately before release. For a protected Vercel deployment, export its automation bypass secret as `VERCEL_AUTOMATION_BYPASS_SECRET` in the operator shell; the smoke sends Vercel's [recommended header](https://vercel.com/docs/deployment-protection/methods-to-bypass-deployment-protection/protection-bypass-automation) on web, REST, CLI and MCP requests. Keep this secret out of URLs and logs.
 
 ## AWS / Azure / GCP / Amplify
 

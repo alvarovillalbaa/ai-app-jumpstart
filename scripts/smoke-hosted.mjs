@@ -32,11 +32,11 @@ async function cliGet(origin, token, id) {
   child.stdout.on("data", chunk => { stdout = (stdout + chunk).slice(-100_000); });
   child.stderr.on("data", chunk => { stderr = (stderr + chunk).slice(-1000); });
   const [code, signal] = await once(child, "exit");
-  if (code !== 0 || signal) throw new Error(`CLI record read failed (${signal ?? code}): ${stderr}`);
+  if (code !== 0 || signal) throw new Error(`CLI record read failed (${signal ?? code}): ${stderr.replaceAll(token, "[redacted]")}`);
   return JSON.parse(stdout);
 }
 
-export async function runHostedSmoke({ url, token, otherToken }) {
+export async function runHostedSmoke({ url, token, otherToken, accounts = false }) {
   const origin = targetOrigin(url);
   if (!token || !otherToken || token === otherToken) throw new Error("Set distinct APP_API_TOKEN and APP_API_OTHER_TOKEN with record read/write access for different owners.");
   const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
@@ -64,6 +64,15 @@ export async function runHostedSmoke({ url, token, otherToken }) {
   assert.equal(page.status, 200, "Records page failed");
   assert.match(page.headers.get("content-type") ?? "", /text\/html/);
   assert.equal((await request("/api/v1/records")).status, 401, "Anonymous record access must be denied");
+  if (accounts) {
+    // Usage is a registered-user-only route. This proves the deployment accepts
+    // both Supabase identities and has account chat configured without a model call.
+    for (const headers of [authorized, other]) {
+      const usage = await request("/api/v1/usage", { headers });
+      assert.equal(usage.status, 200, "Supabase account usage access failed");
+      assert.ok((await usage.json()).dailyLimitMicros > 0, "Account budget policy is unavailable");
+    }
+  }
 
   const title = `Hosted smoke ${randomUUID()}`;
   console.log(`Temporary record: ${title}`);
@@ -113,7 +122,14 @@ export async function runHostedSmoke({ url, token, otherToken }) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  runHostedSmoke({ url: process.env.APP_API_URL, token: process.env.APP_API_TOKEN, otherToken: process.env.APP_API_OTHER_TOKEN })
-    .then(({ origin }) => console.log(`Hosted smoke passed for ${origin}: readiness, Eve, web, REST, owner isolation, CLI and MCP.`))
-    .catch(error => { console.error(message(error)); process.exitCode = 1; });
+  const args = process.argv.slice(2);
+  if (args.length > 1 || (args[0] && args[0] !== "--accounts")) {
+    console.error("Supported option: --accounts.");
+    process.exitCode = 2;
+  } else {
+    const accounts = args[0] === "--accounts";
+    runHostedSmoke({ url: process.env.APP_API_URL, token: process.env.APP_API_TOKEN, otherToken: process.env.APP_API_OTHER_TOKEN, accounts })
+      .then(({ origin }) => console.log(`Hosted smoke passed for ${origin}: readiness, Eve, web, ${accounts ? "Supabase accounts, " : ""}REST, owner isolation, CLI and MCP.`))
+      .catch(error => { console.error(message(error)); process.exitCode = 1; });
+  }
 }
