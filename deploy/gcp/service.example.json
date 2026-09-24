@@ -1,0 +1,43 @@
+{
+  "apiVersion": "serving.knative.dev/v1",
+  "kind": "Service",
+  "metadata": { "name": "jumpstart-staging" },
+  "spec": {
+    "template": {
+      "metadata": { "annotations": {
+        "run.googleapis.com/cpu-throttling": "false",
+        "autoscaling.knative.dev/minScale": "1",
+        "autoscaling.knative.dev/maxScale": "1"
+      } },
+      "spec": {
+        "serviceAccountName": "REPLACE_WITH_SERVICE_ACCOUNT_EMAIL",
+        "timeoutSeconds": 3600,
+        "containerConcurrency": 40,
+        "containers": [{
+          "image": "REPLACE_WITH_POSTGRES_WORKFLOW_IMAGE_AT_SHA256_DIGEST",
+          "ports": [{ "containerPort": 3000 }],
+          "resources": { "limits": { "cpu": "2", "memory": "4Gi" } },
+          "startupProbe": { "httpGet": { "path": "/api/health/ready", "port": 3000 }, "periodSeconds": 10, "failureThreshold": 18, "timeoutSeconds": 5 },
+          "livenessProbe": { "httpGet": { "path": "/api/health/live", "port": 3000 }, "periodSeconds": 30, "failureThreshold": 3, "timeoutSeconds": 2 },
+          "readinessProbe": { "httpGet": { "path": "/api/health/ready", "port": 3000 }, "periodSeconds": 10, "failureThreshold": 3, "successThreshold": 2, "timeoutSeconds": 5 },
+          "env": [
+            { "name": "APP_ORIGIN", "value": "https://REPLACE_WITH_APP_DOMAIN" },
+            { "name": "DATA_PROVIDER", "value": "supabase" },
+            { "name": "AUTH_PROVIDER", "value": "supabase" },
+            { "name": "AI_CHAT_ENABLED", "value": "true" },
+            { "name": "AI_RUNTIME_ORIGIN", "value": "http://127.0.0.1:4274" },
+            { "name": "WORKFLOW_POSTGRES_JOB_PREFIX", "value": "jumpstart_staging" },
+            { "name": "WORKFLOW_POSTGRES_URL", "valueFrom": { "secretKeyRef": { "name": "workflow-database", "key": "REPLACE_WITH_VERSION" } } },
+            { "name": "SUPABASE_URL", "valueFrom": { "secretKeyRef": { "name": "data-url", "key": "REPLACE_WITH_VERSION" } } },
+            { "name": "SUPABASE_SECRET_KEY", "valueFrom": { "secretKeyRef": { "name": "data-key", "key": "REPLACE_WITH_VERSION" } } },
+            { "name": "SUPABASE_AUTH_URL", "valueFrom": { "secretKeyRef": { "name": "auth-url", "key": "REPLACE_WITH_VERSION" } } },
+            { "name": "SUPABASE_PUBLISHABLE_KEY", "valueFrom": { "secretKeyRef": { "name": "auth-public-key", "key": "REPLACE_WITH_VERSION" } } },
+            { "name": "AI_CREATION_SIGNING_JSON", "valueFrom": { "secretKeyRef": { "name": "creation-signing", "key": "REPLACE_WITH_VERSION" } } },
+            { "name": "AI_BUDGET_POLICY_JSON", "valueFrom": { "secretKeyRef": { "name": "budget-policy", "key": "REPLACE_WITH_VERSION" } } },
+            { "name": "AI_GATEWAY_API_KEY", "valueFrom": { "secretKeyRef": { "name": "model-key", "key": "REPLACE_WITH_VERSION" } } }
+          ]
+        }]
+      }
+    }
+  }
+}

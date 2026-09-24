@@ -1,0 +1,8 @@
+{
+  "name": "@jumpstart/workflow-postgres",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./index.mjs", "./config": "./config.mjs" },
+  "dependencies": { "@workflow/world-postgres": "5.0.0-beta.42" }
+}

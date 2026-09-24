@@ -1,15 +1,24 @@
 import { eveChannel } from "eve/channels/eve";
-import { localDev, placeholderAuth, vercelOidc } from "eve/channels/auth";
+import { localDev } from "eve/channels/auth";
+import { chatSettings } from "../../lib/agent-access/settings";
+import { chatIdentity } from "../../lib/agent-access/identity";
+import { sessionAuthorizer } from "../../lib/agent-access/authorize";
+import { getSessionAccessStore } from "../../lib/agent-access/store";
+import { AppError } from "../../lib/http/errors";
+
+const development = localDev();
 
 export default eveChannel({
-  auth: [
-    // Lets the eve TUI and your Vercel deployments reach the deployed agent.
-    vercelOidc(),
-    // Open on localhost for `eve dev` and the REPL; ignored in production.
-    localDev(),
-    // This placeholder will not allow browser requests in production.
-    // Replace it with your app's auth provider, like Auth.js or Clerk,
-    // or use none() for a public demo.
-    placeholderAuth(),
-  ],
+  // Exclusive modes: enabled account chat NEVER falls back to localDev or OIDC.
+  auth: async request => {
+    const settings = chatSettings();
+    if (!settings) return development(request);
+    return sessionAuthorizer({ store: await getSessionAccessStore(), signing: settings.signing,
+      identify: async req => {
+        try { return await chatIdentity(req, settings.auth); }
+        catch (error) { if (error instanceof AppError && error.status === 401) return null; throw error; }
+      },
+    })(request);
+  },
+  uploadPolicy: "disabled",
 });

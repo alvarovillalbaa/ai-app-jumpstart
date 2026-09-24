@@ -1,6 +1,7 @@
 "use client";
 
 import type { UserContent } from "ai";
+import Link from "next/link";
 import { useEveAgent } from "eve/react";
 import { AlertCircleIcon, BrainIcon, PlusIcon, SquareIcon } from "lucide-react";
 import { useState } from "react";
@@ -20,22 +21,30 @@ import {
   usePromptInputAttachments,
 } from "@/components/ai-elements/prompt-input";
 import { Shimmer } from "@/components/ai-elements/shimmer";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { AgentMessage } from "./agent-message";
+import { WorkspaceMenu } from "./workspace-navigation";
+import { appConfig } from "@/app.config";
 
-const AGENT_NAME = "eve-agent";
+const AGENT_NAME = appConfig.name;
 
 export function AgentChat({
   sessionId,
   sessionless = false,
+  credential,
+  onCreate,
+  managed = false,
 }: {
   readonly sessionId?: string;
   readonly sessionless?: boolean;
+  readonly credential?: () => Promise<string>;
+  readonly onCreate?: (message: string) => Promise<void>;
+  readonly managed?: boolean;
 }) {
   const [cancellationError, setCancellationError] = useState<string>();
   const [hasInputText, setHasInputText] = useState(false);
   const agent = useEveAgent({
+    auth: credential ? { bearer: credential } : undefined,
     initialSession:
       sessionId === undefined
         ? undefined
@@ -45,7 +54,7 @@ export function AgentChat({
           },
     resume: sessionId !== undefined,
     onSessionChange(session) {
-      if (sessionId === undefined && session !== undefined) {
+      if (!managed && sessionId === undefined && session !== undefined) {
         // Next patches window.history to navigate, which would detach the active stream.
         History.prototype.replaceState.call(
           window.history,
@@ -86,6 +95,15 @@ export function AgentChat({
 
     setHasInputText(false);
     setCancellationError(undefined);
+    if (managed && message.files.length > 0) {
+      setCancellationError("Attachments are not available yet.");
+      return;
+    }
+    if (managed && !sessionId) {
+      if (!onCreate) throw new Error("Conversation creation is unavailable.");
+      await onCreate(text);
+      return;
+    }
     const options = isBusy ? { turnPolicy: "steer" as const } : undefined;
 
     if (message.files.length === 0) {
@@ -127,9 +145,7 @@ export function AgentChat({
 
   return (
     <main className="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
-      {showConversationLayout ? (
-        <ChatHeader canStartNewChat={activeSessionId !== undefined} />
-      ) : null}
+      <ChatHeader canStartNewChat={activeSessionId !== undefined} managed={managed} />
 
       {showConversationLayout ? (
         <Conversation
@@ -182,7 +198,7 @@ export function AgentChat({
             <h1 className="font-medium text-5xl tracking-tighter">{AGENT_NAME}</h1>
           </div>
         )}
-        <div className="w-full">{composer}</div>
+        <div id="chat-composer" tabIndex={-1} className="w-full focus-visible:outline-2 focus-visible:outline-ring">{composer}</div>
       </div>
     </main>
   );
@@ -237,24 +253,19 @@ function ErrorMessage({ message }: { readonly message: string }) {
   );
 }
 
-function ChatHeader({ canStartNewChat }: { readonly canStartNewChat: boolean }) {
+function ChatHeader({ canStartNewChat, managed }: { readonly canStartNewChat: boolean; readonly managed: boolean }) {
   return (
-    <header className="pointer-events-none fixed top-0 right-0 left-0 z-20 h-14">
-      <div className="relative mx-auto flex h-full w-full max-w-3xl items-center justify-center bg-background px-24">
-        <span className="truncate text-muted-foreground text-sm">{AGENT_NAME}</span>
+    <header className="fixed top-0 right-0 left-0 z-20 h-14 border-b bg-background">
+      <a href="#chat-composer" className="sr-only absolute top-2 left-2 z-30 rounded-md bg-background px-3 py-2 shadow-md focus:not-sr-only">Skip to composer</a>
+      <div className="mx-auto flex h-full w-full max-w-3xl items-center justify-between gap-3 px-4 sm:px-6">
+        <WorkspaceMenu chatEnabled={managed} accountEnabled={managed} />
+        <span className="hidden truncate text-muted-foreground text-sm sm:block">{AGENT_NAME}</span>
         {canStartNewChat ? (
-          <Button
-            aria-label="Start a new chat"
-            className="pointer-events-auto fixed top-3 right-6 pr-4"
-            onClick={() => window.location.assign("/s")}
-            size="sm"
-            type="button"
-            variant="ghost"
-          >
+          <Link aria-label="Start a new chat" className="inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring" href="/s">
             <PlusIcon className="size-4" />
             <span className="hidden font-normal text-sm sm:inline">New chat</span>
-          </Button>
-        ) : null}
+          </Link>
+        ) : <span className="w-9" aria-hidden="true" />}
       </div>
     </header>
   );

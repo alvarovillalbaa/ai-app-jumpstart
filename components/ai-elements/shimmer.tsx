@@ -48,6 +48,7 @@ const ShimmerComponent = ({
   );
 
   return (
+    // eslint-disable-next-line react-hooks/static-components -- getMotionComponent returns a stable module-cached component for each tag.
     <MotionComponent
       animate={{ backgroundPosition: "0% center" }}
       className={cn(

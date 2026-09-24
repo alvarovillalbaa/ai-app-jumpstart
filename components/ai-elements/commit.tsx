@@ -164,6 +164,8 @@ export const CommitTimestamp = ({
   }, [date]);
 
   useEffect(() => {
+    // The clock is external state; compute after hydration to avoid server/client date drift.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     updateFormatted();
   }, [updateFormatted]);
 

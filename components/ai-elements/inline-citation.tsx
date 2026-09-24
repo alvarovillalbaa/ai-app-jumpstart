@@ -163,6 +163,8 @@ export const InlineCitationCarouselIndex = ({
       return;
     }
 
+    // Synchronize the newly available external Embla instance, then subscribe.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     syncState();
 
     api.on("select", syncState);

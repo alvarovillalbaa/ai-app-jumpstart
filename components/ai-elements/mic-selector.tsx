@@ -117,6 +117,8 @@ export const useAudioDevices = () => {
   }, [loading]);
 
   useEffect(() => {
+    // This initializes the browser's external device enumeration state.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadDevicesWithoutPermission();
   }, [loadDevicesWithoutPermission]);
 

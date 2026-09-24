@@ -1,4 +1,5 @@
-import { AgentChat } from "@/app/_components/agent-chat";
+import { ChatPage } from "@/app/_components/chat-page";
+export const metadata = { title: "Conversation" };
 
 export default async function SessionPage({
   params,
@@ -6,5 +7,5 @@ export default async function SessionPage({
   readonly params: Promise<{ readonly sessionId: string }>;
 }) {
   const { sessionId } = await params;
-  return <AgentChat sessionId={sessionId} />;
+  return <ChatPage locator={sessionId} />;
 }
