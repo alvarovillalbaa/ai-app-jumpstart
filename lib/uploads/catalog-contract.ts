@@ -13,6 +13,7 @@ export const uploadState = z.enum(["pending", "quarantined", "deleting", "delete
 export const uploadEntry = uploadReservation.extend({ state: uploadState }).strict();
 export const uploadUsage = z.object({ files: z.number().int().nonnegative(), bytes: z.number().int().nonnegative() }).strict();
 export const uploadList = z.array(uploadEntry).max(1000);
+export const uploadPage = z.object({ items: uploadList, usage: uploadUsage }).strict();
 export const uploadReserveResult = z.enum(["reserved", "existing", "quota", "conflict"]);
 export type UploadReservation = z.infer<typeof uploadReservation>;
 export type UploadEntry = z.infer<typeof uploadEntry>;

@@ -3,6 +3,7 @@ export const appConfig = {
   description: "A portable foundation for AI applications, with shared data access and reusable tests.",
   navigation: [
     { href: "/records", label: "Records", feature: "core" },
+    { href: "/uploads", label: "Uploads", feature: "uploads" },
     { href: "/s", label: "Chat", feature: "chat" },
     { href: "/conversations", label: "Conversations", feature: "chat" },
     { href: "/structured", label: "Structured output", feature: "chat" },

@@ -13,8 +13,8 @@ const receipt = z.discriminatedUnion("status", [
   z.object({ operationId, conversationId: z.uuid(), status: z.literal("active"), sessionId }),
 ]);
 
-export function OwnedChat({ settings, userId, initialOperationId }: {
-  settings: PublicAuthSettings; userId: string; initialOperationId?: string;
+export function OwnedChat({ settings, userId, initialOperationId, uploadsEnabled = false }: {
+  settings: PublicAuthSettings; userId: string; initialOperationId?: string; uploadsEnabled?: boolean;
 }) {
   const client = browserAuth(settings);
   const activeUser = useRef(userId);
@@ -161,5 +161,5 @@ export function OwnedChat({ settings, userId, initialOperationId }: {
       setOperation(undefined); setSession(undefined); setChecking(false); setCanCancel(false); setError("");
     }}>New chat</Link><Link className="ml-4 underline" href="/conversations">Conversations</Link>
   </main>;
-  return <AgentChat key={session ?? "new"} sessionId={session} sessionless managed credential={credential} onCreate={create} />;
+  return <AgentChat key={session ?? "new"} sessionId={session} sessionless managed uploadsEnabled={uploadsEnabled} credential={credential} onCreate={create} />;
 }

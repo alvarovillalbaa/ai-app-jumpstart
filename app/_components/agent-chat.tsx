@@ -34,12 +34,14 @@ export function AgentChat({
   credential,
   onCreate,
   managed = false,
+  uploadsEnabled = false,
 }: {
   readonly sessionId?: string;
   readonly sessionless?: boolean;
   readonly credential?: () => Promise<string>;
   readonly onCreate?: (message: string) => Promise<void>;
   readonly managed?: boolean;
+  readonly uploadsEnabled?: boolean;
 }) {
   const [cancellationError, setCancellationError] = useState<string>();
   const [hasInputText, setHasInputText] = useState(false);
@@ -145,7 +147,7 @@ export function AgentChat({
 
   return (
     <main className="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
-      <ChatHeader canStartNewChat={activeSessionId !== undefined} managed={managed} />
+      <ChatHeader canStartNewChat={activeSessionId !== undefined} managed={managed} uploadsEnabled={uploadsEnabled} />
       {showConversationLayout ? <h1 className="sr-only">{AGENT_NAME}</h1> : null}
 
       {showConversationLayout ? (
@@ -254,12 +256,12 @@ function ErrorMessage({ message }: { readonly message: string }) {
   );
 }
 
-function ChatHeader({ canStartNewChat, managed }: { readonly canStartNewChat: boolean; readonly managed: boolean }) {
+function ChatHeader({ canStartNewChat, managed, uploadsEnabled }: { readonly canStartNewChat: boolean; readonly managed: boolean; readonly uploadsEnabled: boolean }) {
   return (
     <header className="fixed top-0 right-0 left-0 z-20 h-14 border-b bg-background">
       <a href="#chat-composer" className="sr-only absolute top-2 left-2 z-30 rounded-md bg-background px-3 py-2 shadow-md focus:not-sr-only">Skip to composer</a>
       <div className="mx-auto flex h-full w-full max-w-3xl items-center justify-between gap-3 px-4 sm:px-6">
-        <WorkspaceMenu chatEnabled={managed} accountEnabled={managed} />
+        <WorkspaceMenu chatEnabled={managed} accountEnabled={managed} uploadsEnabled={uploadsEnabled} />
         <span className="hidden truncate text-muted-foreground text-sm sm:block">{AGENT_NAME}</span>
         {canStartNewChat ? (
           <Link aria-label="Start a new chat" className="inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring" href="/s">

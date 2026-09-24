@@ -21,7 +21,7 @@ export function authSettings(env: NodeJS.ProcessEnv = process.env): PublicAuthSe
   return { url: origin, publishableKey: key };
 }
 
-const destinations = new Set(["/account", "/account/password", "/records", "/s", "/conversations"]);
+const destinations = new Set(["/account", "/account/password", "/records", "/uploads", "/s", "/conversations"]);
 export function safeReturnPath(value: unknown, fallback = "/account") {
   return typeof value === "string" && destinations.has(value) ? value : fallback;
 }

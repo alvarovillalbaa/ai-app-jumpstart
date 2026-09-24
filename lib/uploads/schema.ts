@@ -7,3 +7,5 @@ export const uploadName = z.string().trim().min(1).max(120).refine(value =>
 "Use a plain filename without path separators or control characters.");
 export const uploadMediaType = z.enum(["text/plain", "image/png", "image/jpeg", "application/pdf"]);
 export type UploadMediaType = z.infer<typeof uploadMediaType>;
+/** Leave headroom below Vercel's 4.5 MB Function request limit. */
+export const MAX_API_UPLOAD_BYTES = 4 * 1024 * 1024;
