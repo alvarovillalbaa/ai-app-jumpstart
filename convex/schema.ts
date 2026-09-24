@@ -11,7 +11,8 @@ export default defineSchema({
   budgetAttempts: defineTable({ operationId: v.string(), attemptId: v.string() }).index("by_operation_attempt", ["operationId","attemptId"]),
   budgetCorrections: defineTable({ correctionId: v.string(),operationId: v.string(),tenant: v.string(),subject: v.string(),
     previousActualMicros: v.union(v.number(),v.null()),correctedActualMicros: v.number(),actor: v.string(),reason: v.string(),
-    evidenceRef: v.string(),at: v.number() }).index("by_correction",["correctionId"]).index("by_operation_time",["operationId","at","correctionId"]),
+    evidenceRef: v.string(),at: v.number() }).index("by_correction",["correctionId"]).index("by_operation_time",["operationId","at","correctionId"])
+    .index("by_owner_time",["tenant","subject","at","correctionId"]),
   budgetAccounts: defineTable({ tenant: v.string(), subject: v.string(), active: v.number() }).index("by_owner", ["tenant", "subject"]),
   budgetDays: defineTable({ tenant: v.string(), subject: v.string(), day: v.number(), reservedMicros: v.number(), chargedMicros: v.number(), unknownCosts: v.number() }).index("by_owner_day", ["tenant", "subject", "day"]),
   budgetReservations: defineTable({ operationId: v.string(), tenant: v.string(), subject: v.string(), requestHash: v.string(), policyId: v.string(), estimateMicros: v.number(), day: v.number(), createdAt: v.number(), status: v.union(v.literal("reserved"), v.literal("settled")), actualMicros: v.union(v.number(), v.null()) }).index("by_operation", ["operationId"]).index("by_owner_time", ["tenant", "subject", "createdAt"]).index("by_owner_ledger",["tenant","subject","createdAt","operationId"]).index("by_status_time",["status","createdAt","operationId"]),

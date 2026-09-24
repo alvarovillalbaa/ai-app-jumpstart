@@ -101,6 +101,7 @@ it("denies foreign access and record keys even when their configured owner match
   expect((await recordClient.listTools()).tools.map(tool => tool.name)).not.toContain("conversations_list");
   expect((await recordClient.listTools()).tools.map(tool => tool.name)).not.toContain("usage_get");
   expect((await recordClient.listTools()).tools.map(tool => tool.name)).not.toContain("usage_reservations");
+  expect((await recordClient.listTools()).tools.map(tool => tool.name)).not.toContain("usage_corrections");
   expect((await recordClient.callTool({ name: "conversations_get",arguments: { operationId: id } })).isError).toBe(true);
   await expect(run(["conversations","get",id],{ APP_API_TOKEN: key },request)).rejects.toThrow("HTTP 401");
   expect((await store.getDetails(owner,id))?.revision).toBe(1);

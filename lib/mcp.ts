@@ -118,6 +118,10 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
       description: "Page the signed-in owner's AI budget reservations, including historical estimates and settled costs. Corrections and model attempts are separate audit data.",
       inputSchema: ledgerQueryOptions,annotations: { readOnlyHint: true,openWorldHint: false },
     },input => result(() => usage.listReservations(input)));
+    server.registerTool("usage_corrections",{
+      description: "Page the signed-in owner's settled-cost corrections. Returns cost changes and timestamps; operator notes and evidence references are private.",
+      inputSchema: ledgerQueryOptions,annotations: { readOnlyHint: true,openWorldHint: false },
+    },input => result(() => usage.listCorrections(input)));
     server.registerResource("usage","usage:///current",{
       description: "Private current AI budget usage",mimeType: "application/json",
     },async uri => {

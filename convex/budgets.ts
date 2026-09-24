@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery, type QueryCtx } from "./_generated/server";
-import { admission, settlement, settlementCorrection, correctionEntry, lookup, dayOf, refusal, attempt, attemptOwner, outstandingOptions, outstandingEntry, pageOfOutstanding, ledgerOptions, ledgerEntry, pageOfLedger } from "../lib/budgets/contract";
+import { admission, settlement, settlementCorrection, correctionEntry, lookup, dayOf, refusal, attempt, attemptOwner, outstandingOptions, outstandingEntry, pageOfOutstanding, ledgerOptions, ledgerEntry, pageOfLedger, ownerCorrectionEntry, pageOfOwnerCorrections } from "../lib/budgets/contract";
 
 async function state(ctx: QueryCtx, input: ReturnType<typeof lookup.parse>) {
   const day = dayOf(input.now);
@@ -67,6 +67,19 @@ export const listCorrections = internalQuery({ args: { input: v.any() }, handler
     correctionId: row.correctionId,operationId: row.operationId,tenant: row.tenant,subject: row.subject,
     previousActualMicros: row.previousActualMicros,correctedActualMicros: row.correctedActualMicros,
     actor: row.actor,reason: row.reason,evidenceRef: row.evidenceRef,at: row.at }));
+} });
+export const listOwnerCorrections = internalQuery({ args: { input: v.any() }, handler: async (ctx,args) => {
+  const input = ledgerOptions.parse(args.input);
+  const [time,id] = input.cursor?.split(".") ?? [];
+  const rows = time === undefined
+    ? await ctx.db.query("budgetCorrections").withIndex("by_owner_time",q => q.eq("tenant",input.tenant).eq("subject",input.subject)).take(input.limit+1)
+    : [
+      ...await ctx.db.query("budgetCorrections").withIndex("by_owner_time",q => q.eq("tenant",input.tenant).eq("subject",input.subject).eq("at",Number(time)).gt("correctionId",id!)).take(input.limit+1),
+      ...await ctx.db.query("budgetCorrections").withIndex("by_owner_time",q => q.eq("tenant",input.tenant).eq("subject",input.subject).gt("at",Number(time))).take(input.limit+1),
+    ].slice(0,input.limit+1);
+  return pageOfOwnerCorrections(rows.map(row => ownerCorrectionEntry.parse({ correctionId: row.correctionId,
+    operationId: row.operationId,previousActualMicros: row.previousActualMicros,
+    correctedActualMicros: row.correctedActualMicros,at: row.at })),input.limit);
 } });
 export const snapshot = internalQuery({ args: { input: v.any() }, handler: async (ctx,args) => (await state(ctx,lookup.parse(args.input))).snapshot });
 export const getReservation = internalQuery({ args: { input: v.any() }, handler: async (ctx,args) => {

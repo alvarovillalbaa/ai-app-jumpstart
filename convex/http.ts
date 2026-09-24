@@ -71,6 +71,7 @@ http.route({ path: "/app/records", method: "POST", handler: httpAction(async (ct
       case "budget.listCorrections": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.budgets.listCorrections, { input })); }
       case "budget.listOutstanding": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.budgets.listOutstanding, { input })); }
       case "budget.listLedger": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.budgets.listLedger, { input })); }
+      case "budget.listOwnerCorrections": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.budgets.listOwnerCorrections, { input })); }
       case "budget.reserve": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.budgets.reserve, { input })); }
       case "budget.settle": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.budgets.settle, { input })); }
       case "budget.correctSettlement": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.budgets.correctSettlement, { input })); }

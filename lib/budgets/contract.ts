@@ -48,6 +48,14 @@ export function pageOfLedger(rows: z.infer<typeof ledgerEntry>[],limit: number) 
   const items = rows.slice(0,limit), last = items.at(-1);
   return ledgerPage.parse({ items,nextCursor: rows.length > limit && last ? `${last.createdAt}.${last.operationId}` : null });
 }
+export const ownerCorrectionEntry = z.object({ correctionId: operationId,operationId,
+  previousActualMicros: micros.nullable(),correctedActualMicros: micros,
+  at: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).strict();
+export const ownerCorrectionPage = z.object({ items: z.array(ownerCorrectionEntry),nextCursor: outstandingCursor.nullable() }).strict();
+export function pageOfOwnerCorrections(rows: z.infer<typeof ownerCorrectionEntry>[],limit: number) {
+  const items = rows.slice(0,limit), last = items.at(-1);
+  return ownerCorrectionPage.parse({ items,nextCursor: rows.length > limit && last ? `${last.at}.${last.correctionId}` : null });
+}
 export const attempt = attemptOwner.extend({ attemptId: bodyHash, maxAttempts: z.number().int().min(1).max(1000) }).strict();
 export type Admission = z.infer<typeof admission>;
 export type Settlement = z.infer<typeof settlement>;
@@ -66,6 +74,7 @@ export interface BudgetStore {
   inspectReservation(input: z.infer<typeof attemptOwner>): Promise<z.infer<typeof budgetInspection> | null>;
   listOutstanding(input: OutstandingOptions): Promise<z.infer<typeof outstandingPage>>;
   listLedger(input: z.input<typeof ledgerOptions>): Promise<z.infer<typeof ledgerPage>>;
+  listOwnerCorrections(input: z.input<typeof ledgerOptions>): Promise<z.infer<typeof ownerCorrectionPage>>;
   settle(input: Settlement): Promise<boolean>;
   correctSettlement(input: z.infer<typeof settlementCorrection>): Promise<z.infer<typeof correctionResult>>;
   listCorrections(input: z.infer<typeof attemptOwner>): Promise<z.infer<typeof correctionEntry>[]>;
@@ -80,6 +89,7 @@ export const budgetCommand = z.discriminatedUnion("operation", [
   attemptOwner.extend({ operation: z.literal("budget.inspectReservation") }),
   outstandingOptions.extend({ operation: z.literal("budget.listOutstanding") }),
   ledgerOptions.extend({ operation: z.literal("budget.listLedger") }),
+  ledgerOptions.extend({ operation: z.literal("budget.listOwnerCorrections") }),
   settlement.extend({ operation: z.literal("budget.settle") }),
   settlementCorrection.extend({ operation: z.literal("budget.correctSettlement") }),
   attemptOwner.extend({ operation: z.literal("budget.listCorrections") }),

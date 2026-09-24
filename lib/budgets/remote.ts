@@ -3,17 +3,19 @@ import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { ConvexBackend } from "../data/convex-client";
 import type { Database } from "../data/supabase.generated";
-import { admission, admissionResult, settlement, settlementCorrection, correctionResult, correctionEntry, budgetInspection, lookup, snapshot, attempt, attemptOwner, reservationState, outstandingOptions, outstandingEntry, outstandingPage, pageOfOutstanding, ledgerOptions, ledgerEntry, ledgerPage, pageOfLedger, type BudgetStore } from "./contract";
+import { admission, admissionResult, settlement, settlementCorrection, correctionResult, correctionEntry, budgetInspection, lookup, snapshot, attempt, attemptOwner, reservationState, outstandingOptions, outstandingEntry, outstandingPage, pageOfOutstanding, ledgerOptions, ledgerEntry, ledgerPage, pageOfLedger, ownerCorrectionEntry, ownerCorrectionPage, pageOfOwnerCorrections, type BudgetStore } from "./contract";
 
 type Rpc = (operation: string, input: object) => Promise<unknown>;
 function adapter(call: Rpc, getReservation: BudgetStore["getReservation"], inspectReservation: BudgetStore["inspectReservation"], listOutstanding: BudgetStore["listOutstanding"],
-  listLedger: BudgetStore["listLedger"],correctSettlement: BudgetStore["correctSettlement"], listCorrections: BudgetStore["listCorrections"], close: () => Promise<void>): BudgetStore {
+  listLedger: BudgetStore["listLedger"],listOwnerCorrections: BudgetStore["listOwnerCorrections"],
+  correctSettlement: BudgetStore["correctSettlement"], listCorrections: BudgetStore["listCorrections"], close: () => Promise<void>): BudgetStore {
   return {
     reserve: async input => admissionResult.parse(await call("reserve", admission.parse(input))),
     getReservation,
     inspectReservation,
     listOutstanding,
     listLedger,
+    listOwnerCorrections,
     settle: async input => z.boolean().parse(await call("settle", settlement.parse(input))),
     correctSettlement,
     listCorrections,
@@ -53,6 +55,16 @@ export function postgresBudgetStore(connectionString: string) {
         ORDER BY created_at ASC,operation_id ASC LIMIT $5`,[input.tenant,input.subject,time ? Number(time) : null,id ?? null,input.limit+1]);
       return pageOfLedger(result.rows.map(row => ledgerEntry.parse({ ...row,createdAt: Number(row.createdAt),day: Number(row.day),
         estimateMicros: Number(row.estimateMicros),actualMicros: row.actualMicros === null ? null : Number(row.actualMicros) })),input.limit);
+    }, async raw => {
+      const input = ledgerOptions.parse(raw),[time,id] = input.cursor?.split(".") ?? [];
+      const result = await pool.query(`SELECT correction_id AS "correctionId",operation_id AS "operationId",
+        previous_actual_micros AS "previousActualMicros",corrected_actual_micros AS "correctedActualMicros",at
+        FROM public.app_budget_corrections WHERE tenant=$1 AND subject=$2
+        AND ($3::bigint IS NULL OR at>$3 OR (at=$3 AND correction_id>$4::uuid))
+        ORDER BY at ASC,correction_id ASC LIMIT $5`,[input.tenant,input.subject,time ? Number(time) : null,id ?? null,input.limit+1]);
+      return pageOfOwnerCorrections(result.rows.map(row => ownerCorrectionEntry.parse({ ...row,at: Number(row.at),
+        previousActualMicros: row.previousActualMicros === null ? null : Number(row.previousActualMicros),
+        correctedActualMicros: Number(row.correctedActualMicros) })),input.limit);
     }, async raw => {
       const input = settlementCorrection.parse(raw);
       return correctionResult.parse((await pool.query("SELECT public.app_budget_correct_settlement($1::jsonb) AS result",[JSON.stringify(input)])).rows[0].result);
@@ -106,6 +118,18 @@ export function supabaseBudgetStore(url: string, secret: string) {
       createdAt: Number(row.created_at),day: Number(row.day),policyId: row.policy_id,estimateMicros: Number(row.estimate_micros),
       status: row.status,actualMicros: row.actual_micros === null ? null : Number(row.actual_micros) })),input.limit);
   }, async raw => {
+    const input = ledgerOptions.parse(raw),[time,id] = input.cursor?.split(".") ?? [];
+    let query = client.from("app_budget_corrections")
+      .select("correction_id,operation_id,previous_actual_micros,corrected_actual_micros,at")
+      .eq("tenant",input.tenant).eq("subject",input.subject).order("at",{ ascending: true })
+      .order("correction_id",{ ascending: true }).limit(input.limit+1);
+    if (time) query = query.or(`at.gt.${time},and(at.eq.${time},correction_id.gt.${id})`);
+    const { data,error } = await query;
+    if (error) throw error;
+    return pageOfOwnerCorrections((data ?? []).map(row => ownerCorrectionEntry.parse({ correctionId: row.correction_id,
+      operationId: row.operation_id,previousActualMicros: row.previous_actual_micros === null ? null : Number(row.previous_actual_micros),
+      correctedActualMicros: Number(row.corrected_actual_micros),at: Number(row.at) })),input.limit);
+  }, async raw => {
     const input = settlementCorrection.parse(raw);
     const { data,error } = await client.rpc("app_budget_correct_settlement",{ input });
     if (error) throw error;
@@ -129,6 +153,7 @@ export function convexBudgetStore(url: string, secret: string) {
     async input => budgetInspection.nullable().parse(await backend.call("budget.inspectReservation", attemptOwner.parse(input), z.unknown())),
     async input => outstandingPage.parse(await backend.call("budget.listOutstanding",outstandingOptions.parse(input),z.unknown())),
     async input => ledgerPage.parse(await backend.call("budget.listLedger",ledgerOptions.parse(input),z.unknown())),
+    async input => ownerCorrectionPage.parse(await backend.call("budget.listOwnerCorrections",ledgerOptions.parse(input),z.unknown())),
     async input => correctionResult.parse(await backend.call("budget.correctSettlement",settlementCorrection.parse(input),z.unknown())),
     async input => z.array(correctionEntry).parse(await backend.call("budget.listCorrections",attemptOwner.parse(input),z.unknown())),async () => {});
 }

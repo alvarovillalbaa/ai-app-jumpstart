@@ -62,6 +62,62 @@ function seedBudgetOnly(subject: string, operationId: string, message: string) {
   if (container) execFileSync("docker",["exec",container,"node",...args]);
   else execFileSync(process.execPath,args);
 }
+function seedBudgetCorrection(subject: string) {
+  const operationId = randomUUID(),correctionId = randomUUID();
+  const script = `import { DatabaseSync } from "node:sqlite";
+    const [path,tenant,subject,operationId,correctionId] = process.argv.slice(1);
+    const db = new DatabaseSync(path);
+    db.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; BEGIN IMMEDIATE");
+    try {
+      const now = Date.now();
+      db.prepare("INSERT INTO app_budget_reservations(operation_id,tenant,subject,request_hash,policy_id,estimate_micros,day,created_at,status,actual_micros) VALUES (?,?,?,?,?,?,?,?,'settled',20)")
+        .run(operationId,tenant,subject,"a".repeat(64),"fixture",20,Math.floor(now/86400000),now);
+      db.prepare("INSERT INTO app_budget_corrections(correction_id,operation_id,tenant,subject,previous_actual_micros,corrected_actual_micros,actor,reason,evidence_ref,at) VALUES (?,?,?,?,20,7,?,?,?,?)")
+        .run(correctionId,operationId,tenant,subject,"private-operator","Private operator invoice analysis","private-evidence-reference",now);
+      db.prepare("UPDATE app_budget_reservations SET actual_micros=7 WHERE operation_id=?").run(operationId);
+      db.exec("COMMIT");
+    } catch (error) { db.exec("ROLLBACK"); throw error; }
+    finally { db.close(); }`;
+  const container = process.env.TEST_CHAT_CONTAINER;
+  const args = ["--input-type=module","-e",script,container ? "/app/.data/records.sqlite" : process.env.SQLITE_PATH!,`supabase:${auth}`,subject,operationId,correctionId];
+  if (container) execFileSync("docker",["exec",container,"node",...args]);
+  else execFileSync(process.execPath,args);
+  return { operationId,correctionId };
+}
+
+test("a stored cost correction is owner-scoped across API, CLI, MCP and export",async ({ request }) => {
+  const alice = await user(request),bob = await user(request);
+  expect((await request.get("/api/v1/usage",{ headers: { authorization: `Bearer ${alice.token}` } })).status()).toBe(200);
+  const { operationId,correctionId } = seedBudgetCorrection(alice.id);
+  const env = { APP_API_URL: process.env.APP_ORIGIN!,APP_API_TOKEN: alice.token };
+  const response = await request.get("/api/v1/usage/corrections?limit=1",{ headers: { authorization: `Bearer ${alice.token}` } });
+  expect(response.status()).toBe(200);
+  const page = await response.json();
+  expect(page).toMatchObject({ items: [{ correctionId,operationId,previousActualMicros: 20,correctedActualMicros: 7 }],nextCursor: null });
+  expect(JSON.stringify(page)).not.toMatch(/private-operator|Private operator|private-evidence/);
+  expect(await runCli(["usage","corrections","--limit","1"],env)).toEqual(page);
+  expect((await request.get("/api/v1/usage/corrections")).status()).toBe(401);
+  const foreign = await request.get("/api/v1/usage/corrections",{ headers: { authorization: `Bearer ${bob.token}` } });
+  expect(foreign.status()).toBe(200);
+  expect(await foreign.json()).toEqual({ items: [],nextCursor: null });
+  const client = new Client({ name: "correction-browser-contract",version: "1" });
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL("/api/mcp",env.APP_API_URL),{ requestInit: { headers: { authorization: `Bearer ${alice.token}` } } }));
+    const result = await client.callTool({ name: "usage_corrections",arguments: { limit: 1 } });
+    expect(result.isError).not.toBe(true);
+    expect(JSON.parse((result.content as { text: string }[])[0].text)).toEqual(page);
+  } finally { await client.close(); }
+  const directory = await mkdtemp(join(tmpdir(),"jumpstart-correction-export-"));
+  try {
+    const aliceFile = join(directory,"alice.ndjson"),bobFile = join(directory,"bob.ndjson");
+    expect(await runCli(["export","application",aliceFile],env)).toMatchObject({ counts: { corrections: 1,reservations: 1 } });
+    const aliceExport = await readFile(aliceFile,"utf8");
+    expect(aliceExport).toContain(correctionId);
+    expect(aliceExport).not.toMatch(/private-operator|Private operator|private-evidence/);
+    expect(await runCli(["export","application",bobFile],{ ...env,APP_API_TOKEN: bob.token })).toMatchObject({ counts: { corrections: 0,reservations: 0 } });
+    expect(await readFile(bobFile,"utf8")).not.toContain(correctionId);
+  } finally { await rm(directory,{ recursive: true,force: true }); }
+});
 
 test("verified users create, replay and follow up; foreign users cannot resolve or stream; daily admission stops work", async ({ page, request }) => {
   const alice = await user(request), bob = await user(request);
@@ -136,6 +192,11 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
   expect(aliceLedger.items.length).toBeGreaterThan(0);
   expect(aliceLedger.items.every((row: { status: string }) => row.status === "settled")).toBe(true);
   expect(await runCli(["usage","reservations","--limit","100"],{ APP_API_URL: process.env.APP_ORIGIN!,APP_API_TOKEN: alice.token })).toEqual(aliceLedger);
+  const correctionResponse = await request.get("/api/v1/usage/corrections?limit=100",{ headers: { authorization: `Bearer ${alice.token}` } });
+  expect(correctionResponse.status()).toBe(200);
+  const aliceCorrections = await correctionResponse.json();
+  expect(aliceCorrections).toEqual({ items: [],nextCursor: null });
+  expect(await runCli(["usage","corrections","--limit","100"],{ APP_API_URL: process.env.APP_ORIGIN!,APP_API_TOKEN: alice.token })).toEqual(aliceCorrections);
   const exportRecord = await request.post("/api/v1/records",{ headers: { authorization: `Bearer ${alice.token}` },data: { title: "Exported private record",content: "Only Alice may read this." } });
   expect(exportRecord.status()).toBe(201);
   const exportRecordId = (await exportRecord.json()).id;
@@ -155,7 +216,7 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
     const aliceFile = join(exportDirectory,"alice.ndjson"),bobFile = join(exportDirectory,"bob.ndjson");
     const env = { APP_API_URL: process.env.APP_ORIGIN! };
     expect(await runCli(["export","application",aliceFile],{ ...env,APP_API_TOKEN: alice.token })).toMatchObject({
-      counts: { profile: 1,records: 1,conversations: 1,uploads: 1,uploadUsage: 1,reservations: aliceLedger.items.length,usage: 1 },
+      counts: { profile: 1,records: 1,conversations: 1,uploads: 1,uploadUsage: 1,reservations: aliceLedger.items.length,corrections: 0,usage: 1 },
     });
     const aliceLines = (await readFile(aliceFile,"utf8")).trim().split("\n").map(line => JSON.parse(line));
     expect(aliceLines.some(line => line.type === "record" && line.value.id === exportRecordId)).toBe(true);
@@ -167,7 +228,7 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
     expect(aliceLines.filter(line => line.type === "budget_reservation").map(line => line.value)).toEqual(aliceLedger.items);
     expect(await readFile(aliceFile,"utf8")).not.toContain("Alice's quarantined bytes are not exportable.");
     expect(await runCli(["export","application",bobFile],{ ...env,APP_API_TOKEN: bob.token })).toMatchObject({
-      counts: { profile: 1,records: 0,conversations: 0,projections: 0,artifacts: 0,uploads: 0,uploadUsage: 1,reservations: 0,usage: 1 },
+      counts: { profile: 1,records: 0,conversations: 0,projections: 0,artifacts: 0,uploads: 0,uploadUsage: 1,reservations: 0,corrections: 0,usage: 1 },
     });
     expect(await readFile(bobFile,"utf8")).not.toContain(exportRecordId);
     expect(await readFile(bobFile,"utf8")).not.toContain(receipt.operationId);
@@ -188,6 +249,9 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
     const ledgerTool = await usageMcp.callTool({ name: "usage_reservations",arguments: { limit: 100 } });
     expect(ledgerTool.isError).not.toBe(true);
     expect(JSON.parse((ledgerTool.content as { text: string }[])[0].text)).toEqual(aliceLedger);
+    const correctionTool = await usageMcp.callTool({ name: "usage_corrections",arguments: { limit: 100 } });
+    expect(correctionTool.isError).not.toBe(true);
+    expect(JSON.parse((correctionTool.content as { text: string }[])[0].text)).toEqual(aliceCorrections);
     const resource = await usageMcp.readResource({ uri: "usage:///current" });
     expect("text" in resource.contents[0] && JSON.parse(resource.contents[0].text)).toEqual(usageView);
   } finally { await usageMcp.close(); }

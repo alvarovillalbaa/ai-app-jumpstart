@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { admission, settlement, settlementCorrection, correctionEntry, budgetInspection, lookup, snapshot, dayOf, refusal, attempt, attemptOwner, reservationState, outstandingOptions, outstandingEntry, pageOfOutstanding, ledgerOptions, ledgerEntry, pageOfLedger, type Admission, type Settlement, type BudgetStore, type AdmissionResult } from "./contract";
+import { admission, settlement, settlementCorrection, correctionEntry, budgetInspection, lookup, snapshot, dayOf, refusal, attempt, attemptOwner, reservationState, outstandingOptions, outstandingEntry, pageOfOutstanding, ledgerOptions, ledgerEntry, pageOfLedger, ownerCorrectionEntry, pageOfOwnerCorrections, type Admission, type Settlement, type BudgetStore, type AdmissionResult } from "./contract";
 
 export function sqliteBudgetStore(path: string): BudgetStore {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
@@ -23,6 +23,7 @@ export function sqliteBudgetStore(path: string): BudgetStore {
       tenant TEXT NOT NULL, subject TEXT NOT NULL, previous_actual_micros INTEGER, corrected_actual_micros INTEGER NOT NULL,
       actor TEXT NOT NULL, reason TEXT NOT NULL, evidence_ref TEXT NOT NULL, at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS budget_corrections_operation ON app_budget_corrections(operation_id,at,correction_id);
+    CREATE INDEX IF NOT EXISTS budget_corrections_owner_time ON app_budget_corrections(tenant,subject,at,correction_id);
     CREATE TRIGGER IF NOT EXISTS budget_corrections_no_update BEFORE UPDATE ON app_budget_corrections
       BEGIN SELECT RAISE(ABORT,'Budget correction audit entries are immutable'); END;
     CREATE TRIGGER IF NOT EXISTS budget_corrections_no_delete BEFORE DELETE ON app_budget_corrections
@@ -123,6 +124,17 @@ export function sqliteBudgetStore(path: string): BudgetStore {
         WHERE tenant=? AND subject=? AND (? IS NULL OR created_at>? OR (created_at=? AND operation_id>?))
         ORDER BY created_at ASC,operation_id ASC LIMIT ?`).all(input.tenant,input.subject,time ?? null,Number(time ?? 0),Number(time ?? 0),id ?? "",input.limit+1);
       return pageOfLedger(rows.map(row => ledgerEntry.parse(row)),input.limit);
+    },
+    async listOwnerCorrections(raw) {
+      const input = ledgerOptions.parse(raw);
+      const [time,id] = input.cursor?.split(".") ?? [];
+      const rows = db.prepare(`SELECT correction_id AS correctionId,operation_id AS operationId,
+        previous_actual_micros AS previousActualMicros,corrected_actual_micros AS correctedActualMicros,at
+        FROM app_budget_corrections WHERE tenant=? AND subject=?
+        AND (? IS NULL OR at>? OR (at=? AND correction_id>?))
+        ORDER BY at ASC,correction_id ASC LIMIT ?`).all(input.tenant,input.subject,time ?? null,
+          Number(time ?? 0),Number(time ?? 0),id ?? "",input.limit+1);
+      return pageOfOwnerCorrections(rows.map(row => ownerCorrectionEntry.parse(row)),input.limit);
     },
     async snapshot(raw) { return read(lookup.parse(raw)); },
     async claimAttempt(raw) {

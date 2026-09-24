@@ -14,6 +14,36 @@ export function budgetContract(name: string, factory: () => Promise<BudgetStore>
     const owner = (value: Admission) => ({ tenant: value.tenant, subject: value.subject });
     const next = (value: Admission) => ({ ...value, operationId: randomUUID() });
     const view = (value: Admission) => store.snapshot({ ...owner(value), now: value.now });
+    it("pages owner-visible correction costs across operations without operator notes", async () => {
+      const entries = [0,1,2].map(index => ({ ...input,operationId: randomUUID(),estimateMicros: 20,now: input.now+index }));
+      const foreign = { ...input,subject: "bob",operationId: randomUUID(),estimateMicros: 20 };
+      for (const entry of [...entries,foreign]) {
+        expect((await store.reserve(entry)).status).toBe("reserved");
+        expect(await store.settle({ ...owner(entry),operationId: entry.operationId,actualMicros: null })).toBe(true);
+      }
+      const corrections = [...entries,foreign].map((entry,index) => ({ ...owner(entry),operationId: entry.operationId,
+        correctionId: randomUUID(),expectedActualMicros: null,correctedActualMicros: index+1,
+        actor: "private-operator",reason: "Private operator invoice analysis",evidenceRef: "private-evidence-reference" }));
+      for (const correction of corrections) expect(await store.correctSettlement(correction)).toBe("applied");
+      const results: Awaited<ReturnType<BudgetStore["listOwnerCorrections"]>>["items"] = [];
+      let cursor: string | undefined;
+      do {
+        const page = await store.listOwnerCorrections({ ...owner(input),limit: 1,...(cursor ? { cursor } : {}) });
+        expect(page.items).toHaveLength(1);
+        results.push(...page.items);
+        cursor = page.nextCursor ?? undefined;
+      } while (cursor);
+      expect(results.map(row => row.correctionId).toSorted()).toEqual(corrections.slice(0,3).map(row => row.correctionId).toSorted());
+      expect(results.map(row => `${row.at}.${row.correctionId}`)).toEqual(results.map(row => `${row.at}.${row.correctionId}`).toSorted((a,b) => {
+        const [atA,idA] = a.split("."),[atB,idB] = b.split(".");
+        return Number(atA)-Number(atB) || idA.localeCompare(idB);
+      }));
+      expect(results[0]).toHaveProperty("previousActualMicros",null);
+      expect(JSON.stringify(results)).not.toMatch(/private-operator|private-evidence-reference|Private operator/);
+      expect((await store.listOwnerCorrections({ ...owner(foreign) })).items.map(row => row.correctionId)).toEqual([corrections[3].correctionId]);
+      await expect(store.listOwnerCorrections({ ...owner(input),limit: 101 })).rejects.toBeDefined();
+      await expect(store.listOwnerCorrections({ ...owner(input),cursor: "invalid" })).rejects.toBeDefined();
+    });
     it("pages historical reservations by owner across equal timestamps and settlements", async () => {
       const entries = [
         { ...input,estimateMicros: 20,operationId: randomUUID() },
