@@ -222,6 +222,7 @@ test("structured form recovers a missing result projection, then saves and reope
   await page.route(/\/api\/v1\/conversations\/[^/]+\/events\?/,async route => {
     if (!hideResult) return route.continue();
     const response = await route.fetch();
+    if (!hideResult) return route.fulfill({ response });
     const body = await response.json();
     await route.fulfill({ response,body: JSON.stringify({ ...body,items: body.items.filter((item: { payload: { kind: string } }) => item.payload.kind !== "result") }) });
   });

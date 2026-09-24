@@ -71,19 +71,20 @@ export function StructuredForm({ settings,userId,initialOperationId,initialDraft
   const check = useCallback(async (id: string,signal: AbortSignal,allowRecovery = true) => {
     let deadline = Date.now()+60_000;
     let cursor = 0,produced: RecordValue | undefined,recovered = !allowRecovery;
+    let recoveryDeadline = recovered ? Date.now()+10_000 : 0;
     try {
       while (!signal.aborted) {
         if (Date.now() >= deadline) {
           if (recovered) { if (activeUser.current === userId) setPhase("pending");return; }
           if (activeUser.current !== userId) return;
           recovered = true;setPhase("recovering");await replay(id,signal);
-          cursor = 0;produced = undefined;deadline = Date.now()+60_000;
+          cursor = 0;produced = undefined;deadline = Date.now()+60_000;recoveryDeadline = Date.now()+10_000;
           continue;
         }
         const state = receipt.parse(await json(`/api/v1/conversations/${id}`,signal));
         if (state.operationId !== id) throw new Error("Unexpected conversation response.");
         if (state.status === "active") {
-          if (activeUser.current === userId) setPhase("running");
+          if (activeUser.current === userId) setPhase(recovered ? "recovering" : "running");
           let completed = false,terminal: string | undefined;
           do {
             const page = projectionPage.parse(await json(`/api/v1/conversations/${id}/events?limit=50&after=${cursor}`,signal));
@@ -107,11 +108,18 @@ export function StructuredForm({ settings,userId,initialOperationId,initialDraft
           }
           if (terminal) throw new Error(`The run ${terminal}. You can start a new result.`);
           if (completed) {
-            if (recovered) throw new Error("The run completed, but its structured result is unavailable. Try Recover result.");
-            if (signal.aborted || activeUser.current !== userId) return;
-            recovered = true;setPhase("recovering");await replay(id,signal);
-            cursor = 0;produced = undefined;deadline = Date.now()+60_000;
-            continue;
+            // A completed replay can become visible before its projected result.
+            // Re-read from the start briefly rather than treating one stale page
+            // (or a request started before replay) as permanent data loss.
+            if (recovered) {
+              if (Date.now() >= recoveryDeadline) throw new Error("The run completed, but its structured result is unavailable. Try Recover result.");
+              cursor = 0;
+            } else {
+              if (signal.aborted || activeUser.current !== userId) return;
+              recovered = true;setPhase("recovering");await replay(id,signal);
+              cursor = 0;produced = undefined;deadline = Date.now()+60_000;recoveryDeadline = Date.now()+10_000;
+              continue;
+            }
           }
         }
         await new Promise<void>(resolve => {

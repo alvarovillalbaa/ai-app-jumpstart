@@ -6,9 +6,9 @@ import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 
 /** Real compiled Eve with a deterministic model and the production auth/hooks. */
-export async function startChatFixture(root, directory, applicationEnv, { buildOnly = false } = {}) {
+export async function startChatFixture(root, directory, applicationEnv, { buildOnly = false, routesManifest } = {}) {
   const source = join(root, "tests/fixtures/eve-access"), fixture = join(directory, "eve-app");
-  const manifest = JSON.parse(await readFile(join(root, ".next/routes-manifest.json"), "utf8"));
+  const manifest = routesManifest ?? JSON.parse(await readFile(join(root, ".next/routes-manifest.json"), "utf8"));
   const rewrite = manifest.rewrites.beforeFiles.find(item => item.source === "/eve/v1/:path+");
   const origin = new URL(rewrite.destination).origin;
   if (new URL(origin).hostname !== "127.0.0.1") throw new Error("Chat tests require the local production Eve rewrite.");

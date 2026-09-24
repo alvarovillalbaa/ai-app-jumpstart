@@ -178,6 +178,9 @@ try {
     await eventually(async () => (await broker.read(owner,input.operationId)).status === "active", "PostgreSQL session never activated.");
     const receipt = await broker.read(owner,input.operationId); assert.ok(receipt.sessionId);
     await eventually(async () => (await budgets.snapshot({ ...owner, now: Date.now() })).chargedMicros === 20, "PostgreSQL session did not settle.");
+    // Budget settlement precedes Graphile's lock release. Wait for the
+    // completed job to leave the worker before simulating a clean restart.
+    await eventually(async () => (await workflowRecovery(["list"])).lockedJobs.length === 0, "Completed PostgreSQL job remained locked.");
     const beforeRestart = await lines(receipts);
     const exited = once(child,"exit"); child.kill("SIGKILL"); await exited;
     // An empty local world must not erase or replay a settled PostgreSQL run.
@@ -192,6 +195,7 @@ try {
     const followup = await (await restored.send("Continue after replacement")).result();
     assert.ok(followup.events.some(event => event.type === "message.completed"));
     assert.equal(await lines(receipts),beforeRestart+1);
+    await eventually(async () => (await workflowRecovery(["list"])).lockedJobs.length === 0, "Completed follow-up job remained locked.");
     const interruptedInput = { message: "inflight-restart-test", operationId: randomUUID() };
     const beforeInterrupted = await lines(receipts);
     const beforeInterruptedBudget = await budgets.snapshot({ ...owner, now: Date.now() });

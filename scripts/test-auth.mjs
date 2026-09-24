@@ -18,7 +18,7 @@ const chat = process.argv.includes("--chat");
 const containerMode = process.argv.includes("--container");
 if (containerMode && !chat) throw new Error("Container mode requires --chat.");
 const image = process.env.TEST_CONTAINER_IMAGE ?? "ai-app-jumpstart:test";
-let web, proxy, runtime, failed = false, webOutput = "";
+let web, proxy, runtime, imageManifest, failed = false, webOutput = "";
 async function command(executable, args, options = {}) {
   const child = spawn(executable, args, { stdio: ["ignore", "pipe", "pipe"], ...options });
   let output = "";
@@ -53,7 +53,12 @@ async function freePort() {
 const webPort = await freePort();
 const appOrigin = `http://127.0.0.1:${webPort}`;
 try {
-  if (containerMode) await docker("image", "inspect", image);
+  if (containerMode) {
+    await docker("image", "inspect", image);
+    // The image is the source of truth for build-time Eve rewrites; CI has no
+    // host .next build when this suite follows the container runtime test.
+    imageManifest = JSON.parse(await docker("run", "--rm", "--entrypoint", "cat", image, "/app/.next/routes-manifest.json"));
+  }
   await docker("network", "create", name);
   await runContainer("postgres", "postgres:17-bookworm", { POSTGRES_PASSWORD: password, POSTGRES_USER: "auth_test", POSTGRES_DB: "auth_test" });
   // TCP readiness excludes the image's temporary socket-only bootstrap server.
@@ -106,7 +111,7 @@ try {
   if (chat) {
     env.AI_CREATION_SIGNING_JSON = JSON.stringify({ audience: name, activeKey: "fixture", keys: { fixture: randomBytes(32).toString("hex") } });
     env.AI_BUDGET_POLICY_JSON = JSON.stringify({ policy: { id: "fixture", dailyMicros: 60, maxActive: 2, maxPerMinute: 20 }, estimateMicros: 20, maxModelCalls: 2, modelIds: ["model", "eve-mock/model"] });
-    runtime = await startChatFixture(process.cwd(), directory, env, { buildOnly: containerMode });
+    runtime = await startChatFixture(process.cwd(), directory, env, { buildOnly: containerMode, routesManifest: imageManifest });
     env.AI_RUNTIME_ORIGIN = runtime.origin;
   }
   if (containerMode) {
