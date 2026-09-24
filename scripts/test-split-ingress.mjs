@@ -7,9 +7,7 @@ import { resolve } from "node:path";
 const nodeImage = "node@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6";
 const suffix = randomUUID().slice(0, 12);
 const caddyImage = `jumpstart-ingress-test:${suffix}`;
-const network = `jumpstart-split-${suffix}`;
-const eve = `jumpstart-eve-${suffix}`;
-const next = `jumpstart-next-${suffix}`;
+const app = `jumpstart-app-${suffix}`;
 const ingress = `jumpstart-ingress-${suffix}`;
 const docker = (...args) => execFileSync("docker", args, { encoding: "utf8", timeout: 180_000 }).trim();
 const cleanup = (...args) => { try { docker(...args); } catch { /* best effort for disposable resources */ } };
@@ -35,22 +33,17 @@ for (const { app, ingress: proxy, port } of cloudRoutes) {
 assert.equal(aws.containerDefinitions.find(c => c.name === "ingress").dependsOn[0].condition, "HEALTHY");
 assert.deepEqual(JSON.parse(gcp.spec.template.metadata.annotations["run.googleapis.com/container-dependencies"]), { ingress: ["app"] });
 
-let networkCreated = false;
 try {
   docker("build", "--file", "deploy/ingress.Dockerfile", "--tag", caddyImage, ".");
-  docker("network", "create", network);
-  networkCreated = true;
-  docker("run", "--detach", "--rm", "--network", network, "--name", eve,
-    "--volume", `${resolve("scripts/fixtures/split-eve-upstream.mjs")}:/fixture.mjs:ro`,
-    nodeImage, "node", "/fixture.mjs");
-  docker("run", "--detach", "--rm", "--network", network, "--name", next,
-    "--volume", `${resolve("scripts/fixtures/split-next-upstream.mjs")}:/fixture.mjs:ro`,
-    nodeImage, "node", "/fixture.mjs");
-  docker("run", "--detach", "--rm", "--network", network, "--name", ingress,
-    "--publish", "127.0.0.1::8080", "--user", "1000:1000", "--env", `EVE_UPSTREAM=${eve}:4274`, "--env", `NEXT_UPSTREAM=${next}:3000`,
+  docker("run", "--detach", "--rm", "--name", app, "--publish", "127.0.0.1::8080",
+    "--volume", `${resolve("scripts/fixtures/split-eve-upstream.mjs")}:/eve.mjs:ro`,
+    "--volume", `${resolve("scripts/fixtures/split-next-upstream.mjs")}:/next.mjs:ro`,
+    nodeImage, "node", "--input-type=module", "-e", "await import('/eve.mjs'); await import('/next.mjs')");
+  docker("run", "--detach", "--rm", "--network", `container:${app}`, "--name", ingress,
+    "--user", "1000:1000", "--env", "EVE_UPSTREAM=127.0.0.1:4274", "--env", "NEXT_UPSTREAM=127.0.0.1:3000",
     caddyImage);
 
-  const mapped = docker("port", ingress, "8080/tcp");
+  const mapped = docker("port", app, "8080/tcp");
   assert.match(mapped, /^127\.0\.0\.1:\d+$/);
   const origin = `http://${mapped}`;
   let health;
@@ -86,11 +79,9 @@ try {
   assert.equal(new TextDecoder().decode(second.value), "data: second\n\n");
   assert.ok(secondAt - firstAt >= 250, "the ingress must stream before Eve finishes");
   await reader.cancel();
-  console.log("Split ingress passed: Next routes, Eve routes, Workflow callback and live SSE.");
+  console.log("Split ingress passed: shared-localhost Next/Eve routes, Workflow callback and live SSE.");
 } finally {
   cleanup("rm", "--force", ingress);
-  cleanup("rm", "--force", next);
-  cleanup("rm", "--force", eve);
-  if (networkCreated) cleanup("network", "rm", network);
+  cleanup("rm", "--force", app);
   cleanup("image", "rm", caddyImage);
 }
