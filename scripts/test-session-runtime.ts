@@ -29,6 +29,7 @@ const database = join(directory, "app.sqlite"), receipts = join(directory, "mode
 const budgetSettings = { policy: { id: "fixture", dailyMicros: 60, maxActive: 2, maxPerMinute: 20 }, estimateMicros: 20, maxModelCalls: 1, modelIds: ["model","eve-mock/model"] };
 const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: "production", EVE_DEV: "", EVE_TELEMETRY_DISABLED: "1", NITRO_PRESET: "node-server",
   HOST: "127.0.0.1", NITRO_HOST: "127.0.0.1", PORT: String(port), NITRO_PORT: String(port),
+  APP_ORIGIN: origin,
   WORKFLOW_TARGET_WORLD: "local", WORKFLOW_LOCAL_DATA_DIR: join(directory, "workflow"), WORKFLOW_LOCAL_BASE_URL: origin,
   DATA_PROVIDER: "sqlite", SQLITE_PATH: database, TEST_MODEL_RECEIPTS: receipts, TEST_FAILURE_RECEIPTS: failures, TEST_RECEIPT_GATE: gate, TEST_MODEL_GATE: modelGate,
   AI_BUDGET_POLICY_JSON: JSON.stringify(budgetSettings),
