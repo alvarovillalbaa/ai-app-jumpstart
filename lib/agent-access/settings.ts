@@ -1,5 +1,5 @@
 import { authSettings } from "../auth/settings";
-import { runtimeBudgetSettings } from "../budgets/runtime";
+import { parseRuntimeBudgetSettings } from "../budgets/runtime";
 import { AppError } from "../http/errors";
 import { checkedSettings } from "./signing";
 import { trustedHttpOrigin } from "../security/origin";
@@ -12,7 +12,7 @@ export function chatSettings(env: NodeJS.ProcessEnv = process.env) {
     const auth = authSettings(env);
     if (!auth) throw new Error("Registered user authentication is required");
     const signing = checkedSettings(JSON.parse(env.AI_CREATION_SIGNING_JSON ?? ""));
-    const budget = runtimeBudgetSettings.parse(JSON.parse(env.AI_BUDGET_POLICY_JSON ?? ""));
+    const budget = parseRuntimeBudgetSettings(JSON.parse(env.AI_BUDGET_POLICY_JSON ?? ""));
     const origin = trustedHttpOrigin(env.AI_RUNTIME_ORIGIN);
     if (!origin) throw new Error("Invalid runtime origin");
     return { auth, signing, budget, origin };

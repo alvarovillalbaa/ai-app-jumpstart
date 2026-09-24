@@ -5,7 +5,9 @@ import { sqliteBudgetStore } from "../../lib/budgets/sqlite";
 import { RuntimeBudgets, type RuntimeBudgetState } from "../../lib/budgets/runtime";
 const owner = { tenant: "test", subject: "alice" };
 let access: ReturnType<typeof sqliteAccessStore>, budgets: ReturnType<typeof sqliteBudgetStore>, state: RuntimeBudgetState, runtime: RuntimeBudgets, operation: string;
-const settings = { policy: { id: "fixture", dailyMicros: 200, maxActive: 1, maxPerMinute: 10 }, estimateMicros: 100, maxModelCalls: 2, modelIds: ["fixture"] };
+const settings = { policy: { id: "fixture", dailyMicros: 200, maxActive: 1, maxPerMinute: 10 }, estimateMicros: 100, maxModelCalls: 2, modelIds: ["fixture"],
+  costBasis: { sourceUrl: "https://example.test/fixture-prices", reviewedAt: "2026-09-24", maxOtherMicros: 0,
+    models: [{ id: "fixture", maxInputTokens: 1, maxOutputTokens: 1, inputMicrosPerMillion: 1_000_000, outputMicrosPerMillion: 1_000_000 }] } };
 function context(sequence = 0, id = `turn-${sequence}`) {
   const auth = { authenticator: "jumpstart", principalType: "user", principalId: owner.subject, issuer: owner.tenant, attributes: { creationOperationId: operation } };
   return { session: { id: "session", turn: { id, sequence }, auth: { current: auth, initiator: auth } } };

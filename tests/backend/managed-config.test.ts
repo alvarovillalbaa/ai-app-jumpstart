@@ -11,7 +11,9 @@ const chat = {
   ...baseline, AI_CHAT_ENABLED: "true", AI_RUNTIME_ORIGIN: "https://app.example.org",
   AI_CREATION_SIGNING_JSON: JSON.stringify({ audience: "fixture:staging", activeKey: "v1", keys: { v1: "a".repeat(64) } }),
   AI_BUDGET_POLICY_JSON: JSON.stringify({ policy: { id: "fixture", dailyMicros: 100, maxActive: 1, maxPerMinute: 2 },
-    estimateMicros: 10, maxModelCalls: 1, modelIds: ["openai/gpt-5.6-luna-fast"] }),
+    estimateMicros: 10, maxModelCalls: 1, modelIds: ["openai/gpt-5.6-luna-fast"],
+    costBasis: { sourceUrl: "https://example.test/fixture-prices", reviewedAt: "2026-09-24", maxOtherMicros: 0,
+      models: [{ id: "openai/gpt-5.6-luna-fast", maxInputTokens: 1, maxOutputTokens: 1, inputMicrosPerMillion: 1_000_000, outputMicrosPerMillion: 1_000_000 }] } }),
 };
 
 it("accepts an explicit records-first managed setup and a fully shaped account-chat setup", () => {
@@ -35,4 +37,6 @@ it("fails closed for incomplete or malformed enabled chat without echoing secret
   const malformed = { ...chat, AI_BUDGET_POLICY_JSON: '{"secret":"private-fixture-value"}' };
   expect(() => checkManagedConfig(malformed)).toThrow("Account chat settings are invalid");
   try { checkManagedConfig(malformed); } catch (error) { expect(String(error)).not.toContain("private-fixture-value"); }
+  const unreviewed = { ...chat, AI_BUDGET_POLICY_JSON: JSON.stringify({ policy: { id: "fixture", dailyMicros: 100, maxActive: 1, maxPerMinute: 2 }, estimateMicros: 10, maxModelCalls: 1, modelIds: ["openai/gpt-5.6-luna-fast"] }) };
+  expect(() => checkManagedConfig(unreviewed, true)).toThrow("Account chat settings are invalid");
 });

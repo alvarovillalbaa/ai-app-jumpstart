@@ -26,7 +26,9 @@ const port = address.port; await new Promise<void>(resolve => socket.close(() =>
 const origin = `http://127.0.0.1:${port}`, aliceToken = randomBytes(32).toString("hex"), bobToken = randomBytes(32).toString("hex");
 const signing = { audience: "isolated-session-runtime", activeKey: "fixture", keys: { fixture: randomBytes(32).toString("hex") } };
 const database = join(directory, "app.sqlite"), receipts = join(directory, "model.txt"), failures = join(directory, "failures.txt"), gate = join(directory, "gate"), modelGate = join(directory, "model-gate");
-const budgetSettings = { policy: { id: "fixture", dailyMicros: 60, maxActive: 2, maxPerMinute: 20 }, estimateMicros: 20, maxModelCalls: 1, modelIds: ["model","eve-mock/model"] };
+const budgetSettings = { policy: { id: "fixture", dailyMicros: 60, maxActive: 2, maxPerMinute: 20 }, estimateMicros: 20, maxModelCalls: 1, modelIds: ["model","eve-mock/model"],
+  costBasis: { sourceUrl: "https://example.test/fixture-prices", reviewedAt: "2026-09-24", maxOtherMicros: 0,
+    models: ["model","eve-mock/model"].map(id => ({ id, maxInputTokens: 1, maxOutputTokens: 1, inputMicrosPerMillion: 1_000_000, outputMicrosPerMillion: 1_000_000 })) } };
 const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: "production", EVE_DEV: "", EVE_TELEMETRY_DISABLED: "1", NITRO_PRESET: "node-server",
   HOST: "127.0.0.1", NITRO_HOST: "127.0.0.1", PORT: String(port), NITRO_PORT: String(port),
   APP_ORIGIN: origin,

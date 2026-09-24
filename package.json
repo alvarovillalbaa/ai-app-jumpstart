@@ -55,6 +55,7 @@
     "test:container": "node scripts/test-container.mjs",
     "test:vercel-build": "node scripts/test-vercel-build.mjs",
     "check:managed-config": "tsx --env-file-if-exists=.env.local scripts/check-managed-config.ts",
+    "check:budget-policy": "tsx --env-file-if-exists=.env.local scripts/check-budget-policy.ts",
     "smoke:hosted": "node scripts/smoke-hosted.mjs",
     "test:auth": "node scripts/test-auth.mjs",
     "test:chat": "node scripts/test-auth.mjs --chat",

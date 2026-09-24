@@ -19,7 +19,9 @@ const clients: Client[] = [];
 beforeEach(async () => {
   const env = { AUTH_PROVIDER: "supabase",SUPABASE_AUTH_URL: "https://identity.example",SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test_fixture",AI_CHAT_ENABLED: "true",AI_RUNTIME_ORIGIN: "http://127.0.0.1:4274",
     AI_CREATION_SIGNING_JSON: JSON.stringify({ audience: "fixture",activeKey: "one",keys: { one: "a".repeat(64) } }),
-    AI_BUDGET_POLICY_JSON: JSON.stringify({ policy: { id: "fixture",dailyMicros: 60,maxActive: 2,maxPerMinute: 20 },estimateMicros: 20,maxModelCalls: 1,modelIds: ["fixture"] }),
+    AI_BUDGET_POLICY_JSON: JSON.stringify({ policy: { id: "fixture",dailyMicros: 60,maxActive: 2,maxPerMinute: 20 },estimateMicros: 20,maxModelCalls: 1,modelIds: ["fixture"],
+      costBasis: { sourceUrl: "https://example.test/fixture-prices", reviewedAt: "2026-09-24", maxOtherMicros: 0,
+        models: [{ id: "fixture", maxInputTokens: 1, maxOutputTokens: 1, inputMicrosPerMillion: 1_000_000, outputMicrosPerMillion: 1_000_000 }] } }),
     APP_API_KEYS: JSON.stringify([{ ...owner,sha256: createHash("sha256").update(key).digest("hex"),scopes: ["records:read","records:write"] }]),APP_ORIGIN: "http://localhost:3000" };
   for (const [name,value] of Object.entries(env)) vi.stubEnv(name,value);
   vi.stubGlobal("fetch",vi.fn(async (_url: unknown,init?: RequestInit) => {

@@ -4,12 +4,28 @@ import type { HookContext } from "eve/hooks";
 import { accessOwner, operationId, type SessionAccessStore } from "../agent-access/contract";
 import { requestHash } from "../agent-access/signing";
 import { budgetPolicy, micros, type BudgetStore } from "./contract";
+import { costBasis, quotedEnvelopeMicros } from "./cost-basis";
 
-export const runtimeBudgetSettings = z.object({ policy: budgetPolicy, estimateMicros: micros.positive(), maxModelCalls: z.number().int().min(1).max(1000), modelIds: z.array(z.string().min(1)).min(1).max(10) }).strict();
+export const runtimeBudgetSettings = z.object({ policy: budgetPolicy, estimateMicros: micros.positive(), maxModelCalls: z.number().int().min(1).max(1000), modelIds: z.array(z.string().min(1)).min(1).max(10), costBasis }).strict().superRefine((settings, ctx) => {
+  if (settings.estimateMicros > settings.policy.dailyMicros) {
+    ctx.addIssue({ code: "custom", path: ["estimateMicros"], message: "One reservation exceeds the daily allowance." });
+  }
+  const configured = new Set(settings.modelIds);
+  const reviewed = new Set(settings.costBasis.models.map(model => model.id));
+  if (configured.size !== settings.modelIds.length || reviewed.size !== settings.costBasis.models.length ||
+      configured.size !== reviewed.size || [...configured].some(id => !reviewed.has(id))) {
+    ctx.addIssue({ code: "custom", path: ["costBasis", "models"], message: "Cost basis must cover each allowed model exactly once." });
+  }
+  if (quotedEnvelopeMicros(settings.costBasis, settings.maxModelCalls) > BigInt(settings.estimateMicros)) {
+    ctx.addIssue({ code: "custom", path: ["estimateMicros"], message: "Reservation is below the reviewed cost basis." });
+  }
+});
 export type RuntimeBudgetSettings = z.infer<typeof runtimeBudgetSettings>;
-export function readRuntimeBudgetSettings() {
-  if (!process.env.AI_BUDGET_POLICY_JSON) throw new Error("Configure the server-side AI budget policy before running account-owned sessions.");
-  return runtimeBudgetSettings.parse(JSON.parse(process.env.AI_BUDGET_POLICY_JSON));
+export function parseRuntimeBudgetSettings(raw: unknown) { return runtimeBudgetSettings.parse(raw); }
+export function readRuntimeBudgetSettings(env: NodeJS.ProcessEnv = process.env) {
+  if (!env.AI_BUDGET_POLICY_JSON) throw new Error("Configure the server-side AI budget policy before running account-owned sessions.");
+  try { return parseRuntimeBudgetSettings(JSON.parse(env.AI_BUDGET_POLICY_JSON)); }
+  catch { throw new Error("AI budget policy is invalid; review model prices, token assumptions and reservation amount."); }
 }
 type Run = { operationId: string; turnId: string; reported: number; knownMicros: number; unknown: boolean; open: boolean; pending: boolean; estimateMicros: number; maxModelCalls: number; modelIds: string[]; reconciliationRequired?: boolean };
 export type RuntimeBudgetState = { turn: Run | null; compaction: Run | null };
