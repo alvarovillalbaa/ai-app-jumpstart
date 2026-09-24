@@ -7,8 +7,11 @@ import type { ProjectionEntry } from "../../lib/agent-access/projection-contract
 export function sessionAccessContract(name: string, factory: () => Promise<SessionAccessStore>) {
   describe(`Session access contract: ${name}`, () => {
     let store: SessionAccessStore, owner: AccessOwner, strangers: AccessOwner[], input: Reservation;
+    let sessionNamespace: string;
+    const sid = (name: string) => `${name}-${sessionNamespace}`;
     beforeEach(async () => {
       store = await factory();
+      sessionNamespace = randomUUID();
       owner = { tenant: randomUUID(), subject: "alice" };
       strangers = [{ ...owner, subject: "bob" }, { tenant: randomUUID(), subject: owner.subject }];
       input = { ...owner, id: randomUUID(), operationId: randomUUID(), requestHash: randomBytes(32).toString("hex") };
@@ -16,25 +19,25 @@ export function sessionAccessContract(name: string, factory: () => Promise<Sessi
     afterEach(async () => { await store?.close(); });
     it("commits approved artifact calls once, isolates owners and denies writes after revocation",async () => {
       const draft = { title: "Private note",content: "Plain text content" };
-      expect(await store.saveArtifact(owner,input.operationId,"artifact-session","call-1",draft)).toEqual({ status: "unavailable" });
+      expect(await store.saveArtifact(owner,input.operationId,sid("artifact-session"),"call-1",draft)).toEqual({ status: "unavailable" });
       await store.reserve(input);
-      expect(await store.saveArtifact(owner,input.operationId,"artifact-session","call-1",draft)).toEqual({ status: "unavailable" });
-      await store.bind(owner,input.operationId,"artifact-session");
-      for (const stranger of strangers) expect(await store.saveArtifact(stranger,input.operationId,"artifact-session","call-1",draft)).toEqual({ status: "unavailable" });
-      expect(await store.saveArtifact(owner,input.operationId,"other-session","call-1",draft)).toEqual({ status: "unavailable" });
-      const outcomes = await Promise.all(Array.from({ length: 3 },() => store.saveArtifact(owner,input.operationId,"artifact-session","call-1",draft)));
+      expect(await store.saveArtifact(owner,input.operationId,sid("artifact-session"),"call-1",draft)).toEqual({ status: "unavailable" });
+      await store.bind(owner,input.operationId,sid("artifact-session"));
+      for (const stranger of strangers) expect(await store.saveArtifact(stranger,input.operationId,sid("artifact-session"),"call-1",draft)).toEqual({ status: "unavailable" });
+      expect(await store.saveArtifact(owner,input.operationId,sid("other-session"),"call-1",draft)).toEqual({ status: "unavailable" });
+      const outcomes = await Promise.all(Array.from({ length: 3 },() => store.saveArtifact(owner,input.operationId,sid("artifact-session"),"call-1",draft)));
       expect(outcomes.filter(value => value.status === "created")).toHaveLength(1);
       expect(outcomes.filter(value => value.status === "existing")).toHaveLength(2);
       const first = outcomes.find(value => value.status === "created");
       if (!first || first.status !== "created") throw new Error("Artifact was not created.");
-      expect(first.artifact).toMatchObject({ title: draft.title,content: draft.content,sourceCallId: "call-1",sourceSessionId: "artifact-session",mediaType: "text/plain" });
-      expect(await store.saveArtifact(owner,input.operationId,"artifact-session","call-1",{ ...draft,content: "Changed" })).toEqual({ status: "conflict" });
+      expect(first.artifact).toMatchObject({ title: draft.title,content: draft.content,sourceCallId: "call-1",sourceSessionId: sid("artifact-session"),mediaType: "text/plain" });
+      expect(await store.saveArtifact(owner,input.operationId,sid("artifact-session"),"call-1",{ ...draft,content: "Changed" })).toEqual({ status: "conflict" });
       for (const stranger of strangers) {
         expect(await store.getArtifact(stranger,first.artifact.id)).toBeNull();
         expect((await store.listArtifacts(stranger,{})).items).toEqual([]);
       }
       expect(await store.getArtifact(owner,first.artifact.id)).toEqual(first.artifact);
-      for (const n of [2,3]) expect((await store.saveArtifact(owner,input.operationId,"artifact-session",`call-${n}`,{ ...draft,title: `Note ${n}` })).status).toBe("created");
+      for (const n of [2,3]) expect((await store.saveArtifact(owner,input.operationId,sid("artifact-session"),`call-${n}`,{ ...draft,title: `Note ${n}` })).status).toBe("created");
       const all = await store.listArtifacts(owner,{}),page1 = await store.listArtifacts(owner,{ limit: 2 });
       expect(all.items).toHaveLength(3);expect(page1.nextCursor).toBeTruthy();
       const page2 = await store.listArtifacts(owner,{ cursor: page1.nextCursor! });
@@ -44,34 +47,34 @@ export function sessionAccessContract(name: string, factory: () => Promise<Sessi
       expect(await store.deleteArtifact(owner,first.artifact.id)).toBe(false);
       expect(await store.getArtifact(owner,first.artifact.id)).toBeNull();
       expect((await store.listArtifacts(owner,{})).items.map(item => item.id)).not.toContain(first.artifact.id);
-      expect(await store.saveArtifact(owner,input.operationId,"artifact-session","call-1",draft)).toEqual({ status: "unavailable" });
-      expect(await store.saveArtifact(owner,input.operationId,"artifact-session","call-1",{ ...draft,content: "Changed" })).toEqual({ status: "unavailable" });
+      expect(await store.saveArtifact(owner,input.operationId,sid("artifact-session"),"call-1",draft)).toEqual({ status: "unavailable" });
+      expect(await store.saveArtifact(owner,input.operationId,sid("artifact-session"),"call-1",{ ...draft,content: "Changed" })).toEqual({ status: "unavailable" });
       await store.revoke(owner,input.id);
-      expect(await store.saveArtifact(owner,input.operationId,"artifact-session","call-4",draft)).toEqual({ status: "unavailable" });
+      expect(await store.saveArtifact(owner,input.operationId,sid("artifact-session"),"call-4",draft)).toEqual({ status: "unavailable" });
       expect((await store.listArtifacts(owner,{})).items).toHaveLength(2);
     });
     it("stores immutable projection events once, orders pages and rejects wrong bindings",async () => {
-      await store.reserve(input); await store.bind(owner,input.operationId,"projection-session");
+      await store.reserve(input); await store.bind(owner,input.operationId,sid("projection-session"));
       const event = (n: number): ProjectionEntry => ({ schemaVersion: 1,eventId: `evt_${String(n).padStart(26,"0")}`,at: "2026-09-22T12:00:00.000Z",turnId: "turn-one",sequence: 0,payload: { kind: "message",role: "assistant",parts: [{ type: "text",text: `Reply ${n}` }] } });
-      for (const stranger of strangers) expect(await store.appendProjection(stranger,input.operationId,"projection-session",event(1))).toBe("unavailable");
-      expect(await store.appendProjection(owner,input.operationId,"wrong-session",event(1))).toBe("unavailable");
-      const writes = await Promise.all(Array.from({ length: 3 },() => store.appendProjection(owner,input.operationId,"projection-session",event(2))));
+      for (const stranger of strangers) expect(await store.appendProjection(stranger,input.operationId,sid("projection-session"),event(1))).toBe("unavailable");
+      expect(await store.appendProjection(owner,input.operationId,sid("wrong-session"),event(1))).toBe("unavailable");
+      const writes = await Promise.all(Array.from({ length: 3 },() => store.appendProjection(owner,input.operationId,sid("projection-session"),event(2))));
       expect(writes.filter(value => value === "inserted")).toHaveLength(1);
       expect(writes.filter(value => value === "duplicate")).toHaveLength(2);
-      expect(await store.appendProjection(owner,input.operationId,"projection-session",{ ...event(2),sequence: 2 })).toBe("conflict");
-      await store.appendProjection(owner,input.operationId,"projection-session",event(1));
-      await store.appendProjection(owner,input.operationId,"projection-session",event(3));
+      expect(await store.appendProjection(owner,input.operationId,sid("projection-session"),{ ...event(2),sequence: 2 })).toBe("conflict");
+      await store.appendProjection(owner,input.operationId,sid("projection-session"),event(1));
+      await store.appendProjection(owner,input.operationId,sid("projection-session"),event(3));
       const first = await store.listProjections(owner,input.operationId,{ limit: 2 });
       expect(first.items.map(({ ingestionIndex,...entry }) => { expect(ingestionIndex).toBeGreaterThan(0); return entry; })).toEqual([event(2),event(1)]);
       expect(first.nextCursor).toBe(first.items[1].ingestionIndex);
       const last = await store.listProjections(owner,input.operationId,{ after: first.nextCursor! });
       expect(last.items.map(({ ingestionIndex,...entry }) => { expect(ingestionIndex).toBeGreaterThan(first.nextCursor!); return entry; })).toEqual([event(3)]);
       // A late write whose source clock is older must still follow the cursor.
-      await store.appendProjection(owner,input.operationId,"projection-session",event(0));
+      await store.appendProjection(owner,input.operationId,sid("projection-session"),event(0));
       expect((await store.listProjections(owner,input.operationId,{ after: last.items[0].ingestionIndex })).items[0]).toMatchObject(event(0));
       for (const stranger of strangers) expect((await store.listProjections(stranger,input.operationId,{})).items).toEqual([]);
       await store.revoke(owner,input.id);
-      expect(await store.appendProjection(owner,input.operationId,"projection-session",event(4))).toBe("unavailable");
+      expect(await store.appendProjection(owner,input.operationId,sid("projection-session"),event(4))).toBe("unavailable");
       expect((await store.listProjections(owner,input.operationId,{})).items).toHaveLength(4);
     });
     it("reads one owned metadata record without revealing control fields or changing archive visibility",async () => {
@@ -106,7 +109,7 @@ export function sessionAccessContract(name: string, factory: () => Promise<Sessi
       expect((await store.list(strangers[1],{})).items).toEqual([]);
     });
     it("renames and archives with one CAS winner while preserving session ownership", async () => {
-      await store.reserve(input,"Initial title"); await store.bind(owner,input.operationId,"preserved-session");
+      await store.reserve(input,"Initial title"); await store.bind(owner,input.operationId,sid("preserved-session"));
       expect(await store.reserve(input,"Retry cannot rename")).toBe(false);
       expect((await store.list(owner,{})).items[0].title).toBe("Initial title");
       for (const stranger of strangers) expect(await store.updateDetails(stranger,input.operationId,{ revision: 1, title: "Foreign" })).toBeNull();
@@ -116,10 +119,10 @@ export function sessionAccessContract(name: string, factory: () => Promise<Sessi
       expect(archived).toMatchObject({ archived: true, revision: 3, status: "active" });
       expect((await store.list(owner,{})).items).toEqual([]);
       expect((await store.list(owner,{ archived: true })).items).toEqual([archived]);
-      expect(await store.ownsSession(owner,"preserved-session")).toBe(true);
+      expect(await store.ownsSession(owner,sid("preserved-session"))).toBe(true);
       expect(await store.updateDetails(owner,input.operationId,{ revision: 2,archived: false })).toBeNull();
       expect(await store.updateDetails(owner,input.operationId,{ revision: 3,archived: false })).toMatchObject({ revision: 4,archived: false });
-      expect(await store.getOperation(owner,input.operationId)).toEqual({ ...input,sessionId: "preserved-session",status: "active" });
+      expect(await store.getOperation(owner,input.operationId)).toEqual({ ...input,sessionId: sid("preserved-session"),status: "active" });
     });
     it("rejects malformed history filters and mutations before writing", async () => {
       await store.reserve(input);
@@ -142,7 +145,7 @@ export function sessionAccessContract(name: string, factory: () => Promise<Sessi
       for (const stranger of strangers) {
         expect(await store.reserve({ ...input, ...stranger, id: randomUUID() })).toBe(false);
         expect(await store.getOperation(stranger, input.operationId)).toBeNull();
-        expect(await store.bind(stranger, input.operationId, "foreign")).toBe(false);
+        expect(await store.bind(stranger, input.operationId, sid("foreign"))).toBe(false);
         expect(await store.revoke(stranger, input.id)).toBe(false);
       }
     });
@@ -165,18 +168,18 @@ export function sessionAccessContract(name: string, factory: () => Promise<Sessi
       for (const stranger of strangers) expect(await store.cancelStarting(stranger,input.operationId)).toBe(false);
       expect(await store.cancelStarting(owner,input.operationId)).toBe(true);
       expect(await store.cancelStarting(owner,input.operationId)).toBe(false);
-      expect(await store.bind(owner,input.operationId,"late-runtime")).toBe(false);
+      expect(await store.bind(owner,input.operationId,sid("late-runtime"))).toBe(false);
       expect(await store.getOperation(owner,input.operationId)).toMatchObject({ status: "revoked",sessionId: null });
 
       const active = { ...input,id: randomUUID(),operationId: randomUUID() };
-      await store.reserve(active); await store.bind(owner,active.operationId,"active-runtime");
+      await store.reserve(active); await store.bind(owner,active.operationId,sid("active-runtime"));
       expect(await store.cancelStarting(owner,active.operationId)).toBe(false);
-      expect(await store.ownsSession(owner,"active-runtime")).toBe(true);
+      expect(await store.ownsSession(owner,sid("active-runtime"))).toBe(true);
 
       const racing = { ...input,id: randomUUID(),operationId: randomUUID() };
       await store.reserve(racing);
       const [bound,cancelled] = await Promise.all([
-        store.bind(owner,racing.operationId,"racing-runtime"),
+        store.bind(owner,racing.operationId,sid("racing-runtime")),
         store.cancelStarting(owner,racing.operationId),
       ]);
       expect(Number(bound)+Number(cancelled)).toBe(1);

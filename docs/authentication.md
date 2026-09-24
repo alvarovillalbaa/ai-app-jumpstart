@@ -44,6 +44,8 @@ Browser session events clear the old account's records and draft form by remount
 
 CLI and MCP can use a current Supabase access token or an administrator-issued API key. Supabase access tokens expire; those clients currently require the caller to supply a refreshed token. Do not put a database key or Supabase service credential into `APP_API_TOKEN`.
 
+Upload quarantine uses separate `uploads:read` and `uploads:write` API-key scopes. Generate them with `npm run auth:key -- TENANT SUBJECT uploads-read` or `uploads-write`; `all-read` and `all-write` include record scopes too. Registered Supabase users receive both upload scopes. The upload API stores bytes privately but does not offer a download or attachment path until scanning and release policy are implemented; see [uploads](uploads.md).
+
 ## Account chat
 
 Signing in enables private records. Account chat remains disabled until the operator configures the shared ownership store, signed creation broker, runtime origin and reviewed budget policy, then sets `AI_CHAT_ENABLED=true` on both services. The enabled Eve channel verifies owner identity and signed creation; it does not use the local development authenticator. See [account chat](account-chat.md) and [agent session access](agent-session-access.md). Supabase RLS does not authorize an Eve stream.

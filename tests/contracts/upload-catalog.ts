@@ -31,6 +31,8 @@ export function uploadCatalogContract(name: string, factory: () => Promise<Uploa
       expect(await catalog.reserve(owner,{ ...row,sha256: "b".repeat(64) },quota)).toBe("conflict");
       expect(await catalog.reserve(other,row,quota)).toBe("conflict");
       expect(await catalog.get(other,row.id)).toBeNull();
+      expect(await catalog.list(other)).toEqual([]);
+      expect(await catalog.list(owner)).toEqual([{ ...row,state: "pending" }]);
       expect(await catalog.markStored(other,row.id)).toBe(false);
       expect(await catalog.beginDelete(other,row.id)).toBe(false);
       expect(await catalog.finishDelete(other,row.id)).toBe(false);
@@ -52,6 +54,7 @@ export function uploadCatalogContract(name: string, factory: () => Promise<Uploa
       expect(await catalog.finishDelete(owner,row.id)).toBe(true);
       expect(await catalog.markStored(owner,row.id)).toBe(false);
       expect(await catalog.get(owner,row.id)).toMatchObject({ state: "deleted" });
+      expect(await catalog.list(owner)).toEqual([]);
       expect(await catalog.usage(owner)).toEqual({ files: 0,bytes: 0 });
       expect(await catalog.reserve(owner,second,{ maxBytes: 6,maxFiles: 1 })).toBe("reserved");
       expect(await catalog.reserve(owner,row,{ maxBytes: 6,maxFiles: 1 })).toBe("existing");

@@ -409,6 +409,7 @@ export type Database = {
         Args: { command: string; input: Json }
         Returns: Json
       }
+      app_upload_list: { Args: { input: Json }; Returns: Json }
     }
     Enums: {
       [_ in never]: never

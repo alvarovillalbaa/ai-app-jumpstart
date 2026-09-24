@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery, type QueryCtx } from "./_generated/server";
 import { accessOwner, type AccessOwner } from "../lib/agent-access/contract";
-import { uploadEntry, uploadQuota, uploadReservation, uploadUsage } from "../lib/uploads/catalog-contract";
+import { uploadEntry, uploadList, uploadQuota, uploadReservation, uploadUsage } from "../lib/uploads/catalog-contract";
 import { uploadId } from "../lib/uploads/schema";
 
 const ownerFields = { tenant: v.string(),subject: v.string() };
@@ -46,6 +46,14 @@ export const markStored = internalMutation({
 export const get = internalQuery({
   args: { ...ownerFields,id: v.string() },
   handler: async (ctx,args) => { const row = await ownedRow(ctx,args,args.id);return row ? publicEntry(row) : null; },
+});
+export const list = internalQuery({
+  args: ownerFields,
+  handler: async (ctx,args) => {
+    const owner = accessOwner.parse(args);
+    const rows = await activeRows(ctx,owner);
+    return uploadList.parse(rows.sort((a,b) => b.createdAt-a.createdAt || b.id.localeCompare(a.id)).map(publicEntry));
+  },
 });
 export const beginDelete = internalMutation({
   args: { ...ownerFields,id: v.string() },

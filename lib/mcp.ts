@@ -18,8 +18,12 @@ import { artifactOptions } from "./agent-access/artifact-contract";
 import { UsageService } from "./budgets/usage";
 import { getBudgetStore } from "./budgets/store";
 import type { BudgetStore } from "./budgets/contract";
+import { UploadService } from "./uploads/service";
+import { getUploadCatalog } from "./uploads/catalog-store";
+import { createUploadObjects } from "./uploads/objects-store";
+import type { UploadCatalog } from "./uploads/catalog-contract";
 
-export function createMcpServer(service: RecordService, history?: ConversationHistoryService,artifacts?: ArtifactService,usage?: UsageService) {
+export function createMcpServer(service: RecordService, history?: ConversationHistoryService,artifacts?: ArtifactService,usage?: UsageService,uploads?: UploadService) {
   const server = new McpServer({ name: "ai-app-jumpstart-data", version: "1.0.0" });
   async function result(action: () => Promise<unknown>) {
     try { return { content: [{ type: "text" as const, text: JSON.stringify(await action()) }] }; }
@@ -113,10 +117,35 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
       catch { throw new Error("Usage unavailable."); }
     });
   }
+  if (uploads) {
+    server.registerTool("uploads_list",{
+      description: "List the caller's active private upload metadata. Files remain quarantined and cannot be downloaded or attached to the agent.",
+      inputSchema: z.object({}).strict(),annotations: { readOnlyHint: true,openWorldHint: false },
+    },() => result(() => uploads.list()));
+    server.registerTool("uploads_usage",{
+      description: "Read the caller's reserved file and byte quota, including pending and deleting uploads.",
+      inputSchema: z.object({}).strict(),annotations: { readOnlyHint: true,openWorldHint: false },
+    },() => result(() => uploads.usage()));
+    server.registerTool("uploads_get",{
+      description: "Read one owned upload's metadata and quarantine state; never returns file bytes.",
+      inputSchema: { id: z.uuid() },annotations: { readOnlyHint: true,openWorldHint: false },
+    },({ id }) => result(() => uploads.get(id)));
+    server.registerTool("uploads_delete",{
+      description: "Delete one owned quarantined upload and its private object. Does not erase backups.",
+      inputSchema: { id: z.uuid() },annotations: { destructiveHint: true,idempotentHint: false,openWorldHint: false },
+    },({ id }) => result(async () => { await uploads.delete(id);return { deleted: true }; }));
+    server.registerResource("upload",new ResourceTemplate("uploads:///{id}",{ list: undefined }),{
+      description: "Private upload metadata; never file bytes",mimeType: "application/json",
+    },async (uri,{ id }) => {
+      try { return { contents: [{ uri: uri.href,mimeType: "application/json",text: JSON.stringify(await uploads.get(typeof id === "string" ? id : "")) }] }; }
+      catch { throw new Error("Upload unavailable."); }
+    });
+  }
   return server;
 }
 
-export function mcpHandler(repository: () => Promise<RecordRepository> = getRepository, accessStore: () => Promise<SessionAccessStore> = getSessionAccessStore,budgetStore: () => Promise<BudgetStore> = getBudgetStore) {
+export function mcpHandler(repository: () => Promise<RecordRepository> = getRepository, accessStore: () => Promise<SessionAccessStore> = getSessionAccessStore,budgetStore: () => Promise<BudgetStore> = getBudgetStore,
+  uploadCatalog: () => Promise<UploadCatalog> = getUploadCatalog) {
   return (request: Request) => handle(request, async () => {
     const principal = await authenticate(request);
     const parsedBody = await readJson(request);
@@ -128,7 +157,8 @@ export function mcpHandler(repository: () => Promise<RecordRepository> = getRepo
     const history = ownedStore ? new ConversationHistoryService(ownedStore,owner) : undefined;
     const artifacts = ownedStore ? new ArtifactService(ownedStore,owner) : undefined;
     const usage = settings ? new UsageService(budgetStore,owner,settings.budget.policy.dailyMicros) : undefined;
-    const server = createMcpServer(new RecordService(await repository(), principal), history, artifacts, usage);
+    const uploads = process.env.UPLOAD_STORAGE_PROVIDER ? new UploadService(await uploadCatalog(),createUploadObjects,principal) : undefined;
+    const server = createMcpServer(new RecordService(await repository(), principal), history, artifacts, usage,uploads);
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     await server.connect(transport);
     try { return await transport.handleRequest(request, { parsedBody }); }

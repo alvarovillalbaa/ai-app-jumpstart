@@ -12,6 +12,7 @@ export const uploadReservation = z.object({
 export const uploadState = z.enum(["pending", "quarantined", "deleting", "deleted"]);
 export const uploadEntry = uploadReservation.extend({ state: uploadState }).strict();
 export const uploadUsage = z.object({ files: z.number().int().nonnegative(), bytes: z.number().int().nonnegative() }).strict();
+export const uploadList = z.array(uploadEntry).max(1000);
 export const uploadReserveResult = z.enum(["reserved", "existing", "quota", "conflict"]);
 export type UploadReservation = z.infer<typeof uploadReservation>;
 export type UploadEntry = z.infer<typeof uploadEntry>;
@@ -22,6 +23,7 @@ export interface UploadCatalog {
   reserve(owner: AccessOwner, input: UploadReservation, quota: UploadQuota): Promise<z.infer<typeof uploadReserveResult>>;
   markStored(owner: AccessOwner, id: string): Promise<boolean>;
   get(owner: AccessOwner, id: string): Promise<UploadEntry | null>;
+  list(owner: AccessOwner): Promise<UploadEntry[]>;
   beginDelete(owner: AccessOwner, id: string): Promise<boolean>;
   finishDelete(owner: AccessOwner, id: string): Promise<boolean>;
   usage(owner: AccessOwner): Promise<z.infer<typeof uploadUsage>>;
@@ -32,6 +34,7 @@ export const uploadCatalogCommand = z.discriminatedUnion("operation", [
   accessOwner.extend({ operation: z.literal("upload.reserve"), input: uploadReservation, quota: uploadQuota }).strict(),
   accessOwner.extend({ operation: z.literal("upload.markStored"), id: uploadId }).strict(),
   accessOwner.extend({ operation: z.literal("upload.get"), id: uploadId }).strict(),
+  accessOwner.extend({ operation: z.literal("upload.list") }).strict(),
   accessOwner.extend({ operation: z.literal("upload.beginDelete"), id: uploadId }).strict(),
   accessOwner.extend({ operation: z.literal("upload.finishDelete"), id: uploadId }).strict(),
   accessOwner.extend({ operation: z.literal("upload.usage") }).strict(),

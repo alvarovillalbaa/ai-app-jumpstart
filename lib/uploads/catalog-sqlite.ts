@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { accessOwner } from "../agent-access/contract";
-import { uploadEntry, uploadQuota, uploadReservation, uploadUsage, type UploadCatalog } from "./catalog-contract";
+import { uploadEntry, uploadList, uploadQuota, uploadReservation, uploadUsage, type UploadCatalog } from "./catalog-contract";
 import { uploadId } from "./schema";
 
 type Row = { id: string;tenant: string;subject: string;name: string;media_type: string;size: number;sha256: string;created_at: number;state: string };
@@ -54,6 +54,12 @@ export function sqliteUploadCatalog(path: string): UploadCatalog {
     async get(owner,rawId) {
       const checked = accessOwner.parse(owner),row = owned.get(checked.tenant,checked.subject,uploadId.parse(rawId)) as Row | undefined;
       return row ? entry(row) : null;
+    },
+    async list(owner) {
+      const checked = accessOwner.parse(owner);
+      const rows = db.prepare("SELECT * FROM app_uploads WHERE tenant=? AND subject=? AND state!='deleted' ORDER BY created_at DESC,id DESC LIMIT 1001")
+        .all(checked.tenant,checked.subject) as Row[];
+      return uploadList.parse(rows.map(entry));
     },
     async beginDelete(owner,id) { return transition(owner,id,["pending","quarantined"],"deleting"); },
     async finishDelete(owner,id) { return transition(owner,id,["deleting"],"deleted"); },

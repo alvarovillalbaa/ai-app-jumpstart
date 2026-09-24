@@ -2,11 +2,11 @@
 
 | Command | Coverage | Requirements |
 | --- | --- | --- |
-| `npm test` | SQLite, Convex emulator, HTTP isolation/errors, SDK MCP, CLI CRUD/seed and private paged export, upload byte validation, local/Supabase-adapter private blob semantics, atomic SQLite metadata quota and intake compensation, DOM behavior, ANSI compatibility, arithmetic validation | No external services |
+| `npm test` | SQLite, Convex emulator, HTTP isolation/errors, SDK MCP, CLI CRUD/seed and private paged export, upload byte validation, private blob semantics, atomic SQLite quota/intake, bounded authenticated upload HTTP, CLI/MCP metadata and deletion, DOM behavior, ANSI compatibility, arithmetic validation | No external services |
 | `npm run db:types:check` | Regenerates and compares committed Supabase public-schema types after checking the migration ledger | Running migrated local Supabase project; read-only |
 | `npm run check:managed-config` | Offline Vercel + Supabase runtime setting validation; `-- --require-chat` also requires a valid enabled Auth/signing/budget shape | Intended private environment values; no network, project link or deployment |
 | `npm run check:upload-storage` | Read-only check of the restrictive Storage RLS policy and private bucket limits; `-- --create` creates only a missing bucket after the policy passes | Operator-only `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY` and an installed Supabase Storage API |
-| `npm run test:upload-storage:live` | Real private Storage reads/writes, anonymous denial and Supabase catalog/intake one-writer quota race | Migrated disposable Supabase with Storage enabled and provisioned bucket; `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_ANON_KEY` |
+| `npm run test:upload-storage:live` | Real private Storage reads/writes, anonymous denial, authenticated HTTP quarantine and Supabase catalog/intake one-writer quota race | Migrated disposable Supabase with Storage enabled and provisioned bucket; `DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_ANON_KEY` |
 | `npm run test:backend` | Backend subset | None |
 | `npm run test:frontend` | Browser components | None |
 | `npm run test:ai` | Nine Eve HTTP/session evals: four shared behavior cases plus fixture-only anonymous artifact denial, in-flight cancellation, malformed tool input and model 429/503 failures | Local listener, no paid model calls or metadata fetch |

@@ -1,12 +1,13 @@
-import { randomUUID } from "node:crypto";
+import { createHash,randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
-import { beforeAll, expect, it } from "vitest";
+import { afterEach,beforeAll, expect, it,vi } from "vitest";
 import { uploadObjectKey, type PrivateUploadObjects } from "../../lib/uploads/contract";
 import { SUPABASE_UPLOAD_BUCKET, supabaseUploadObjects, uploadStorageClient, verifyPrivateUploadBucket } from "../../lib/uploads/supabase";
 import { verifyUploadStoragePolicy } from "../../lib/uploads/storage-policy";
 import { supabaseUploadCatalog } from "../../lib/uploads/catalog-remote";
 import { UploadIntake } from "../../lib/uploads/intake";
 import { uploadObjectContract } from "../contracts/uploads";
+import { uploadHandlers } from "../../lib/http/uploads";
 
 const url = process.env.SUPABASE_URL,secret = process.env.SUPABASE_SECRET_KEY,anonKey = process.env.SUPABASE_ANON_KEY;
 const database = process.env.DATABASE_URL;
@@ -14,6 +15,7 @@ if (!url || !secret || !anonKey || !database) throw new Error("Live Storage test
 const storage = uploadStorageClient(url,secret).storage;
 const raw = supabaseUploadObjects(storage);
 beforeAll(async () => { await verifyUploadStoragePolicy(database);await verifyPrivateUploadBucket(storage); });
+afterEach(() => vi.unstubAllEnvs());
 
 uploadObjectContract("live Supabase Storage",async () => {
   const created: Array<{ owner: Parameters<PrivateUploadObjects["put"]>[0];id: string }> = [];
@@ -56,4 +58,33 @@ it("admits one writer through real Supabase metadata and Storage under a concurr
     await catalog.close();
   }
   expect(await intake.usage(owner)).toEqual({ files: 0,bytes: 0 });
+});
+
+it("serves authenticated HTTP quarantine metadata while keeping real Storage bytes private",async () => {
+  const token = `live-upload-${randomUUID()}-${randomUUID()}`,tenant = randomUUID();
+  vi.stubEnv("AUTH_PROVIDER","api-key");
+  vi.stubEnv("APP_API_KEYS",JSON.stringify([{ sha256: createHash("sha256").update(token).digest("hex"),
+    tenant,subject: "http-owner",scopes: ["uploads:read","uploads:write"] }]));
+  const catalog = supabaseUploadCatalog(url,secret),api = uploadHandlers(async () => catalog,async () => raw);
+  const endpoint = "http://localhost:3000/api/v1/uploads";
+  const request = (method: string,path = endpoint,body?: Uint8Array) => new Request(path,{ method,body: body ? Buffer.from(body) : undefined,
+    headers: { authorization: `Bearer ${token}`,...(body ? {
+      "content-type": "application/octet-stream","x-upload-name": "live.txt","x-upload-media-type": "text/plain",
+    } : {}) } });
+  let id: string | undefined;
+  try {
+    const created = await api.create(request("POST",endpoint,new TextEncoder().encode("private live bytes")));
+    expect(created.status).toBe(201);
+    id = (await created.json()).id;
+    const list = await (await api.list(request("GET"))).json();
+    expect(list).toMatchObject({ items: [{ id,state: "quarantined" }],usage: { files: 1,bytes: 18 } });
+    expect(JSON.stringify(list)).not.toContain("private live bytes");
+    expect(new TextDecoder().decode((await raw.get({ tenant,subject: "http-owner" },id!))!))
+      .toBe("private live bytes");
+    expect((await api.delete(request("DELETE",`${endpoint}/${id}`),id!)).status).toBe(204);
+    id = undefined;
+  } finally {
+    if (id) await api.delete(request("DELETE",`${endpoint}/${id}`),id);
+    await catalog.close();
+  }
 });

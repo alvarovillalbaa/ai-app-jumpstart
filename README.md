@@ -43,6 +43,8 @@ For a local production process, run `npm run build:local` then `npm start`. The 
 
 All share validation, owner isolation, scopes, pagination and revision checks. With account chat enabled, verified user tokens also unlock conversation metadata through `/api/v1/conversations`, CLI `conversations` commands and MCP `conversations_*` tools/resources. See [data access](docs/data-access.md).
 
+Opt-in private upload quarantine uses `/api/v1/uploads`, CLI `uploads` commands and MCP metadata tools. It accepts bytes through HTTP/CLI and never serves them back while scanning and release policy remain unfinished; see [uploads](docs/uploads.md).
+
 The CLI can also create a private, paged [export of visible application data](docs/data-access.md#export-visible-application-data) for an owner. Its manifest lists data held by Auth, Eve and other systems that the export does not include.
 
 ## Storage and hosting
@@ -62,7 +64,7 @@ Run `npm run db:migrate -- --dry-run` with the target `DATABASE_URL` to review p
 
 Read [database setup](docs/databases.md), [hosting](docs/hosting.md), [operations](docs/operations.md), and [testing](docs/testing.md).
 
-The [extension recipes](docs/extending.md) show where to add a tool, model, connection, schema change or UI route. The [private upload plan](docs/uploads.md) records the tested quarantine foundation and the scanner, API and UI work still required before attachments can be enabled.
+The [extension recipes](docs/extending.md) show where to add a tool, model, connection, schema change or UI route. The [private upload plan](docs/uploads.md) describes the opt-in quarantine API/CLI/MCP metadata surface and the scanner, download and UI work still required before attachments can be enabled.
 
 ## Validate
 

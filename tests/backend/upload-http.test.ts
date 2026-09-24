@@ -1,0 +1,71 @@
+import { createHash,randomUUID } from "node:crypto";
+import { mkdtemp,rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach,expect,it,vi } from "vitest";
+import { uploadHandlers,MAX_API_UPLOAD_BYTES } from "../../lib/http/uploads";
+import { sqliteUploadCatalog } from "../../lib/uploads/catalog-sqlite";
+import { localUploadObjects } from "../../lib/uploads/local";
+
+const root = "http://localhost:3000/api/v1/uploads";
+const alice = "upload-alice-token-".repeat(3),bob = "upload-bob-token-".repeat(3),records = "records-only-token-".repeat(3);
+const key = (token: string,subject: string,scopes: string[]) => ({ sha256: createHash("sha256").update(token).digest("hex"),
+  tenant: "test",subject,scopes });
+const headers = (token: string,name = "private.txt") => ({ authorization: `Bearer ${token}`,
+  "content-type": "application/octet-stream","x-upload-name": encodeURIComponent(name),"x-upload-media-type": "text/plain" });
+const request = (url: string,token: string,method = "GET",body?: BodyInit) => new Request(url,{ method,body,
+  headers: body ? headers(token) : { authorization: `Bearer ${token}` } });
+afterEach(() => vi.unstubAllEnvs());
+
+it("keeps raw bytes quarantined while exposing owner-only metadata, usage and deletion",async () => {
+  vi.stubEnv("AUTH_PROVIDER","api-key");
+  vi.stubEnv("APP_API_KEYS",JSON.stringify([key(alice,"alice",["uploads:read","uploads:write"]),
+    key(bob,"bob",["uploads:read","uploads:write"]),key(records,"alice",["records:read"])]));
+  const directory = await mkdtemp(join(tmpdir(),"jumpstart-upload-http-"));
+  const catalog = sqliteUploadCatalog(":memory:"),objects = localUploadObjects(directory);
+  const api = uploadHandlers(async () => catalog,async () => objects);
+  try {
+    const payload = "secret-payload-123";
+    const unauth = await api.create(new Request(root,{ method: "POST",body: Buffer.from(payload),headers: headers("wrong") }));
+    expect(unauth.status).toBe(401);
+    const forbidden = await api.create(request(root,records,"POST",Buffer.from(payload)));
+    expect(forbidden.status).toBe(403);
+    const response = await api.create(request(root,alice,"POST",Buffer.from(payload)));
+    expect(response.status).toBe(201);
+    const row = await response.json();
+    expect(row).toMatchObject({ name: "private.txt",state: "quarantined",size: payload.length });
+    expect(response.headers.get("location")).toBe(`/api/v1/uploads/${row.id}`);
+    expect(await (await api.list(request(root,bob))).json()).toEqual({ items: [],usage: { files: 0,bytes: 0 } });
+    const ownList = await (await api.list(request(root,alice))).json();
+    expect(ownList).toMatchObject({ items: [{ id: row.id,state: "quarantined" }],usage: { files: 1,bytes: payload.length } });
+    expect(JSON.stringify(ownList)).not.toContain(payload);
+    expect(new TextDecoder().decode((await objects.get({ tenant: "test",subject: "alice" },row.id))!)).toBe(payload);
+    expect((await api.get(request(`${root}/${row.id}`,bob),row.id)).status).toBe(404);
+    expect((await api.delete(request(`${root}/${row.id}`,bob,"DELETE"),row.id)).status).toBe(404);
+    expect((await api.delete(request(`${root}/${row.id}`,alice,"DELETE"),row.id)).status).toBe(204);
+    expect(await objects.get({ tenant: "test",subject: "alice" },row.id)).toBeNull();
+    expect((await api.get(request(`${root}/${row.id}`,alice),row.id)).status).toBe(404);
+  } finally { await catalog.close();await rm(directory,{ recursive: true,force: true }); }
+});
+
+it("rejects invalid content and oversized streams before any quota reservation",async () => {
+  vi.stubEnv("AUTH_PROVIDER","api-key");
+  vi.stubEnv("APP_API_KEYS",JSON.stringify([key(alice,"alice",["uploads:read","uploads:write"])]));
+  const catalog = sqliteUploadCatalog(":memory:"),objects = { put: vi.fn(),get: vi.fn(),delete: vi.fn() };
+  const api = uploadHandlers(async () => catalog,async () => objects);
+  try {
+    const invalid = await api.create(new Request(root,{ method: "POST",body: Buffer.from("<svg/>"),headers: headers(alice) }));
+    expect(invalid.status).toBe(400);
+    const active = await api.create(new Request(root,{ method: "POST",body: Buffer.from("hello"),headers: headers(alice,"active.svg") }));
+    expect(active.status).toBe(400);
+    const deniedType = await api.create(new Request(root,{ method: "POST",body: Buffer.from("hello"),headers: {
+      ...headers(alice),"content-encoding": "gzip" } }));
+    expect(deniedType.status).toBe(415);
+    const tooLarge = await api.create(new Request(root,{ method: "POST",body: Buffer.alloc(MAX_API_UPLOAD_BYTES+1),headers: headers(alice) }));
+    expect(tooLarge.status).toBe(413);
+    const id = randomUUID(),missing = await api.get(request(`${root}/${id}`,alice),id);
+    expect(missing.status).toBe(404);
+    expect((await catalog.usage({ tenant: "test",subject: "alice" })).files).toBe(0);
+    expect(objects.put).not.toHaveBeenCalled();
+  } finally { await catalog.close(); }
+});

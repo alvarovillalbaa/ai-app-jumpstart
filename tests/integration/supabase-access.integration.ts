@@ -35,6 +35,7 @@ it("denies table reads and forged inserts to anonymous and authenticated databas
     expect((await client.rpc("app_save_artifact",{ p_tenant: "victim",p_subject: "victim",p_operation: crypto.randomUUID(),p_session: "session",p_call: "forged",p_hash: "a".repeat(64),p_id: crypto.randomUUID(),p_title: "forged",p_content: "forged",p_created: Date.now() })).error?.code).toBe("42501");
     expect((await client.rpc("app_delete_artifact",{ p_tenant: "victim",p_subject: "victim",p_id: crypto.randomUUID(),p_deleted: Date.now() })).error?.code).toBe("42501");
     expect((await client.rpc("app_upload_command",{ command: "usage",input: { tenant: "victim",subject: "victim" } })).error?.code).toBe("42501");
+    expect((await client.rpc("app_upload_list",{ input: { tenant: "victim",subject: "victim" } })).error?.code).toBe("42501");
     for (const command of ["claimAttempt","attemptCount"]) expect((await client.rpc("app_budget_attempt_command", { command, input: { tenant: "victim", subject: "victim", operationId: crypto.randomUUID() } })).error?.code).toBe("42501");
     expect((await client.rpc("app_budget_correct_settlement",{ input: { tenant: "victim",subject: "victim",
       operationId: crypto.randomUUID(),correctionId: crypto.randomUUID(),expectedActualMicros: null,

@@ -9,7 +9,7 @@ const credentials = z.array(z.object({
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   tenant: z.string().min(1).max(200),
   subject: z.string().min(1).max(200),
-  scopes: z.array(z.enum(["records:read", "records:write"])).min(1),
+  scopes: z.array(z.enum(["records:read", "records:write", "uploads:read", "uploads:write"])).min(1),
 }).strict());
 
 /** Only digests are configured; identity never comes from client payloads. */

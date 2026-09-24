@@ -5,7 +5,7 @@ import type { PublicAuthSettings } from "./settings";
 
 export function userPrincipal(user: User, settings: PublicAuthSettings): Principal {
   if (!user.id || user.is_anonymous || user.role !== "authenticated") throw new AppError(401, "unauthorized", "Sign in with a registered account.");
-  return { tenant: `supabase:${settings.url}`, subject: user.id, scopes: ["records:read", "records:write"] };
+  return { tenant: `supabase:${settings.url}`, subject: user.id, scopes: ["records:read", "records:write", "uploads:read", "uploads:write"] };
 }
 
 export const authFetch: typeof fetch = (input, init) => fetch(input, {

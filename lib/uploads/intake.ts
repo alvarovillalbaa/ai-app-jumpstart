@@ -13,7 +13,9 @@ export class UploadIntake {
   }
 
   async accept(owner: AccessOwner, name: string, declaredType: string, rawBytes: Uint8Array) {
-    const file = checkUpload(name,declaredType,rawBytes);
+    let file;
+    try { file = checkUpload(name,declaredType,rawBytes); }
+    catch { throw new AppError(400,"invalid_upload","Upload filename, type or bytes are invalid."); }
     const id = randomUUID();
     const result = await this.catalog.reserve(owner,{ id,name: file.name,mediaType: file.mediaType,size: file.size,
       sha256: file.sha256,createdAt: Date.now() },this.quota);
@@ -33,12 +35,17 @@ export class UploadIntake {
           await this.objects.delete(owner,id);
           await this.catalog.finishDelete(owner,id);
         }
-      } catch {}
+      } catch {
+        // This ID remains visible as `deleting` to the owner so deletion can
+        // be retried; avoid logging the filename, owner or stored bytes.
+        console.error(JSON.stringify({ event: "upload_cleanup_pending",uploadId: id }));
+      }
       throw error;
     }
   }
 
   async get(owner: AccessOwner,id: string) { return this.catalog.get(owner,id); }
+  async list(owner: AccessOwner) { return this.catalog.list(owner); }
   async usage(owner: AccessOwner) { return this.catalog.usage(owner); }
 
   async remove(owner: AccessOwner,id: string) {

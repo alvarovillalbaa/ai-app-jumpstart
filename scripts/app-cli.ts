@@ -1,11 +1,14 @@
 #!/usr/bin/env node
-import { readFile } from "node:fs/promises";
+import { readFile,stat } from "node:fs/promises";
+import { basename } from "node:path";
 import { historyOptions, historyPatch, operationId } from "../lib/agent-access/contract";
 import { projectionOptions } from "../lib/agent-access/projection-contract";
 import { artifactOptions } from "../lib/agent-access/artifact-contract";
 import { recordId, recordInput } from "../lib/data/contract";
 import { exportApplication } from "./export-application";
 import { z } from "zod";
+import { MAX_API_UPLOAD_BYTES } from "../lib/uploads/validation";
+import { uploadId } from "../lib/uploads/schema";
 
 const seedPage = z.object({
   items: z.array(recordInput.extend({ id: recordId }).passthrough()),
@@ -19,19 +22,22 @@ export async function run(args: string[], env: Record<string, string | undefined
     seed: "npm run app -- seed [--allow-remote] (two idempotent, owner-scoped example records)",
     conversations: "npm run app -- conversations <list [--archived] [--limit N] [--cursor CURSOR] | get OPERATION_UUID | events OPERATION_UUID [AFTER_INGESTION_INDEX] | update OPERATION_UUID JSON_FILE>",
     artifacts: "npm run app -- artifacts <list [--limit N] [--cursor CURSOR] | get ARTIFACT_UUID | delete ARTIFACT_UUID>",
+    uploads: "npm run app -- uploads <list | get UPLOAD_UUID | put FILE | delete UPLOAD_UUID> (private quarantine; no download)",
     usage: "npm run app -- usage (current UTC-day AI budget snapshot; verified user token required)",
     export: "npm run app -- export <records | application> OUTPUT.ndjson (private, no-clobber paged export)",
     environment: "APP_API_URL (default http://localhost:3000), APP_API_TOKEN (server-issued credential)",
-    note: "Record files contain title/content and, for update, revision. Conversation updates contain revision plus title and/or archived; they require a current user access token and enabled account chat. Output is JSON. Errors exit nonzero. Writes are never automatically retried.",
+    note: "Record files contain title/content and, for update, revision. Conversation updates contain revision plus title and/or archived. Uploads require uploads:read/write scopes or a registered user and an explicitly configured private object backend; quarantined bytes cannot be downloaded. Output is JSON. Errors exit nonzero. Writes are never automatically retried.",
   };
   const origin = new URL(env.APP_API_URL ?? "http://localhost:3000");
   if (origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash || !["http:", "https:"].includes(origin.protocol)) throw new Error("APP_API_URL must be an HTTP(S) origin without credentials, path, query or fragment.");
   if (origin.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(origin.hostname)) throw new Error("Use HTTPS for remote servers.");
   if (!env.APP_API_TOKEN) throw new Error("Set APP_API_TOKEN.");
-  const call = async (path: string, method = "GET", body?: string) => {
+  const call = async (path: string, method = "GET", body?: string | Buffer, extraHeaders: Record<string,string> = {}) => {
     const response = await request(new URL(path, origin), {
-      method, body, redirect: "error", signal: AbortSignal.timeout(15_000),
-      headers: { authorization: `Bearer ${env.APP_API_TOKEN}`, "content-type": "application/json",
+      method, body: typeof body === "string" ? body : body ? new Blob([Uint8Array.from(body)]) : undefined,
+      redirect: "error", signal: AbortSignal.timeout(body && typeof body !== "string" ? 30_000 : 15_000),
+      headers: { authorization: `Bearer ${env.APP_API_TOKEN}`, "content-type": body && typeof body !== "string" ? "application/octet-stream" : "application/json",
+        ...extraHeaders,
         ...(env.VERCEL_AUTOMATION_BYPASS_SECRET ? { "x-vercel-protection-bypass": env.VERCEL_AUTOMATION_BYPASS_SECRET } : {}) },
     });
     if (!response.ok) {
@@ -75,6 +81,27 @@ export async function run(args: string[], env: Record<string, string | undefined
   }
   if (command === "export" && rest.length === 2 && (rest[0] === "records" || rest[0] === "application")) {
     return exportApplication(rest[0], rest[1], path => call(path));
+  }
+  if (command === "uploads") {
+    const [action,...options] = rest;
+    if (action === "list" && options.length === 0) return call("/api/v1/uploads");
+    if ((action === "get" || action === "delete") && options.length === 1) {
+      const checked = uploadId.safeParse(options[0]);
+      if (!checked.success) throw new Error("Provide an upload UUID.");
+      return call(`/api/v1/uploads/${checked.data}`,action === "delete" ? "DELETE" : "GET");
+    }
+    if (action === "put" && options.length === 1) {
+      const file = options[0],name = basename(file),extension = name.split(".").at(-1)?.toLowerCase();
+      const mediaType = extension === "txt" ? "text/plain" : extension === "png" ? "image/png" :
+        extension === "jpg" || extension === "jpeg" ? "image/jpeg" : extension === "pdf" ? "application/pdf" : undefined;
+      if (!mediaType) throw new Error("Use a .txt, .png, .jpg, .jpeg or .pdf file.");
+      const info = await stat(file);
+      if (!info.isFile() || info.size < 1 || info.size > MAX_API_UPLOAD_BYTES) throw new Error("Upload file must be 1 byte to 4 MiB.");
+      return call("/api/v1/uploads","POST",await readFile(file),{
+        "x-upload-name": encodeURIComponent(name),"x-upload-media-type": mediaType,
+      });
+    }
+    throw new Error("Invalid upload command. Run npm run app -- help.");
   }
   let path = "/api/v1/records", method = "GET", body: string | undefined;
   const id = (value: string | undefined) => {

@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { AppError } from "../../lib/http/errors";
 import { uploadObjectKey, type PrivateUploadObjects } from "../../lib/uploads/contract";
 import { sqliteUploadCatalog } from "../../lib/uploads/catalog-sqlite";
@@ -50,6 +50,7 @@ it("lets exactly one concurrent intake write under the atomic catalog quota",asy
 });
 
 it("compensates an ambiguous blob write, and holds quota if cleanup fails",async () => {
+  const log = vi.spyOn(console,"error").mockImplementation(() => {});
   const catalog = sqliteUploadCatalog(":memory:"),stored = new Map<string,Uint8Array>();
   let failWrite = true,failDelete = true;
   const objects: PrivateUploadObjects = {
@@ -67,11 +68,12 @@ it("compensates an ambiguous blob write, and holds quota if cleanup fails",async
       .rejects.toMatchObject({ status: 429,code: "upload_quota" } satisfies Partial<AppError>);
     const [key] = stored.keys(),id = key.split("/").at(-1)!;
     expect(await intake.get(owner,id)).toMatchObject({ state: "deleting" });
+    expect(log).toHaveBeenCalledWith(JSON.stringify({ event: "upload_cleanup_pending",uploadId: id }));
     expect(await intake.remove(owner,id)).toBe(true);
     expect(stored.size).toBe(0);
     expect(await intake.usage(owner)).toEqual({ files: 0,bytes: 0 });
     failWrite = false;
     await expect(intake.accept(owner,"bad.svg","image/svg+xml",encoder.encode("<svg/>"))).rejects.toBeDefined();
     expect(await intake.usage(owner)).toEqual({ files: 0,bytes: 0 });
-  } finally { await catalog.close(); }
+  } finally { log.mockRestore();await catalog.close(); }
 });

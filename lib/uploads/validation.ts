@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import { uploadName, type UploadMediaType } from "./schema";
 
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+/** Leave headroom below Vercel's 4.5 MB Function request limit. */
+export const MAX_API_UPLOAD_BYTES = 4 * 1024 * 1024;
 export type { UploadMediaType } from "./schema";
 export type CheckedUpload = { name: string; mediaType: UploadMediaType; size: number; sha256: string; bytes: Uint8Array };
 
