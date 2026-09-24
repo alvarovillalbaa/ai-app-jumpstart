@@ -5,6 +5,14 @@ export default defineAgent({
   modelContextWindowTokens: 8192,
   model: mockModel(({ lastUserMessage, toolResults }) => {
     const message = lastUserMessage ?? "";
+    if (message.includes("provider-429-fixture"))
+      throw Object.assign(new Error("Fixture model rate limit"), { statusCode: 429 });
+    if (message.includes("provider-503-fixture"))
+      throw Object.assign(new Error("Fixture model unavailable"), { statusCode: 503 });
+    if (message.includes("invalid-tool-input-fixture")) {
+      if (toolResults.length) return "The tool rejected the invalid argument; no result is available.";
+      return { toolCalls: [{ name: "calculate", input: { operation: "multiply", left: "seventeen", right: 23 } }] };
+    }
     if (toolResults.length) {
       const result = JSON.stringify(toolResults[0]?.output);
       if (message.includes("anonymous-artifact-fixture")) return "The artifact was denied because this session has no verified account owner.";
