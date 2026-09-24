@@ -1,0 +1,19 @@
+# Add this after compose.yaml (and optionally compose.postgres.yaml) to make
+# the streaming ingress the only published endpoint.
+services:
+  app:
+    ports: !override []
+    environment:
+      EVE_LISTEN_HOST: 0.0.0.0
+  ingress:
+    image: caddy@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    ports: ["127.0.0.1:3000:8080"]
+    environment:
+      NEXT_UPSTREAM: app:3000
+      EVE_UPSTREAM: app:4274
+    volumes:
+      - ./deploy/split-app.Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped

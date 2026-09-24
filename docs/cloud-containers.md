@@ -2,6 +2,8 @@
 
 The same Node/Docker application can run on AWS ECS/Fargate, Azure Container Apps or Google Cloud Run. The example definitions under `deploy/` use a PostgreSQL workflow build, Supabase application data and Auth, one continuously running instance, and provider-managed secret references. They contain no live account identifiers or credentials. JSON syntax has been checked; none has been submitted to a cloud control plane. Infrastructure provisioning, IAM, networking, domains and provider acceptance remain required.
 
+For separate Next and Eve services, use the [streaming ingress recipe](hosting.md#split-next-and-eve-behind-one-streaming-ingress). Route the two Eve prefixes directly at ingress; the Next rewrite buffered a delayed SSE fixture locally. A [Compose overlay](../compose.streaming.yaml) proves this path with co-located app and Eve processes on a private network. The AWS/Azure/GCP manifests below still expose only Next's port 3000; adapt their ingress or add a Caddy sidecar before claiming live SSE, and verify a real owned turn after deployment.
+
 ## Shared release preparation
 
 Build an image for the destination architecture and pin its registry digest. The AWS example selects x86-64; build Linux amd64 for that definition and for the documented Cloud Run path:

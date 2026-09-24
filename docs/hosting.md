@@ -6,6 +6,8 @@ Application data and Eve workflow state are separate. Selecting Supabase for rec
 
 Use Node 24, `npm ci`, `npm run build:local`, `npm start`. The integrated runtime requires both Next output and Eve's `.output`. The start script verifies the compiled Workflow world, launches Eve, waits for its health endpoint, then launches Next; failure of either process stops both. Do not substitute bare `next start`: the saved rewrites do not start Eve in this pinned version. Next forwards both `/eve/` and `/.well-known/workflow/` to the local runtime. Persist `.data` for SQLite and `.eve` for local workflows. Use one instance with local storage; do not share SQLite WAL across replicas. Configure TLS, streaming proxy behavior, restart policies and backups.
 
+The integrated self-hosted command's Next rewrite can buffer an SSE response until Eve finishes it. For live token delivery through a production ingress, route `/eve/*` and `/.well-known/workflow/*` directly to Eve as described below; route other paths to Next. Keep direct upstream ports private. The ordinary self-hosted tests prove completed turns, not token-by-token delivery through Next's rewrite.
+
 Set `APP_ORIGIN` explicitly in every production environment to the browser-facing application origin, without credentials, path, query or fragment. Remote origins must use HTTPS; loopback HTTP is allowed for local checks. The same rule applies to the server-side Supabase URL and the Convex HTTP-actions origin before backend credentials are used. A missing production origin or an unsafe provider URL makes application readiness fail instead of silently using localhost or sending a credential over plaintext HTTP. Configure the same application origin on a separately hosted Eve service when it uses the shared application store.
 
 ```sh
@@ -20,6 +22,23 @@ docker compose -f compose.yaml -f compose.postgres.yaml up --build -d
 ```
 
 The migration job completes before app startup. `docker compose down -v` destroys volumes; do not use it for routine shutdown. The image runs as the unprivileged Node user and includes pruned production dependencies. Run `npm run test:container` for an isolated image and restart-persistence check, then `npm run test:chat:container` for deterministic owned-turn browser checks with real disposable Auth. The PostgreSQL Compose overlay has passed a local healthy-start check, including its migration job. These checks do not prove a paid production-model call, cloud routing or durable multi-instance workflows. The multi-stage build still needs substantial temporary disk space.
+
+For live SSE through a local Compose ingress, add the [streaming overlay](../compose.streaming.yaml) last. It removes the app's direct host port, binds Eve inside the private Compose network, and publishes only Caddy on loopback port 3000. Keep `APP_ORIGIN=http://localhost:3000` for this local example. Docker Compose 2.24.4 or later is required for the [`!override` port replacement](https://docs.docker.com/reference/compose-file/merge/#replace-value):
+
+```sh
+docker compose -f compose.yaml -f compose.streaming.yaml up --build -d
+# With PostgreSQL, use: -f compose.yaml -f compose.postgres.yaml -f compose.streaming.yaml
+```
+
+The merged SQLite and PostgreSQL configurations were validated locally. A fresh SQLite image and Compose stack served `/records`, app readiness (`data: ok`, `agent: ok`), Eve health and authenticated record create/read/delete through Caddy; Docker showed no published app/Eve ports. The disposable project and volumes were removed. The separate SSE fixture check below proves streaming through the same Caddy route; the real stack check did not execute a model turn.
+
+## Split Next and Eve behind one streaming ingress
+
+Run the compiled Next and Eve services on a private network. Build Next with `EVE_NEXT_PRODUCTION_ORIGIN` set to Eve's private origin and retain that setting at runtime so `npm start` does not launch a second local Eve process. Start the standalone Eve output with `npm run start:eve -- --host 0.0.0.0 --port 4274` inside its private container. Configure the same browser-facing HTTPS `APP_ORIGIN`, auth and application data store for both services, plus durable Workflow storage for Eve. Next's rewrite destinations are compiled at build time, so use a stable internal name or build separately per environment.
+
+Place [the Caddy ingress example](../deploy/split-app.Caddyfile) behind the only public TLS endpoint. Set `NEXT_UPSTREAM` to the private Next host and port, and `EVE_UPSTREAM` to the private Eve host and port. It forwards `/eve/*` and `/.well-known/workflow/*` to Eve without changing their paths and sends the rest to Next. The Eve stream bypasses Next's buffering rewrite. Bind the two upstreams only on the private network; the example listens on HTTP port 8080 for a trusted TLS load balancer, or can be adapted to terminate TLS itself. Caddy's [route handling](https://caddyserver.com/docs/caddyfile/directives/handle) and [streaming proxy behavior](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy) are the basis for this example.
+
+Run `npm run test:split-ingress` with Docker to exercise route selection, Workflow callback body/query forwarding, and two separately delivered SSE events. A local production Next build with `EVE_NEXT_PRODUCTION_ORIGIN` verified its compiled agent and Workflow rewrite destinations; a direct Next rewrite delivered the two events together, which is why the ingress bypass is required. A second local check put the real production Next server behind the ingress with an Eve-shaped mock and passed page/API, health, callback and live SSE requests. These tests do not prove a deployed owned model turn. In split mode, Next's `/api/health/ready` checks application data; monitor Eve's `/eve/v1/health` through the ingress separately, then run the post-deployment `--agent` smoke and replacement tests before release.
 
 ## Maintainer-managed Vercel + Supabase
 
@@ -66,4 +85,4 @@ The [cloud container recipes](cloud-containers.md) include ECS/Fargate, Azure Co
 
 Amplify compatibility remains blocked by the currently documented Next.js version and streaming support: this app uses Next.js 16.3.5, while [AWS Next.js support](https://docs.aws.amazon.com/amplify/latest/userguide/ssr-amplify-support.html) documents versions through 15 and excludes Next.js streaming (checked 2026-09-24). [Node 24 is supported](https://docs.aws.amazon.com/amplify/latest/userguide/ssr-supported-features.html), but that does not resolve either mismatch. A separately hosted Eve service does not itself resolve the web-side mismatch. See the explicit gate in the cloud recipes; no Amplify deployment is certified.
 
-For split services, this installed `withEve` appends a private service prefix to `EVE_NEXT_PRODUCTION_ORIGIN`. Verify the reverse-proxy mapping and workflow callbacks, then complete a real turn. Platform recipes remain incomplete until those checks pass.
+For split services, use the streaming ingress above. The installed `withEve` appends a private service prefix to Next's internal rewrite destination, and the rewrite buffered a two-event SSE fixture locally. Do not expose that rewrite as the public chat path. Complete a real owned turn and Workflow callback through the deployed ingress; platform recipes remain incomplete until those checks pass.

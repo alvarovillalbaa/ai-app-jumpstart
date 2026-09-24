@@ -37,7 +37,9 @@ try {
   if (!process.env.EVE_NEXT_PRODUCTION_ORIGIN && !process.env.VERCEL) {
     const port = process.env.EVE_NEXT_PRODUCTION_PORT ?? "4274";
     if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) throw new Error("Invalid EVE_NEXT_PRODUCTION_PORT.");
-    start([".output/server/index.mjs"], { HOST: "127.0.0.1", NITRO_HOST: "127.0.0.1", PORT: port, NITRO_PORT: port });
+    const host = process.env.EVE_LISTEN_HOST ?? "127.0.0.1";
+    if (host !== "127.0.0.1" && host !== "0.0.0.0") throw new Error("Invalid EVE_LISTEN_HOST.");
+    start([".output/server/index.mjs"], { HOST: host, NITRO_HOST: host, PORT: port, NITRO_PORT: port });
     const deadline = Date.now() + 60_000;
     let ready = false;
     while (!stopping && Date.now() < deadline) {

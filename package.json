@@ -55,6 +55,7 @@
     "test:providers": "npm run test:postgres && npm run test:supabase && npm run test:convex",
     "test:container": "node scripts/test-container.mjs",
     "test:vercel-build": "node scripts/test-vercel-build.mjs",
+    "test:split-ingress": "node scripts/test-split-ingress.mjs",
     "check:managed-config": "tsx --env-file-if-exists=.env.local scripts/check-managed-config.ts",
     "check:upload-storage": "tsx --env-file-if-exists=.env.local scripts/check-upload-storage.ts",
     "check:upload-scanner": "tsx --env-file-if-exists=.env.local scripts/check-upload-scanner.ts",

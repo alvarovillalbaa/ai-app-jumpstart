@@ -1,0 +1,15 @@
+# This is the only public origin. Keep the Next and Eve upstreams private.
+# Both services must use the same browser-facing APP_ORIGIN.
+:8080 {
+  handle /eve/* {
+    reverse_proxy {$EVE_UPSTREAM}
+  }
+
+  handle /.well-known/workflow/* {
+    reverse_proxy {$EVE_UPSTREAM}
+  }
+
+  handle {
+    reverse_proxy {$NEXT_UPSTREAM}
+  }
+}
