@@ -54,6 +54,8 @@ cp .env.example .env.local
 
 Set the same variables shown above with the hosted values and your actual `APP_ORIGIN`. The URL and publishable key are browser settings; `DATABASE_URL` and `SUPABASE_SECRET_KEY` belong only on the server or migration job. Review a restorable database backup and `npm run db:migrate -- --dry-run`, then run `npm run db:migrate` **once** from a serial release process. Do not use the local CLI project's `db reset`, `db push`, or linked-project commands to deploy this app's schema. Start with `npm run dev` for a local application pointed at the development project, then rehearse signup, email confirmation, recovery and two-user record isolation. For a deployed application, follow [hosting](hosting.md) and run the [hosted data smoke](hosting.md#post-deployment-data-smoke) with two temporary users. No hosted account or deployment is provisioned by cloning.
 
+Before a managed Vercel release, set `AI_CHAT_ENABLED` explicitly and run `npm run check:managed-config` against its intended private runtime values; add `-- --require-chat` when account chat must be enabled. This is an offline shape check, not a substitute for migration review or hosted acceptance.
+
 ## Optional capabilities and checks
 
 - **API-key records without accounts:** leave the SQLite defaults, run `npm run auth:key -- local developer write`, place only its configuration array into `APP_API_KEYS`, then use the private token at `/records`. This needs neither Docker nor Supabase.

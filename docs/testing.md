@@ -4,6 +4,7 @@
 | --- | --- | --- |
 | `npm test` | SQLite, Convex emulator, HTTP isolation/errors, SDK MCP, CLI CRUD/seed and private paged export, DOM behavior, ANSI compatibility, arithmetic validation | No external services |
 | `npm run db:types:check` | Regenerates and compares committed Supabase public-schema types after checking the migration ledger | Running migrated local Supabase project; read-only |
+| `npm run check:managed-config` | Offline Vercel + Supabase runtime setting validation; `-- --require-chat` also requires a valid enabled Auth/signing/budget shape | Intended private environment values; no network, project link or deployment |
 | `npm run test:backend` | Backend subset | None |
 | `npm run test:frontend` | Browser components | None |
 | `npm run test:ai` | Nine Eve HTTP/session evals: four shared behavior cases plus fixture-only anonymous artifact denial, in-flight cancellation, malformed tool input and model 429/503 failures | Local listener, no paid model calls or metadata fetch |

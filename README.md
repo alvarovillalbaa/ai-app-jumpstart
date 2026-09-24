@@ -54,7 +54,7 @@ The CLI can also create a private, paged [export of visible application data](do
 | Supabase PostgREST | `DATA_PROVIDER=supabase`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`; migrated project required |
 | Convex | `DATA_PROVIDER=convex`, `CONVEX_SITE_URL`, `CONVEX_BACKEND_SECRET`; internal functions behind an authenticated HTTP action |
 | Self-hosted Node / Docker | `build:local`, supervised Eve + Next startup; SQLite restart/API/MCP/CLI and deterministic owned-chat browser contracts verified in the image |
-| Maintainer-managed Vercel + Supabase | Eve deployment recipe; production acceptance pending |
+| Maintainer-managed Vercel + Supabase | Offline runtime-configuration preflight and Eve deployment recipe; production acceptance pending |
 | AWS ECS / Azure Container Apps / GCP Cloud Run | [Container definitions and recipes](docs/cloud-containers.md); PostgreSQL workflow restart and dual-database Compose proofs passed locally; cloud acceptance pending |
 | AWS Amplify | Documented Next.js version/streaming incompatibility with the current app; compatibility gate remains open |
 
