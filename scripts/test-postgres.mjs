@@ -60,7 +60,15 @@ try {
     const admin = new Client({ connectionString: env.DATABASE_URL });
     await admin.connect();
     try {
-      await admin.query("CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN BYPASSRLS; GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;");
+      await admin.query(`CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN BYPASSRLS;
+        GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+        CREATE SCHEMA storage;
+        CREATE TABLE storage.objects (bucket_id text NOT NULL, name text NOT NULL, PRIMARY KEY(bucket_id,name));
+        ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+        GRANT USAGE ON SCHEMA storage TO anon, authenticated;
+        GRANT SELECT,INSERT,UPDATE,DELETE ON storage.objects TO anon, authenticated;
+        CREATE POLICY test_broad_storage ON storage.objects FOR ALL TO PUBLIC USING (true) WITH CHECK (true);
+        INSERT INTO storage.objects(bucket_id,name) VALUES ('app-private-uploads','private'),('other-bucket','other');`);
     } finally { await admin.end(); }
   }
   // Exercise the real migration runner twice: the second run must be safe.
