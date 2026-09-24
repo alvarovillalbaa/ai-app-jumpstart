@@ -2,7 +2,7 @@
 
 | Command | Coverage | Requirements |
 | --- | --- | --- |
-| `npm test` | SQLite, Convex emulator, HTTP isolation/errors, SDK MCP, CLI CRUD and repeatable owner-scoped seed, DOM behavior, ANSI compatibility, arithmetic validation | No external services |
+| `npm test` | SQLite, Convex emulator, HTTP isolation/errors, SDK MCP, CLI CRUD/seed and private paged export, DOM behavior, ANSI compatibility, arithmetic validation | No external services |
 | `npm run db:types:check` | Regenerates and compares committed Supabase public-schema types after checking the migration ledger | Running migrated local Supabase project; read-only |
 | `npm run test:backend` | Backend subset | None |
 | `npm run test:frontend` | Browser components | None |
@@ -17,7 +17,7 @@
 | `npm run smoke:hosted` | Reusable post-deployment web/data/Eve health and one temporary record across REST, CLI and MCP, with anonymous and cross-owner denial. `-- --accounts` additionally verifies two Supabase user tokens and the user-only usage route without a model call | Explicit HTTPS `APP_API_URL` and two distinct record read/write tokens, or two current Supabase user tokens with account chat enabled; writes and deletes a temporary record |
 | `npm run test:workflow-compose` | PostgreSQL Workflow image build, both migration jobs, combined data/agent readiness, Workflow schema and application record persistence after app replacement | Docker and Compose with `!reset`/`!override` support; honors `DOCKER_CONTEXT`, needs no hosted credentials |
 | `npm run test:auth` | Real Supabase Auth, SMTP and browser signup/recovery/logout/isolation contracts; automated accessibility scans of entry and authenticated account states | `build:local`, Chromium, Docker daemon; no hosted credentials |
-| `npm run test:chat` | Real Supabase Auth + production Next + compiled Eve account chat, structured output with saved-record drafts, and approved artifacts; owner-scoped REST/MCP/CLI reads, artifact download/deletion, current usage, history, projections, recovery, budgets and isolation; automated accessibility scans of empty/completed chat, approval, structured result and workspace screens; reusable hosted-account smoke with two disposable users | `build:local`, Chromium, Docker; unused compiled loopback Eve port; deterministic model |
+| `npm run test:chat` | Real Supabase Auth + production Next + compiled Eve account chat, structured output with saved-record drafts, and approved artifacts; owner-scoped REST/MCP/CLI reads, private application-visible export, artifact download/deletion, current usage, history, projections, recovery, budgets and isolation; automated accessibility scans of empty/completed chat, approval, structured result and workspace screens; reusable hosted-account smoke with two disposable users | `build:local`, Chromium, Docker; unused compiled loopback Eve port; deterministic model |
 | `npm run test:chat:container` | Same account-chat browser contracts, including accessibility checks, with Next and supervised Eve inside the production image | Chromium, Docker, an image built by `test:container` or selected by `TEST_CONTAINER_IMAGE`; deterministic model |
 | `npm run test:e2e` | Production Next + SQLite + real Chromium persistence, response security headers, 404 recovery link and responsive workspace navigation, including keyboard skip focus, page titles, theme persistence and system-preference changes; automated accessibility scans of records, mobile menu and 404 states | `build:local`, installed Chromium |
 

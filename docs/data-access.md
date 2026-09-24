@@ -51,6 +51,20 @@ npm run app -- conversations update OPERATION_UUID ./conversation-patch.json
 
 An update file contains `{"revision":1,"title":"New title"}`, `{"revision":1,"archived":true}`, or both fields. Use `archived:false` to restore. Omit the cursor for the first page and preserve the archive filter between pages. A stale revision returns a nonzero error; read current metadata before editing again. Tokens are short-lived; the CLI does not implement login or refresh and never stores them. Supply a fresh token after expiration. Commands manage metadata only and do not dispatch model work, cancel runs or delete transcripts.
 
+### Export visible application data
+
+With a record read token, download all owner-scoped records. With a current registered-user token and account chat enabled, download records plus conversation metadata, selected stream projections, saved artifacts and the current usage snapshot:
+
+```sh
+mkdir -p .data
+npm run app -- export records .data/records-export.ndjson
+npm run app -- export application .data/application-export.ndjson
+```
+
+The command reads existing authenticated REST pages and writes newline-delimited JSON. The first line is a versioned `manifest`, each following line has a `type` and `value`, and the final `end` line has counts. It pages until each available collection ends, including archived conversations and each conversation's projections. The output is mode `0600` and is published only after all pages succeed; it never replaces an existing file. Keep the file private and outside version control. Each page is a live read, so concurrent changes may appear or be missed; a nonadvancing cursor or more than 10,000 pages for one collection fails without publishing a partial file. A failed or expired token also fails the export.
+
+This is an **application-visible data export**, not a complete account export or backup. It does not include Supabase Auth profile/credentials, Eve's model history or workflow checkpoints, full budget ledgers, deleted artifact tombstones, provider logs or database backups. Projections contain selected captured events, not a canonical transcript. The manifest lists these omissions so recipients do not mistake the file for complete erasure or a compliance-grade snapshot. Full export and deletion still require coordinated provider/runtime retention work.
+
 ## MCP
 
 Point an MCP client at `https://YOUR_HOST/api/mcp` with the bearer header. The official SDK implements stateless Streamable HTTP. GET streams and DELETE sessions return 405. Tools are `records_list`, `records_get`, `records_create`, `records_update`, `records_delete`. Resources use `records:///UUID`. Both share REST permissions. Mutation annotations inform client approval UI; they do not grant authorization. Interactive OAuth discovery/registration is not implemented.

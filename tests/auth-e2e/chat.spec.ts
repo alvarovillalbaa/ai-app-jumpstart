@@ -130,6 +130,26 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
   expect(usage.status()).toBe(200); const usageView = await usage.json();
   expect(usageView).toMatchObject({ chargedMicros: 60, reservedMicros: 0, active: 0, unknownCosts: 3,dailyLimitMicros: 60 });
   expect(await runCli(["usage"],{ APP_API_URL: process.env.APP_ORIGIN!,APP_API_TOKEN: alice.token })).toEqual(usageView);
+  const exportRecord = await request.post("/api/v1/records",{ headers: { authorization: `Bearer ${alice.token}` },data: { title: "Exported private record",content: "Only Alice may read this." } });
+  expect(exportRecord.status()).toBe(201);
+  const exportRecordId = (await exportRecord.json()).id;
+  const exportDirectory = await mkdtemp(join(tmpdir(),"jumpstart-account-export-"));
+  try {
+    const aliceFile = join(exportDirectory,"alice.ndjson"),bobFile = join(exportDirectory,"bob.ndjson");
+    const env = { APP_API_URL: process.env.APP_ORIGIN! };
+    expect(await runCli(["export","application",aliceFile],{ ...env,APP_API_TOKEN: alice.token })).toMatchObject({
+      counts: { records: 1,conversations: 1,usage: 1 },
+    });
+    const aliceLines = (await readFile(aliceFile,"utf8")).trim().split("\n").map(line => JSON.parse(line));
+    expect(aliceLines.some(line => line.type === "record" && line.value.id === exportRecordId)).toBe(true);
+    expect(aliceLines.some(line => line.type === "conversation" && line.value.operationId === receipt.operationId)).toBe(true);
+    expect(aliceLines.some(line => line.type === "projection" && line.value.operationId === receipt.operationId)).toBe(true);
+    expect(await runCli(["export","application",bobFile],{ ...env,APP_API_TOKEN: bob.token })).toMatchObject({
+      counts: { records: 0,conversations: 0,projections: 0,artifacts: 0,usage: 1 },
+    });
+    expect(await readFile(bobFile,"utf8")).not.toContain(exportRecordId);
+    expect(await readFile(bobFile,"utf8")).not.toContain(receipt.operationId);
+  } finally { await rm(exportDirectory,{ recursive: true,force: true }); }
   const usageMcp = new Client({ name: "usage-browser-contract",version: "1" });
   try {
     await usageMcp.connect(new StreamableHTTPClientTransport(new URL("/api/mcp",process.env.APP_ORIGIN!),{ requestInit: { headers: { authorization: `Bearer ${alice.token}` } } }));

@@ -4,6 +4,7 @@ import { historyOptions, historyPatch, operationId } from "../lib/agent-access/c
 import { projectionOptions } from "../lib/agent-access/projection-contract";
 import { artifactOptions } from "../lib/agent-access/artifact-contract";
 import { recordId, recordInput } from "../lib/data/contract";
+import { exportApplication } from "./export-application";
 import { z } from "zod";
 
 const seedPage = z.object({
@@ -19,6 +20,7 @@ export async function run(args: string[], env: Record<string, string | undefined
     conversations: "npm run app -- conversations <list [--archived] [--limit N] [--cursor CURSOR] | get OPERATION_UUID | events OPERATION_UUID [AFTER_INGESTION_INDEX] | update OPERATION_UUID JSON_FILE>",
     artifacts: "npm run app -- artifacts <list [--limit N] [--cursor CURSOR] | get ARTIFACT_UUID | delete ARTIFACT_UUID>",
     usage: "npm run app -- usage (current UTC-day AI budget snapshot; verified user token required)",
+    export: "npm run app -- export <records | application> OUTPUT.ndjson (private, no-clobber paged export)",
     environment: "APP_API_URL (default http://localhost:3000), APP_API_TOKEN (server-issued credential)",
     note: "Record files contain title/content and, for update, revision. Conversation updates contain revision plus title and/or archived; they require a current user access token and enabled account chat. Output is JSON. Errors exit nonzero. Writes are never automatically retried.",
   };
@@ -70,6 +72,9 @@ export async function run(args: string[], env: Record<string, string | undefined
       created++;
     }
     return { created, existing: fixtures.length - created, titles: fixtures.map(row => row.title) };
+  }
+  if (command === "export" && rest.length === 2 && (rest[0] === "records" || rest[0] === "application")) {
+    return exportApplication(rest[0], rest[1], path => call(path));
   }
   let path = "/api/v1/records", method = "GET", body: string | undefined;
   const id = (value: string | undefined) => {

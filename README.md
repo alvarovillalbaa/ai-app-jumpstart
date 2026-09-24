@@ -43,6 +43,8 @@ For a local production process, run `npm run build:local` then `npm start`. The 
 
 All share validation, owner isolation, scopes, pagination and revision checks. With account chat enabled, verified user tokens also unlock conversation metadata through `/api/v1/conversations`, CLI `conversations` commands and MCP `conversations_*` tools/resources. See [data access](docs/data-access.md).
 
+The CLI can also create a private, paged [export of visible application data](docs/data-access.md#export-visible-application-data) for an owner. Its manifest lists data held by Auth, Eve and other systems that the export does not include.
+
 ## Storage and hosting
 
 | Option | Configuration / status |
