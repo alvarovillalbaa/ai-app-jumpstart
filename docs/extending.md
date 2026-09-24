@@ -21,3 +21,7 @@ Update the owner-aware contract in `lib/data/contract.ts`, the adapter(s) in `li
 ## Add a UI route
 
 Add an App Router `page.tsx` under `app/`; private workspace screens use `app/(workspace)/` and server-side identity checks like `app/(workspace)/account/page.tsx`. Reuse `app/_components/`, the workspace navigation, metadata and error/loading conventions. If the page needs a backend endpoint, use a Next `route.ts` and the existing `lib/http/` authorization and validation service rather than connecting the browser to backend secrets. Add a meaningful DOM or browser check in `tests/frontend/` or `tests/e2e/`, then run `npm run check` and the relevant browser suite. Read the installed Next App Router page and route-handler guides before authoring those files.
+
+## Add private object storage
+
+Implement `PrivateUploadObjects` from `lib/uploads/contract.ts` for the selected private bucket or volume. The adapter receives a verified owner and server-generated UUID, never a client-selected object path. Run `tests/contracts/uploads.ts` unchanged against it, including the cross-owner and concurrent-write cases. Keep byte validation in `lib/uploads/validation.ts`; a storage adapter alone is not an enabled upload feature. Complete the metadata, quota, quarantine/scanning, authenticated download and deletion lifecycle in [the upload plan](uploads.md) before exposing it in the UI or to Eve.
