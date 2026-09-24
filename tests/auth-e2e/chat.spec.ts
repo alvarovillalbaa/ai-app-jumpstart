@@ -307,7 +307,9 @@ test("an approved tool saves one private artifact; denial saves none",async ({ p
   const alice = await user(request),bob = await user(request);
   await login(page,alice.email);
   await send(page,"artifact-fixture: propose a private artifact");
-  await expect(page.getByRole("button",{ name: "Approve",exact: true })).toBeVisible({ timeout: 30_000 });
+  // The proposal renders before the turn finishes; audit the actionable state.
+  await expect(page.getByRole("button",{ name: "Approve",exact: true })).toBeEnabled({ timeout: 30_000 });
+  await expect(page.getByRole("button",{ name: "Cancel",exact: true })).toBeEnabled();
   await expect(page.getByText("Exact approved plain-text payload.")).toBeVisible();
   await auditAccessibility(page, "artifact approval request");
   const artifactsUrl = "/api/v1/artifacts";
