@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { run } from "../../scripts/app-cli";
 import { recordHandlers } from "../../lib/http/records";
 import { SqliteRepository } from "../../lib/data/sqlite";
+import { RecordService } from "../../lib/data/service";
 
 afterEach(() => vi.unstubAllEnvs());
 it("runs CLI CRUD through the HTTP handlers and propagates failures", async () => {
@@ -57,4 +58,32 @@ it("routes artifact deletion through the authenticated API without a body",async
   });
   expect(await run(["artifacts","delete",id],{ APP_API_TOKEN: "owner-token" },request)).toEqual({ deleted: true });
   expect(request).toHaveBeenCalledOnce();
+});
+
+it("seeds deterministic owner-scoped records once and refuses collisions or an implicit remote write", async () => {
+  const first = "seed-first-secret-".repeat(3), second = "seed-second-secret-".repeat(3);
+  vi.stubEnv("APP_API_KEYS", JSON.stringify([first, second].map((token, index) => ({
+    sha256: createHash("sha256").update(token).digest("hex"), tenant: "seed-test", subject: `owner-${index}`,
+    scopes: ["records:read", "records:write"],
+  }))));
+  const repo = new SqliteRepository(":memory:"), api = recordHandlers(async () => repo);
+  const request: typeof fetch = async (url, init) => {
+    const req = new Request(url, init);
+    return req.method === "POST" ? api.create(req) : api.list(req);
+  };
+  try {
+    const firstEnv = { APP_API_TOKEN: first }, secondEnv = { APP_API_TOKEN: second };
+    expect(await run(["seed"], firstEnv, request)).toMatchObject({ created: 2, existing: 0 });
+    expect(await run(["seed"], firstEnv, request)).toMatchObject({ created: 0, existing: 2 });
+    expect((await run(["list"], secondEnv, request) as { items: unknown[] }).items).toHaveLength(0);
+    expect(await run(["seed"], secondEnv, request)).toMatchObject({ created: 2, existing: 0 });
+    const service = new RecordService(repo, { tenant: "seed-test", subject: "owner-0", scopes: ["records:read", "records:write"] });
+    const [row] = (await service.list()).items;
+    await service.update(row.id, { title: row.title, content: "user edited", revision: row.revision });
+    await expect(run(["seed"], firstEnv, request)).rejects.toThrow("different content");
+    expect((await service.list()).items).toHaveLength(2);
+    const remoteRequest = vi.fn<typeof fetch>();
+    await expect(run(["seed"], { APP_API_URL: "https://example.test", APP_API_TOKEN: first }, remoteRequest)).rejects.toThrow("--allow-remote");
+    expect(remoteRequest).not.toHaveBeenCalled();
+  } finally { await repo.close(); }
 });

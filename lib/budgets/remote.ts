@@ -2,6 +2,7 @@ import { Pool } from "pg";
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { ConvexBackend } from "../data/convex-client";
+import type { Database } from "../data/supabase.generated";
 import { admission, admissionResult, settlement, settlementCorrection, correctionResult, correctionEntry, budgetInspection, lookup, snapshot, attempt, attemptOwner, reservationState, outstandingOptions, outstandingEntry, outstandingPage, pageOfOutstanding, type BudgetStore } from "./contract";
 
 type Rpc = (operation: string, input: object) => Promise<unknown>;
@@ -59,9 +60,9 @@ export function postgresBudgetStore(connectionString: string) {
     }, () => pool.end());
 }
 export function supabaseBudgetStore(url: string, secret: string) {
-  const client = createClient(url, secret, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: (input, init) => fetch(input, { ...init, redirect: "error", signal: AbortSignal.timeout(10000) }) } });
+  const client = createClient<Database>(url, secret, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: (input, init) => fetch(input, { ...init, redirect: "error", signal: AbortSignal.timeout(10000) }) } });
   return adapter(async (operation, input) => {
-    const { data, error } = await client.rpc(operation === "claimAttempt" || operation === "attemptCount" ? "app_budget_attempt_command" : "app_budget_command", { command: operation, input });
+    const { data, error } = await client.rpc(operation === "claimAttempt" || operation === "attemptCount" ? "app_budget_attempt_command" : "app_budget_command", { command: operation, input: z.json().parse(input) });
     if (error) throw error; return data;
   }, async raw => {
     const input = attemptOwner.parse(raw);

@@ -2,7 +2,8 @@
 
 | Command | Coverage | Requirements |
 | --- | --- | --- |
-| `npm test` | SQLite, Convex emulator, HTTP isolation/errors, SDK MCP, CLI CRUD, DOM behavior, ANSI compatibility, arithmetic validation | No external services |
+| `npm test` | SQLite, Convex emulator, HTTP isolation/errors, SDK MCP, CLI CRUD and repeatable owner-scoped seed, DOM behavior, ANSI compatibility, arithmetic validation | No external services |
+| `npm run db:types:check` | Regenerates and compares committed Supabase public-schema types after checking the migration ledger | Running migrated local Supabase project; read-only |
 | `npm run test:backend` | Backend subset | None |
 | `npm run test:frontend` | Browser components | None |
 | `npm run test:ai` | Six Eve HTTP/session evals: four shared behavior cases plus fixture-only anonymous artifact denial and in-flight cancellation | Local listener, no paid model calls or metadata fetch |
@@ -20,6 +21,8 @@
 | `npm run test:e2e` | Production Next + SQLite + real Chromium persistence, response security headers, 404 recovery link and responsive workspace navigation, including keyboard skip focus, page titles, theme persistence and system-preference changes; automated accessibility scans of records, mobile menu and 404 states | `build:local`, installed Chromium |
 
 The remote suite requires `DATA_PROVIDER=postgres`, `supabase` or `convex` and matching environment variables; missing configuration fails, rather than skips. Each case uses random tenants and deletes its own reference records. Session ownership cases retain tombstones and nonce receipts intentionally; use disposable databases. Never target production. The PostgreSQL harness also checks the read-only migration dry run before applying schema and again after an idempotent rerun, then verifies both modes reject a ledger migration absent from this checkout.
+
+The PostgreSQL CI job runs `db:types:check:ci` after applying migrations to its disposable PostgreSQL 17 service. That mode accepts only a loopback `DATABASE_URL`; it compares the pinned CLI's generated public types with the committed file without starting a second Supabase stack. A local comparison against plain PostgreSQL 17 produced the same public-schema types as the migrated Supabase project. The seed CLI test checks sequential rerun idempotence, owner isolation, changed-content refusal and remote-write opt-in; a live local Supabase-backed app also created two fixtures on the first run and zero on the second.
 
 Run providers individually with `test:postgres`, `test:supabase` or `test:convex`. The PostgreSQL harness uses a temporary native cluster and runs migrations twice. The Supabase harness adds pinned, checksum-verified PostgREST and short-lived local JWTs, and checks that anonymous and authenticated roles cannot read or insert directly. Its local proxy only maps the Supabase REST path; authorization and SQL execute in the real services. The shared budget contract checks settled-cost correction and audit isolation on all providers; SQL providers also test that direct UPDATE and DELETE of a correction row fail, and the SQLite operator CLI test checks the same. Convex uses a separate temporary anonymous deployment and also checks that internal functions cannot be invoked through the public query API. These checks clean up their temporary services and do not configure a hosted account. CI runs provider tests, a separate PostgreSQL 17 service contract, the record container contract and the two-database Workflow Compose contract on the runner's native architecture. The six-job workflow passed on [draft PR #1](https://github.com/alvarovillalbaa/ai-app-jumpstart/pull/1); see [delivery status](DELIVERY.md) for the verified revision and remaining hosted checks.
 

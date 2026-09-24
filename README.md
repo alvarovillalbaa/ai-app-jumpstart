@@ -16,6 +16,8 @@ The [AI usage view](docs/usage-budgets.md) at `/usage` shows the account's curre
 
 For browser accounts and a Supabase-backed application, follow the [fresh-clone guide](docs/getting-started.md) for either local or hosted Supabase. The following path is the smaller SQLite/API-key example.
 
+The guide also covers an owner-scoped, repeatable sample-record seed and generation of committed Supabase database types from the local migrated schema.
+
 ```sh
 npm ci
 cp .env.example .env.local

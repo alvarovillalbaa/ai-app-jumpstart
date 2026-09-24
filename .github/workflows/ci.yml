@@ -80,6 +80,7 @@ jobs:
       - run: npm run db:migrate -- --dry-run
       - run: npm run db:migrate
       - run: npm run db:migrate -- --dry-run
+      - run: npm run db:types:check:ci
       - run: npm run test:integration
   provider-portability:
     runs-on: ubuntu-latest

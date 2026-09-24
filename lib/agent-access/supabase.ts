@@ -5,9 +5,10 @@ import { conversationTitle, historyOptions, historyPatch, pageOfHistory, summary
 import { projectionEntry, projectionOptions, projectionOutcome, pageOfProjections } from "./projection-contract";
 import { artifactInput, artifactCallId, artifactOptions, artifactSaveResult, artifactFromRow, pageOfArtifacts } from "./artifact-contract";
 import { createHash, randomUUID } from "node:crypto";
+import type { Database } from "../data/supabase.generated";
 
 export function supabaseAccessStore(url: string, secret: string): SessionAccessStore {
-  const client = createClient(url, secret, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: (input, init) => fetch(input, { ...init, redirect: "error", signal: AbortSignal.timeout(10_000) }) } });
+  const client = createClient<Database>(url, secret, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: (input, init) => fetch(input, { ...init, redirect: "error", signal: AbortSignal.timeout(10_000) }) } });
   const store: SessionAccessStore = {
     async saveArtifact(owner,operation,session,callId,input) {
       const o = accessOwner.parse(owner),data = artifactInput.parse(input),id = operationId.parse(operation),sid = sessionId.parse(session),call = artifactCallId.parse(callId);
@@ -15,7 +16,8 @@ export function supabaseAccessStore(url: string, secret: string): SessionAccessS
       const { data: result,error } = await client.rpc("app_save_artifact",{ p_tenant: o.tenant,p_subject: o.subject,p_operation: id,p_session: sid,p_call: call,
         p_hash: hash,p_id: randomUUID(),p_title: data.title,p_content: data.content,p_created: Date.now() });
       if (error) throw error;
-      return artifactSaveResult.parse({ ...result,...(result?.artifact ? { artifact: artifactFromRow(result.artifact) } : {}) });
+      const response = z.object({ status: z.enum(["created","existing","conflict","unavailable"]), artifact: z.unknown().optional() }).parse(result);
+      return artifactSaveResult.parse({ status: response.status,...(response.artifact !== undefined ? { artifact: artifactFromRow(response.artifact) } : {}) });
     },
     async listArtifacts(owner,options) {
       const o = accessOwner.parse(owner),q = artifactOptions.parse(options);

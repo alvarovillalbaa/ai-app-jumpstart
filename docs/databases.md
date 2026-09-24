@@ -14,6 +14,8 @@ For direct PostgreSQL access, set `DATA_PROVIDER=postgres` and `DATABASE_URL` on
 
 For Supabase PostgREST, set `DATA_PROVIDER=supabase`, `SUPABASE_URL` and `SUPABASE_SECRET_KEY` on the application. Use a backend secret/service-role credential, never an anonymous or publishable key. The migration enables RLS and denies direct `anon` and `authenticated` table access. The backend enforces owner predicates on every operation. Browser signup is configured separately through `AUTH_PROVIDER=supabase`; see [authentication](authentication.md).
 
+The committed `lib/data/supabase.generated.ts` is generated from the migrated local public schema with the pinned CLI. After adding a SQL migration, apply it to local Supabase and run `npm run db:types`; `npm run db:types:check` detects drift. The generator refuses a local database with unapplied repository migrations. It never generates from a linked or hosted project.
+
 Use separate projects and credentials for development, preview and production. The local PostgREST integration test verifies role denial and adapter behavior; it does not validate a hosted project's configuration, backups or networking.
 
 ## Convex

@@ -1,12 +1,13 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 import { page, type AppRecord, type ListInput, type Owner, type RecordInput, type RecordRepository, type RecordUpdate } from "./contract";
+import type { Database } from "./supabase.generated";
 
-type Row = { id: string; title: string; content: string; revision: number; created_at: string; updated_at: string };
+type Row = Database["public"]["Tables"]["app_records"]["Row"];
 export class SupabaseRepository implements RecordRepository {
-  private client: SupabaseClient;
+  private client: SupabaseClient<Database>;
   constructor(url: string, secret: string) {
-    this.client = createClient(url, secret, { auth: { persistSession: false, autoRefreshToken: false }, global: {
+    this.client = createClient<Database>(url, secret, { auth: { persistSession: false, autoRefreshToken: false }, global: {
       fetch: (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(10_000) }),
     } });
   }

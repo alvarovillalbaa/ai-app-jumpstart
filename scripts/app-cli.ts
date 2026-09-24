@@ -3,11 +3,19 @@ import { readFile } from "node:fs/promises";
 import { historyOptions, historyPatch, operationId } from "../lib/agent-access/contract";
 import { projectionOptions } from "../lib/agent-access/projection-contract";
 import { artifactOptions } from "../lib/agent-access/artifact-contract";
+import { recordId, recordInput } from "../lib/data/contract";
+import { z } from "zod";
+
+const seedPage = z.object({
+  items: z.array(recordInput.extend({ id: recordId }).passthrough()),
+  nextCursor: recordId.nullable(),
+});
 
 export async function run(args: string[], env: Record<string, string | undefined> = process.env, request = fetch): Promise<unknown> {
   const [command, ...rest] = args;
   if (!command || command === "help") return {
     records: "npm run app -- <list [cursor] | get ID | create JSON_FILE | update ID JSON_FILE | delete ID REVISION>",
+    seed: "npm run app -- seed [--allow-remote] (two idempotent, owner-scoped example records)",
     conversations: "npm run app -- conversations <list [--archived] [--limit N] [--cursor CURSOR] | get OPERATION_UUID | events OPERATION_UUID [AFTER_INGESTION_INDEX] | update OPERATION_UUID JSON_FILE>",
     artifacts: "npm run app -- artifacts <list [--limit N] [--cursor CURSOR] | get ARTIFACT_UUID | delete ARTIFACT_UUID>",
     usage: "npm run app -- usage (current UTC-day AI budget snapshot; verified user token required)",
@@ -18,6 +26,51 @@ export async function run(args: string[], env: Record<string, string | undefined
   if (origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash || !["http:", "https:"].includes(origin.protocol)) throw new Error("APP_API_URL must be an HTTP(S) origin without credentials, path, query or fragment.");
   if (origin.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(origin.hostname)) throw new Error("Use HTTPS for remote servers.");
   if (!env.APP_API_TOKEN) throw new Error("Set APP_API_TOKEN.");
+  const call = async (path: string, method = "GET", body?: string) => {
+    const response = await request(new URL(path, origin), {
+      method, body, redirect: "error", signal: AbortSignal.timeout(15_000),
+      headers: { authorization: `Bearer ${env.APP_API_TOKEN}`, "content-type": "application/json",
+        ...(env.VERCEL_AUTOMATION_BYPASS_SECRET ? { "x-vercel-protection-bypass": env.VERCEL_AUTOMATION_BYPASS_SECRET } : {}) },
+    });
+    if (!response.ok) {
+      // Display only the public application error; do not echo a proxy HTML page.
+      const result = await response.json().catch(() => null);
+      throw new Error(`HTTP ${response.status}: ${result?.error?.code ?? "request_failed"}`);
+    }
+    return response.status === 204 ? { deleted: true } : response.json();
+  };
+  if (command === "seed" && (rest.length === 0 || (rest.length === 1 && rest[0] === "--allow-remote"))) {
+    const local = origin.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(origin.hostname);
+    if (!local && rest[0] !== "--allow-remote") throw new Error("Refusing to seed a remote application without --allow-remote.");
+    const fixtures = z.array(recordInput).min(1).max(10).parse(JSON.parse(await readFile(new URL("./fixtures/records.json", import.meta.url), "utf8")));
+    if (new Set(fixtures.map(row => row.title)).size !== fixtures.length) throw new Error("Duplicate seed titles.");
+    const wanted = new Set(fixtures.map(row => row.title));
+    const found = new Map<string, string>();
+    const seenCursors = new Set<string>();
+    let cursor: string | null = null;
+    for (let pages = 0; pages < 100; pages++) {
+      const query = new URLSearchParams({ limit: "100", ...(cursor ? { after: cursor } : {}) });
+      const result = seedPage.parse(await call(`/api/v1/records?${query}`));
+      for (const row of result.items) if (wanted.has(row.title)) {
+        if (found.has(row.title)) throw new Error(`Multiple records already use seed title: ${row.title}`);
+        found.set(row.title, row.content);
+      }
+      if (!result.nextCursor) { cursor = null; break; }
+      if (seenCursors.has(result.nextCursor)) throw new Error("Record pagination repeated a cursor.");
+      seenCursors.add(result.nextCursor);
+      cursor = result.nextCursor;
+    }
+    if (cursor) throw new Error("Seed preflight exceeded 10,000 records; no records were created.");
+    for (const row of fixtures) if (found.has(row.title) && found.get(row.title) !== row.content) {
+      throw new Error(`Seed title exists with different content: ${row.title}`);
+    }
+    let created = 0;
+    for (const row of fixtures) if (!found.has(row.title)) {
+      await call("/api/v1/records", "POST", JSON.stringify(row));
+      created++;
+    }
+    return { created, existing: fixtures.length - created, titles: fixtures.map(row => row.title) };
+  }
   let path = "/api/v1/records", method = "GET", body: string | undefined;
   const id = (value: string | undefined) => {
     if (!value || !/^[a-f0-9-]{36}$/i.test(value)) throw new Error("Provide a record UUID.");
@@ -84,17 +137,7 @@ export async function run(args: string[], env: Record<string, string | undefined
   else if (command === "delete" && rest.length === 2 && /^[1-9]\d*$/.test(rest[1])) { method = "DELETE"; path += `/${id(rest[0])}?revision=${rest[1]}`; }
   else throw new Error("Invalid command or arguments. Run npm run app -- help.");
   if (body) JSON.parse(body);
-  const response = await request(new URL(path, origin), {
-    method, body, redirect: "error", signal: AbortSignal.timeout(15_000),
-    headers: { authorization: `Bearer ${env.APP_API_TOKEN}`, "content-type": "application/json",
-      ...(env.VERCEL_AUTOMATION_BYPASS_SECRET ? { "x-vercel-protection-bypass": env.VERCEL_AUTOMATION_BYPASS_SECRET } : {}) },
-  });
-  if (!response.ok) {
-    // Display only the public application error; do not echo a proxy HTML page.
-    const result = await response.json().catch(() => null);
-    throw new Error(`HTTP ${response.status}: ${result?.error?.code ?? "request_failed"}`);
-  }
-  return response.status === 204 ? { deleted: true } : response.json();
+  return call(path, method, body);
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
