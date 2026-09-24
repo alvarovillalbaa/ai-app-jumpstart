@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
+import { verifyWorkflowBuild } from "./workflow-build-policy.mjs";
 
 // Load local secrets before spawning Eve, not only after Next initializes.
 // Explicit process environment values retain precedence.
@@ -31,6 +32,7 @@ function start(args, env = {}) {
   return child;
 }
 try {
+  verifyWorkflowBuild();
   let localAgent = false;
   if (!process.env.EVE_NEXT_PRODUCTION_ORIGIN && !process.env.VERCEL) {
     const port = process.env.EVE_NEXT_PRODUCTION_PORT ?? "4274";

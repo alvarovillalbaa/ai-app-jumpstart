@@ -38,7 +38,7 @@
     "test:workflow-postgres": "tsx scripts/test-session-runtime.ts --postgres-workflows",
     "test:workflow-compose": "node scripts/test-workflow-compose.mjs",
     "eval:live": "eve eval --strict",
-    "build:local": "npm run build:eve && npm run build",
+    "build:local": "npm run build:eve && node scripts/workflow-build-policy.mjs --write && npm run build",
     "test:e2e": "playwright test",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:postgres": "node scripts/test-postgres.mjs",

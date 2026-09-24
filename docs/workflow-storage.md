@@ -8,7 +8,7 @@ Application records, ownership and budgets use `DATA_PROVIDER`. Eve execution us
 | Managed Vercel | Default | Vercel Workflow |
 | Long-running containers on AWS/Azure/GCP or other hosts | `EVE_WORKFLOW_PROVIDER=postgres` | Explicit private PostgreSQL database |
 
-The production model is unchanged. `agent/lib/workflow.ts` selects the world at **build time**, through Eve's documented `experimental.workflow.world` option. Runtime environment variables alone cannot turn a default/local artifact into a PostgreSQL artifact. Rebuild when changing the world. Keep each environment's image digest, build selection and database references in its release record.
+The production model is unchanged. `agent/lib/workflow.ts` selects the world at **build time**, through Eve's documented `experimental.workflow.world` option. Runtime environment variables alone cannot turn a default/local artifact into a PostgreSQL artifact. `build:local` writes the selected world into `.output/jumpstart-workflow-provider`; the production supervisor reads this marker before starting either service. Set `WORKFLOW_EXPECTED_PROVIDER=postgres` on long-running cloud containers, as the supplied manifests do. Startup fails if the artifact is unmarked, has the wrong world, or the PostgreSQL world lacks its connection URL. A default-world build also refuses an accidental `WORKFLOW_POSTGRES_URL`. Rebuild when changing the world. Keep each environment's image digest, build selection and database references in its release record.
 
 ## PostgreSQL setup
 
@@ -19,8 +19,8 @@ The adapter is pinned to `@workflow/world-postgres@5.0.0-beta.42`. Its world, lo
 1. Provision a private PostgreSQL database and a backend-only database role. Workflow history may contain messages and tool results. Do not expose its schemas through browser roles or PostgREST. Use a separate database from application tables, backups, verified TLS, and a direct/session connection supporting LISTEN/NOTIFY; transaction-mode pooling is unsuitable.
 2. Set the workflow URL, a unique prefix per app/environment, and optional pool/concurrency values in the process secret environment. The default worker concurrency is 5 and pool maximum is 10 **per instance**. Account for all instances and other database clients when sizing connection limits.
 3. Run `npm run workflow:migrate` once in a serial release job before starting workers. It uses the pinned upstream migration owner for both Workflow and Graphile Worker schemas. Its subprocess output is suppressed to prevent database URL parameters from entering logs. Failure returns nonzero; inspect database connectivity, privileges and package compatibility. Keep application migrations separate: `npm run db:migrate` does not prepare workflow tables.
-4. Build with `EVE_WORKFLOW_PROVIDER=postgres npm run build:local`, or `docker build --build-arg EVE_WORKFLOW_PROVIDER=postgres -t YOUR_IMAGE .`. Runtime credentials are not build arguments and must not enter image layers.
-5. Supply the workflow settings when starting the resulting artifact. Supply a remote application `DATA_PROVIDER` on ephemeral/multi-instance hosts. Use the [cloud recipes](cloud-containers.md), then complete the acceptance checks.
+4. Build with `EVE_WORKFLOW_PROVIDER=postgres npm run build:local`, or `docker build --build-arg EVE_WORKFLOW_PROVIDER=postgres -t YOUR_IMAGE .`. The build marker contains only `postgres`; runtime credentials are not build arguments and must not enter image layers.
+5. Supply `WORKFLOW_EXPECTED_PROVIDER=postgres` and the workflow settings when starting the resulting artifact. Supply a remote application `DATA_PROVIDER` on ephemeral/multi-instance hosts. Use the [cloud recipes](cloud-containers.md), then complete the acceptance checks.
 
 For a local Compose workflow database, put a URL-safe random hex `WORKFLOW_DB_PASSWORD` in Compose's private `.env` and application secrets in `.env.local`:
 

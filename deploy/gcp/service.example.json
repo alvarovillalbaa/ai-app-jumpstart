@@ -26,6 +26,7 @@
             { "name": "AUTH_PROVIDER", "value": "supabase" },
             { "name": "AI_CHAT_ENABLED", "value": "true" },
             { "name": "AI_RUNTIME_ORIGIN", "value": "http://127.0.0.1:4274" },
+            { "name": "WORKFLOW_EXPECTED_PROVIDER", "value": "postgres" },
             { "name": "WORKFLOW_POSTGRES_JOB_PREFIX", "value": "jumpstart_staging" },
             { "name": "WORKFLOW_POSTGRES_URL", "valueFrom": { "secretKeyRef": { "name": "workflow-database", "key": "REPLACE_WITH_VERSION" } } },
             { "name": "SUPABASE_URL", "valueFrom": { "secretKeyRef": { "name": "data-url", "key": "REPLACE_WITH_VERSION" } } },

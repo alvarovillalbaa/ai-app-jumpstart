@@ -7,6 +7,7 @@ services:
       args:
         EVE_WORKFLOW_PROVIDER: postgres
     environment:
+      WORKFLOW_EXPECTED_PROVIDER: postgres
       WORKFLOW_POSTGRES_URL: postgresql://workflow:${WORKFLOW_DB_PASSWORD:?Set WORKFLOW_DB_PASSWORD}@workflow-db:5432/workflow
       WORKFLOW_POSTGRES_JOB_PREFIX: jumpstart_local
     depends_on:
