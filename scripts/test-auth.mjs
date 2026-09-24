@@ -106,7 +106,7 @@ try {
   const key = new TextEncoder().encode(jwtSecret);
   const anon = await new SignJWT({ role: "anon" }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("1h").sign(key);
   const admin = await new SignJWT({ role: "service_role" }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("1h").sign(key);
-  const env = { ...process.env, NODE_ENV: "production", AUTH_PROVIDER: "supabase", SUPABASE_AUTH_URL: publicAuthOrigin, SUPABASE_PUBLISHABLE_KEY: anon, APP_API_KEYS: "[]", APP_ORIGIN: appOrigin, DATA_PROVIDER: "sqlite", SQLITE_PATH: join(directory, "records.sqlite") };
+  const env = { ...process.env, NODE_ENV: "production", AUTH_PROVIDER: "supabase", SUPABASE_AUTH_URL: publicAuthOrigin, SUPABASE_PUBLISHABLE_KEY: anon, APP_API_KEYS: "[]", APP_ORIGIN: appOrigin, DATA_PROVIDER: "sqlite", SQLITE_PATH: join(directory, "records.sqlite"), UPLOAD_STORAGE_PROVIDER: "local", UPLOAD_LOCAL_ROOT: join(directory, "uploads") };
   env.AI_CHAT_ENABLED = chat ? "true" : "false";
   if (chat) {
     env.AI_CREATION_SIGNING_JSON = JSON.stringify({ audience: name, activeKey: "fixture", keys: { fixture: randomBytes(32).toString("hex") } });
@@ -121,6 +121,7 @@ try {
       NODE_ENV: "production", AUTH_PROVIDER: "supabase", SUPABASE_AUTH_URL: publicAuthOrigin,
       SUPABASE_PUBLISHABLE_KEY: anon, APP_API_KEYS: "[]", APP_ORIGIN: appOrigin,
       DATA_PROVIDER: "sqlite", SQLITE_PATH: "/app/.data/records.sqlite", AI_CHAT_ENABLED: "true",
+      UPLOAD_STORAGE_PROVIDER: "local", UPLOAD_LOCAL_ROOT: "/app/.data/uploads",
       AI_CREATION_SIGNING_JSON: env.AI_CREATION_SIGNING_JSON,
       AI_BUDGET_POLICY_JSON: env.AI_BUDGET_POLICY_JSON,
       AI_RUNTIME_ORIGIN: "http://127.0.0.1:4274", WORKFLOW_TARGET_WORLD: "local",

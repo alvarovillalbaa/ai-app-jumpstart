@@ -77,6 +77,65 @@ test("signup email, PKCE callback, private records, cross-user API denial and lo
   await expect(page.getByText(record.title)).toHaveCount(0);
 });
 
+test("signed-in uploads remain private across account changes and can be deleted", async ({ page, request }) => {
+  const alice = `upload-alice-${randomUUID()}@example.test`;
+  const bob = `upload-bob-${randomUUID()}@example.test`;
+  const filename = `account-${randomUUID()}.txt`;
+  await confirmedUser(request, alice);
+  await confirmedUser(request, bob);
+
+  await page.goto("/uploads");
+  await atPath(page, "/login");
+  await page.getByLabel("Email", { exact: true }).fill(alice);
+  await page.getByLabel("Password", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await atPath(page, "/uploads");
+  await expect(page.getByRole("heading", { name: "Private uploads" })).toBeVisible();
+  await auditAccessibility(page, "signed-in uploads");
+  await page.locator('input[type="file"]').setInputFiles({ name: filename, mimeType: "text/plain", buffer: Buffer.from("Alice private bytes") });
+  const accepted = page.waitForResponse(response => response.url().endsWith("/api/v1/uploads") && response.request().method() === "POST");
+  await page.getByRole("button", { name: "Upload to quarantine" }).click();
+  const uploadResponse = await accepted;
+  expect(uploadResponse.status()).toBe(201);
+  const uploaded = await uploadResponse.json();
+  await expect(page.getByRole("listitem").filter({ hasText: filename })).toContainText("Quarantined · unavailable for download or agent use");
+  await auditAccessibility(page, "signed-in quarantined upload");
+
+  const bobToken = await tokenFor(request, bob);
+  const bobHeaders = { authorization: `Bearer ${bobToken}` };
+  expect((await request.get(`/api/v1/uploads/${uploaded.id}`, { headers: bobHeaders })).status()).toBe(404);
+  expect((await request.delete(`/api/v1/uploads/${uploaded.id}`, { headers: bobHeaders })).status()).toBe(404);
+  const bobList = await request.get("/api/v1/uploads", { headers: bobHeaders });
+  expect(bobList.status()).toBe(200);
+  expect((await bobList.json()).items).toEqual([]);
+  const bobMcp = new Client({ name: "upload-auth-isolation", version: "1" });
+  try {
+    await bobMcp.connect(new StreamableHTTPClientTransport(new URL("/api/mcp", process.env.APP_ORIGIN!), { requestInit: { headers: bobHeaders } }));
+    expect((await bobMcp.callTool({ name: "uploads_get", arguments: { id: uploaded.id } })).isError).toBe(true);
+    expect(JSON.stringify((await bobMcp.callTool({ name: "uploads_list", arguments: {} })).content)).not.toContain(uploaded.id);
+  } finally { await bobMcp.close(); }
+
+  await page.goto("/account");
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await atPath(page, "/login");
+  await login(page, bob);
+  await page.goto("/uploads");
+  await expect(page.getByText("No uploads yet.")).toBeVisible();
+  await expect(page.getByText(filename)).toHaveCount(0);
+
+  const aliceToken = await tokenFor(request, alice);
+  const aliceMcp = new Client({ name: "upload-auth-owner", version: "1" });
+  try {
+    await aliceMcp.connect(new StreamableHTTPClientTransport(new URL("/api/mcp", process.env.APP_ORIGIN!), { requestInit: { headers: { authorization: `Bearer ${aliceToken}` } } }));
+    const found = await aliceMcp.callTool({ name: "uploads_get", arguments: { id: uploaded.id } });
+    expect(found.isError).not.toBe(true);
+    expect(JSON.stringify(found.content)).toContain(uploaded.id);
+    expect(JSON.stringify(found.content)).not.toContain("Alice private bytes");
+  } finally { await aliceMcp.close(); }
+  expect((await request.delete(`/api/v1/uploads/${uploaded.id}`, { headers: { authorization: `Bearer ${aliceToken}` } })).status()).toBe(204);
+  expect((await request.get(`/api/v1/uploads/${uploaded.id}`, { headers: { authorization: `Bearer ${aliceToken}` } })).status()).toBe(404);
+});
+
 test("revoked sessions and forged access tokens cannot read the API", async ({ request }) => {
   const email = `revoke-${randomUUID()}@example.test`; await confirmedUser(request, email);
   const token = await tokenFor(request, email);
