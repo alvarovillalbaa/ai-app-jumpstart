@@ -1,6 +1,6 @@
 # Start from a fresh clone
 
-Use Node 24.x and `npm ci`. Keep `.env.local` private; `.env.example` lists all supported settings. The root application includes Next and Eve in one install. These steps leave account chat disabled so records and account access can be checked before model costs or workflow storage are configured.
+Use Node 24.15.0 or newer 24.x and `npm ci`. The checked-in `.nvmrc` selects the tested version with `nvm use`, and `.npmrc` makes `npm ci` fail on an unsupported Node version instead of continuing after an engine warning. Check `node --version` in the new checkout before installing, especially if your shell does not switch versions automatically. Keep `.env.local` private; `.env.example` lists all supported settings. The root application includes Next and Eve in one install. These steps leave account chat disabled so records and account access can be checked before model costs or workflow storage are configured.
 
 ## Local Supabase
 
@@ -67,6 +67,7 @@ Before a managed Vercel release, set `AI_CHAT_ENABLED` explicitly and run `npm r
 
 | Symptom | Check |
 | --- | --- |
+| `npm ci` rejects the Node engine | Use Node 24.15.0 or newer 24.x (`nvm use` reads `.nvmrc`), confirm `node --version`, then rerun `npm ci`. Do not disable the project engine check. |
 | Local CLI cannot reach Docker or bind a port | Start Docker, inspect `npm run db:local:status`, and free ports 54321, 54322 and 54324 for this project. |
 | Account settings unavailable or login returns 503 | Verify `AUTH_PROVIDER=supabase`, API URL and publishable key, then restart the app after editing `.env.local`. |
 | Email link fails or returns to the wrong host | Match `APP_ORIGIN`, the Supabase Site URL and the exact `/auth/callback?next=...` allowlist; use the same browser for default PKCE links. |

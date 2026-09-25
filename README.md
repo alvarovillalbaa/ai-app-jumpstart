@@ -1,6 +1,6 @@
 # AI App Jumpstart
 
-A Next.js 16 / React 19 application with integrated Eve and a portable application-data layer. **Node 24.x** is required. The root app is canonical; `my-agent/` is a preserved legacy scaffold.
+A Next.js 16 / React 19 application with integrated Eve and a portable application-data layer. **Node 24.15.0 or newer 24.x** is required; `.nvmrc` selects the tested version and npm rejects unsupported Node versions. The root app is canonical; `my-agent/` is a preserved legacy scaffold.
 
 This template is under active implementation. Reference records work through the browser, REST, CLI and MCP, with optional Supabase accounts. Workspace screens share responsive, keyboard-accessible navigation and a browser-persisted system/light/dark theme choice; optional chat links appear only when account chat is enabled. Opt-in [account chat](docs/account-chat.md) uses a signed creation broker, durable ownership and runtime budget admission; it is disabled by default. Enabled chat requires an attributed cost basis checked against its reservation. [Delivery status](docs/DELIVERY.md) records remaining release requirements, including current provider-price review and operational reconciliation.
 
