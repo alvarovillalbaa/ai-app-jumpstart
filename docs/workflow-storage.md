@@ -8,7 +8,7 @@ Application records, ownership and budgets use `DATA_PROVIDER`. Eve execution us
 | Managed Vercel | Default | Vercel Workflow |
 | Long-running containers on AWS/Azure/GCP or other hosts | `EVE_WORKFLOW_PROVIDER=postgres` | Explicit private PostgreSQL database |
 
-For the default local world, use the [offline self-hosted snapshot](local-recovery.md) to copy `.eve/.workflow-data` alongside the application SQLite database and optional local upload objects after stopping writers. The PostgreSQL world needs its own database backup and restore rehearsal.
+For the default local world, use the [offline self-hosted snapshot](local-recovery.md) to copy `.eve/.workflow-data` alongside the application SQLite database and optional local upload objects after stopping writers. The PostgreSQL world has a separate private archive and restore rehearsal below.
 
 The production model is unchanged. `agent/lib/workflow.ts` selects the world at **build time**, through Eve's documented `experimental.workflow.world` option. Runtime environment variables alone cannot turn a default/local artifact into a PostgreSQL artifact. `build:local` writes the selected world into `.output/jumpstart-workflow-provider`; the production supervisor reads this marker before starting either service. Set `WORKFLOW_EXPECTED_PROVIDER=postgres` on long-running cloud containers, as the supplied manifests do. Startup fails if the artifact is unmarked, has the wrong world, or the PostgreSQL world lacks its connection URL. A default-world build also refuses an accidental `WORKFLOW_POSTGRES_URL`. Rebuild when changing the world. Keep each environment's image digest, build selection and database references in its release record.
 
@@ -32,11 +32,25 @@ docker compose -f compose.yaml -f compose.workflow-postgres.yaml up --build -d
 
 Add `-f compose.postgres.yaml` and its `POSTGRES_PASSWORD` to put application data in a second PostgreSQL database/service. The separate migration jobs must finish before the app starts. Each database has its own named volume; ordinary `down` retains them, while `down -v` destroys them. `npm run test:workflow-compose` builds the PostgreSQL Workflow image and exercises this combined stack with random test credentials, both migration jobs, health checks and an app-container replacement. Use `-- --skip-build` with `TEST_WORKFLOW_IMAGE` to test an existing image. The harness uses a temporary override and project, leaves `.env.local` untouched, and removes only its own containers and volumes.
 
+## Back up a PostgreSQL Workflow world
+
+Stop every Eve instance and Workflow worker for the selected environment, prevent automatic restarts during the snapshot, and resolve any jobs still locked by a worker. Set the private `WORKFLOW_POSTGRES_URL` in the operator environment and use PostgreSQL client tools at least as new as the server's major version. Choose a new path in a private backup directory, then run:
+
+```sh
+npm run workflow:backup -- --output /PRIVATE_BACKUPS/workflow-YYYYMMDD.dump --stopped
+```
+
+`--stopped` acknowledges the shutdown; the command cannot prove every host is stopped. It checks the Workflow and Graphile migration schemas, refuses locked jobs, creates a custom-format archive in a private temporary directory, verifies its table of contents, and publishes a mode-0600 file without replacing an existing path. Credentials stay out of client process arguments. A readable archive does not prove that the world can resume.
+
+For a restore rehearsal, create a separate empty **loopback** PostgreSQL database, set its private URL as `BACKUP_VERIFY_DATABASE_URL`, and add `--verify-restore` to the command above with a new output path. The command restores in one transaction and compares Workflow/Graphile migration counts plus run and event counts. The disposable restore omits ownership and ACL statements; the archive retains them. Test production roles, grants, worker settings, and an owned session continuation against the restored world before relying on it. The local runtime suite does the session replay and continuation with a deterministic model.
+
+This archive covers one Workflow database only. If the application uses PostgreSQL, stop its writers in the same maintenance window and take a separate [application database archive](operations.md); these two commands do not create an atomic cross-database snapshot. Back up private object bytes separately. Vercel's default managed Workflow world is outside this command's scope; follow its provider recovery procedure.
+
 ## Validation and limits
 
 `npm run test:workflow-postgres` provisions a disposable native PostgreSQL instance, runs the workflow bootstrap twice and compiles a fresh Eve fixture with the production world selector, ownership and budget hooks. It exercises signed creation/recovery, follow-up, compaction, ownership denial and quota denial. It kills the runtime, removes local workflow files, restarts, replays completed history without a model rerun, and completes another owned turn. Fixture models make no paid provider calls. The application ownership/budget store in this test is intentionally separate SQLite; remote application adapters have their own contract suites.
 
-This proves completed-session persistence and continuation after replacement. It does **not** prove exactly-once provider execution during a crash inside a model/tool call, recovery of every in-flight checkpoint, concurrent multi-instance rollout, cloud networking or backup restore. Those remain release acceptance work. The local [artifact action](approved-artifacts.md) stores one effect per approved call ID and input hash; its hosted in-flight replay still needs validation. A stale Eve input response can be converted to new user input; the test exhausts the account budget and confirms that it cannot grant extra allowance.
+This proves completed-session persistence and continuation after a stopped database archive/restore and process replacement. It does **not** prove exactly-once provider execution during a crash inside a model/tool call, recovery of every in-flight checkpoint, concurrent multi-instance rollout, cloud networking or a coordinated hosted backup. Those remain release acceptance work. The local [artifact action](approved-artifacts.md) stores one effect per approved call ID and input hash; its hosted in-flight replay still needs validation. A stale Eve input response can be converted to new user input; the test exhausts the account budget and confirms that it cannot grant extra allowance.
 
 The Compose harness proves that the release image starts with both PostgreSQL services, that both schema jobs complete, and that application records survive replacement. It does not execute an owned model turn against the Compose deployment; the separate `test:workflow-postgres` runtime fixture covers completed-turn replay against a PostgreSQL world.
 

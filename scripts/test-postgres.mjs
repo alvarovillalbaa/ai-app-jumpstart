@@ -12,7 +12,7 @@ import { SignJWT } from "jose";
 import { Client } from "pg";
 import assert from "node:assert/strict";
 import { installPostgrest } from "./testing/postgrest.mjs";
-import { backupPostgresApplication } from "./backup-postgres.mjs";
+import { backupPostgresApplication, backupPostgresWorkflow } from "./backup-postgres.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const withSupabase = process.argv.includes("--supabase");
@@ -143,6 +143,8 @@ async function rehearseBackup() {
   } finally { await restored.end(); }
   await assert.rejects(backupPostgresApplication(env.DATABASE_URL, output), /already exists/);
   await assert.rejects(backupPostgresApplication(env.DATABASE_URL, join(directory, "invalid.dump"), env.DATABASE_URL), /must differ/);
+  await assert.rejects(backupPostgresWorkflow(env.DATABASE_URL, join(directory, "wrong-world.dump"), undefined, true),
+    /not a migrated Eve Workflow database/);
   const archiveOnly = await backupPostgresApplication(env.DATABASE_URL, join(directory, "archive-only.dump"));
   assert.equal(archiveOnly.restoreVerified, false);
   const cliOutput = join(directory, "cli.dump");

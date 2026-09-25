@@ -15,12 +15,13 @@ const queryEnvironment = new Map([
 /** Pass the URL to libpq without putting a database password in process arguments. */
 export function libpqEnvironment(connectionString, inherited = process.env) {
   let url;
-  try { url = new URL(connectionString); } catch { throw new Error("DATABASE_URL must be a PostgreSQL URL."); }
+  try { url = new URL(connectionString); } catch { throw new Error("The connection must be a PostgreSQL URL."); }
   if (!["postgres:", "postgresql:"].includes(url.protocol) || !url.hostname || !url.username || !url.pathname.slice(1) || url.hash)
-    throw new Error("DATABASE_URL must name a PostgreSQL host, user and database without a fragment.");
+    throw new Error("The PostgreSQL URL must name a host, user and database without a fragment.");
   const env = { ...inherited };
   for (const key of Object.keys(env)) if (/^PG[A-Z_]+$/.test(key)) delete env[key];
   delete env.DATABASE_URL;
+  delete env.WORKFLOW_POSTGRES_URL;
   delete env.BACKUP_VERIFY_DATABASE_URL;
   env.PGHOST = url.hostname.replace(/^\[|\]$/g, "");
   env.PGPORT = url.port || "5432";
@@ -60,7 +61,7 @@ async function runClientTool(tool, args, env, capture = false) {
   return output;
 }
 
-async function inspectDatabase(connectionString, empty = false) {
+async function inspectDatabase(connectionString, kind, empty = false) {
   const client = new Client({ connectionString, connectionTimeoutMillis: 5_000 });
   await client.connect();
   try {
@@ -72,18 +73,40 @@ async function inspectDatabase(connectionString, empty = false) {
           AND c.relkind IN ('r','p','v','m','f','S')
       ) AS occupied`);
       if (result.rows[0].occupied) throw new Error("Restore target must be an empty disposable database.");
-      return 0;
+      return null;
     }
-    const result = await client.query("SELECT to_regclass('public.app_migrations') AS migrations, to_regclass('public.app_records') AS records");
-    if (!result.rows[0].migrations || !result.rows[0].records)
-      throw new Error("The selected database is not a migrated application database.");
-    return Number((await client.query("SELECT count(*)::int AS count FROM public.app_migrations")).rows[0].count);
+    if (kind === "application") {
+      const result = await client.query("SELECT to_regclass('public.app_migrations') AS migrations, to_regclass('public.app_records') AS records");
+      if (!result.rows[0].migrations || !result.rows[0].records)
+        throw new Error("The selected database is not a migrated application database.");
+      return { migrations: Number((await client.query("SELECT count(*)::int AS count FROM public.app_migrations")).rows[0].count) };
+    }
+    const result = await client.query(`SELECT
+      to_regclass('workflow.workflow_runs') AS runs,
+      to_regclass('workflow.workflow_events') AS events,
+      to_regclass('workflow.workflow_stream_chunks') AS chunks,
+      to_regclass('workflow_drizzle.workflow_migrations') AS workflow_migrations,
+      to_regclass('graphile_worker.migrations') AS worker_migrations,
+      to_regclass('graphile_worker.jobs') AS jobs`);
+    if (Object.values(result.rows[0]).some(value => !value))
+      throw new Error("The selected database is not a migrated Eve Workflow database.");
+    const counts = await client.query(`SELECT
+      (SELECT count(*)::int FROM workflow_drizzle.workflow_migrations) AS workflow_migrations,
+      (SELECT count(*)::int FROM graphile_worker.migrations) AS worker_migrations,
+      (SELECT count(*)::int FROM workflow.workflow_runs) AS runs,
+      (SELECT count(*)::int FROM workflow.workflow_events) AS events,
+      (SELECT count(*)::int FROM graphile_worker.jobs WHERE locked_by IS NOT NULL) AS locked_jobs`);
+    if (counts.rows[0].locked_jobs !== 0)
+      throw new Error("Workflow database has locked jobs; stop every worker and resolve them before backing up.");
+    const snapshot = { ...counts.rows[0] };
+    delete snapshot.locked_jobs;
+    return snapshot;
   } finally { await client.end(); }
 }
 
 /** Save one complete PostgreSQL database archive; optionally prove it restores locally. */
-export async function backupPostgresApplication(sourceUrl, outputPath, verifyRestoreUrl) {
-  if (!sourceUrl) throw new Error("Set DATABASE_URL to the application database to back up.");
+async function backupPostgresDatabase(sourceUrl, outputPath, verifyRestoreUrl, kind) {
+  if (!sourceUrl) throw new Error(`Set ${kind === "workflow" ? "WORKFLOW_POSTGRES_URL" : "DATABASE_URL"} to the database to back up.`);
   if (!outputPath || outputPath.includes("\u0000")) throw new Error("Provide a new backup output path.");
   const source = libpqEnvironment(sourceUrl);
   const output = resolve(outputPath);
@@ -91,7 +114,7 @@ export async function backupPostgresApplication(sourceUrl, outputPath, verifyRes
     if (error.code === "ENOENT") return false;
     throw error;
   })) throw new Error("Backup destination already exists; choose a new path.");
-  const migrationCount = await inspectDatabase(sourceUrl);
+  const sourceSnapshot = await inspectDatabase(sourceUrl, kind);
   let target;
   if (verifyRestoreUrl) {
     target = libpqEnvironment(verifyRestoreUrl);
@@ -99,22 +122,26 @@ export async function backupPostgresApplication(sourceUrl, outputPath, verifyRes
       throw new Error("Restore verification requires a loopback target database.");
     if (source.host === target.host && source.port === target.port && source.database === target.database)
       throw new Error("Restore target must differ from the backup source.");
-    await inspectDatabase(verifyRestoreUrl, true);
+    await inspectDatabase(verifyRestoreUrl, kind, true);
   }
 
   const temporaryDirectory = await mkdtemp(join(dirname(output), ".postgres-backup-"));
-  const temporary = join(temporaryDirectory, "application.dump");
+  const temporary = join(temporaryDirectory, `${kind}.dump`);
   try {
     await chmod(temporaryDirectory, 0o700);
     await runClientTool("pg_dump", ["--format=custom", "--no-password", "--file", temporary], source.env);
     await chmod(temporary, 0o600);
     const archive = await runClientTool("pg_restore", ["--list", temporary], source.env, true);
-    if (!archive.includes("app_migrations") || !archive.includes("app_records"))
-      throw new Error("PostgreSQL archive lacks the application tables.");
+    const required = kind === "workflow"
+      ? ["workflow_runs", "workflow_events", "workflow_migrations", "_private_jobs"]
+      : ["app_migrations", "app_records"];
+    if (required.some(name => !archive.includes(name)))
+      throw new Error(`PostgreSQL archive lacks the required ${kind} tables.`);
     if (target) {
       await runClientTool("pg_restore", ["--single-transaction", "--exit-on-error", "--no-owner", "--no-acl", "--no-password", "--dbname", target.database, temporary], target.env);
-      if (await inspectDatabase(verifyRestoreUrl) !== migrationCount)
-        throw new Error("Restored application migration ledger differs from the source.");
+      const restoredSnapshot = await inspectDatabase(verifyRestoreUrl, kind);
+      if (Object.keys(sourceSnapshot).some(key => sourceSnapshot[key] !== restoredSnapshot[key]))
+        throw new Error(`Restored ${kind} database counts differ from the source.`);
     }
     const handle = await open(temporary, "r");
     try { await handle.sync(); } finally { await handle.close(); }
@@ -127,12 +154,31 @@ export async function backupPostgresApplication(sourceUrl, outputPath, verifyRes
   } finally { await rm(temporaryDirectory, { recursive: true, force: true }); }
 }
 
+export function backupPostgresApplication(sourceUrl, outputPath, verifyRestoreUrl) {
+  return backupPostgresDatabase(sourceUrl, outputPath, verifyRestoreUrl, "application");
+}
+
+export function backupPostgresWorkflow(sourceUrl, outputPath, verifyRestoreUrl, stopped = false) {
+  if (!stopped) throw new Error("Stop all Eve Workflow writers and pass --stopped before a Workflow backup.");
+  return backupPostgresDatabase(sourceUrl, outputPath, verifyRestoreUrl, "workflow");
+}
+
 async function main(args) {
-  if (![2, 3].includes(args.length) || args[0] !== "--output" || !args[1] || args.length === 3 && args[2] !== "--verify-restore")
-    throw new Error("Usage: npm run db:backup:postgres -- --output NEW_BACKUP.dump [--verify-restore]");
-  const verifyUrl = args.length === 3 ? process.env.BACKUP_VERIFY_DATABASE_URL : undefined;
-  if (args.length === 3 && !verifyUrl) throw new Error("Set BACKUP_VERIFY_DATABASE_URL to an empty disposable loopback database.");
-  const result = await backupPostgresApplication(process.env.DATABASE_URL, args[1], verifyUrl);
+  const workflow = args[0] === "--workflow";
+  const options = workflow ? args.slice(1) : args;
+  const usage = workflow
+    ? "Usage: npm run workflow:backup -- --output NEW_BACKUP.dump --stopped [--verify-restore]"
+    : "Usage: npm run db:backup:postgres -- --output NEW_BACKUP.dump [--verify-restore]";
+  if (options[0] !== "--output" || !options[1] ||
+      (workflow ? ![3, 4].includes(options.length) || options[2] !== "--stopped" || options.length === 4 && options[3] !== "--verify-restore"
+        : ![2, 3].includes(options.length) || options.length === 3 && options[2] !== "--verify-restore"))
+    throw new Error(usage);
+  const verify = workflow ? options.length === 4 : options.length === 3;
+  const verifyUrl = verify ? process.env.BACKUP_VERIFY_DATABASE_URL : undefined;
+  if (verify && !verifyUrl) throw new Error("Set BACKUP_VERIFY_DATABASE_URL to an empty disposable loopback database.");
+  const result = workflow
+    ? await backupPostgresWorkflow(process.env.WORKFLOW_POSTGRES_URL, options[1], verifyUrl, true)
+    : await backupPostgresApplication(process.env.DATABASE_URL, options[1], verifyUrl);
   console.log(`Private PostgreSQL archive: ${result.output} (${result.bytes} bytes). ${result.restoreVerified ? "Disposable restore passed." : "Restore not rehearsed."}`);
 }
 

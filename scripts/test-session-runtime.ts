@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -14,6 +14,7 @@ import { BudgetedCreation } from "../lib/budgets/creation";
 import { sqliteBudgetStore } from "../lib/budgets/sqlite";
 import { SqliteRepository } from "../lib/data/sqlite";
 import { workflowPostgresFixture } from "./helpers/workflow-postgres-fixture.mjs";
+import { backupPostgresWorkflow } from "./backup-postgres.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const postgresWorkflows = process.argv.includes("--postgres-workflows");
@@ -258,6 +259,25 @@ try {
     await eventually(async () => (await workflowRecovery(["list"])).lockedJobs.length === 0, "Completed PostgreSQL job remained locked.");
     const beforeRestart = await lines(receipts);
     const exited = once(child,"exit"); child.kill("SIGKILL"); await exited;
+    // Prove a stopped Workflow database archive restores the completed session,
+    // not merely that the original database survives a process replacement.
+    const workflowArchive = join(directory,"workflow.dump");
+    await workflowDatabase!.createDatabase("workflow_restore_test");
+    const workflowRestoreUrl = workflowDatabase!.url.replace(/\/workflow_test$/, "/workflow_restore_test");
+    const backupEnv = { ...env, BACKUP_VERIFY_DATABASE_URL: workflowRestoreUrl };
+    const unacknowledged = spawn(process.execPath,[join(root,"scripts/backup-postgres.mjs"),"--workflow",
+      "--output",workflowArchive],{ cwd: root, env: backupEnv, stdio: "ignore" });
+    assert.equal((await once(unacknowledged,"exit"))[0],1,"Workflow backup must require --stopped");
+    await assert.rejects(stat(workflowArchive),{ code: "ENOENT" });
+    const backup = spawn(process.execPath,[join(root,"scripts/backup-postgres.mjs"),"--workflow",
+      "--output",workflowArchive,"--stopped","--verify-restore"],
+      { cwd: root, env: backupEnv, stdio: ["ignore","ignore","pipe"] });
+    let backupError = "";
+    backup.stderr?.on("data",chunk => { backupError += chunk.toString(); });
+    assert.equal((await once(backup,"exit"))[0],0,`Workflow archive/restore failed: ${backupError}`);
+    assert.equal((await stat(workflowArchive)).mode & 0o077,0,"Workflow archive must be private");
+    env.WORKFLOW_POSTGRES_URL = workflowRestoreUrl;
+    secrets.push(workflowRestoreUrl);
     // An empty local world must not erase or replay a settled PostgreSQL run.
     await rm(join(directory,"workflow"),{ recursive: true, force: true });
     child = start(process.execPath,[join(fixture,".output/server/index.mjs")]);
@@ -283,6 +303,8 @@ try {
     const locked = await workflowRecovery(["list"]);
     assert.equal(locked.jobPrefix,"isolated_fixture");
     assert.equal(locked.lockedJobs.length,1,"The interrupted Workflow job must remain locked by its dead worker.");
+    await assert.rejects(backupPostgresWorkflow(env.WORKFLOW_POSTGRES_URL!,join(directory,"locked.dump"),undefined,true),
+      /locked jobs/,"A Workflow backup must refuse unresolved worker locks.");
     const deadWorker = locked.lockedJobs[0].locked_by;
     const unconfirmed = spawn(process.execPath,[join(root,"scripts/recover-workflow.mjs"),"unlock","--worker-id",deadWorker],{ cwd: directory, env, stdio: "ignore" });
     assert.equal((await once(unconfirmed,"exit"))[0],2,"Unlock must require explicit dead-worker confirmation.");
@@ -299,7 +321,7 @@ try {
     assert.equal(afterInterrupted.active,0,"Failed replay must release its active budget reservation.");
     assert.equal(afterInterrupted.chargedMicros,60,"Unreported in-flight usage must retain the conservative estimate.");
     assert.equal(afterInterrupted.unknownCosts,beforeInterruptedBudget.unknownCosts+1);
-    console.log("PostgreSQL Workflow: repeatable bootstrap, replay and follow-up after SIGKILL, plus fail-closed in-flight model restart passed.");
+    console.log("PostgreSQL Workflow: archive/restore, replay and follow-up after SIGKILL, plus fail-closed in-flight model restart passed.");
   }
   const callsBeforeApproval = await lines(receipts);
   const forgedApproval = await fetch(`${origin}/eve/v1/session/${loop.sessionId}`, { method: "POST", headers: { authorization: `Bearer ${bobToken}`, "content-type": "application/json" }, body: JSON.stringify({ inputResponses: [{ requestId: "forged-budget-increase", optionId: "approve" }] }) });

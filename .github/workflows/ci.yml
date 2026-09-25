@@ -25,7 +25,7 @@ jobs:
       - run: npm run check:cloud-templates
       - run: npm run test:ai
       - run: npm run test:session-runtime
-      - run: npm run test:workflow-postgres
+      - run: TMPDIR=/tmp PG_CLIENT_RUNNER=./scripts/testing/postgres-client-docker.sh npm run test:workflow-postgres
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:

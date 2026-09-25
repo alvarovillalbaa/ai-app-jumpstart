@@ -39,6 +39,7 @@
     "db:types:check": "node scripts/generate-supabase-types.mjs --check",
     "db:types:check:ci": "node scripts/generate-supabase-types.mjs --check --local-db-url",
     "workflow:migrate": "node scripts/migrate-workflow.mjs",
+    "workflow:backup": "node --env-file-if-exists=.env.local scripts/backup-postgres.mjs --workflow",
     "workflow:recover": "node --env-file-if-exists=.env.local scripts/recover-workflow.mjs",
     "uploads:cleanup": "tsx --env-file-if-exists=.env.local scripts/cleanup-uploads.ts",
     "starts:inspect": "tsx --env-file-if-exists=.env.local scripts/inspect-starts.ts",

@@ -19,6 +19,7 @@ export async function workflowPostgresFixture() {
   const stop = async () => { await database.stop().catch(() => {}); await rm(directory, { recursive: true, force: true }); };
   try {
     await database.initialise(); await database.start(); await database.createDatabase("workflow_test");
-    return { url: `postgresql://workflow_test:${password}@127.0.0.1:${port}/workflow_test`, stop };
+    return { url: `postgresql://workflow_test:${password}@127.0.0.1:${port}/workflow_test`,
+      createDatabase: name => database.createDatabase(name), stop };
   } catch (error) { await stop(); throw error; }
 }
