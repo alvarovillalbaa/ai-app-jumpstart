@@ -164,3 +164,43 @@ it("releases owner bytes only after an enabled fresh scan and stored-byte integr
     expect((await api.get(request(`${root}/${row.id}`,alice),row.id)).status).toBe(200);
   } finally { await catalog.close();await rm(directory,{ recursive: true,force: true }); }
 });
+
+it("bounds simultaneous download scans per owner and per process before reading objects",async () => {
+  vi.stubEnv("AUTH_PROVIDER","api-key");
+  vi.stubEnv("UPLOAD_DOWNLOAD_POLICY","scan-on-read");
+  const tokens = Array.from({ length: 5 },(_,index) => `download-scan-token-${index}-`.repeat(3));
+  vi.stubEnv("APP_API_KEYS",JSON.stringify(tokens.map((token,index) =>
+    key(token,`owner-${index}`,["uploads:write","uploads:download"]))));
+  const directory = await mkdtemp(join(tmpdir(),"jumpstart-upload-admission-"));
+  const catalog = sqliteUploadCatalog(":memory:"),local = localUploadObjects(directory);
+  const get = vi.fn(local.get),objects = { ...local,get };
+  const intake = uploadHandlers(async () => catalog,async () => objects);
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const scan = vi.fn(async () => { await gate;return "clean" as const; });
+  const api = uploadHandlers(async () => catalog,async () => objects,async () => ({ scan }));
+  const pending: Promise<Response>[] = [];
+  try {
+    const ids: string[] = [];
+    for (const token of tokens) {
+      const created = await intake.create(request(root,token,"POST",Buffer.from("private")));
+      expect(created.status).toBe(201);
+      ids.push((await created.json()).id);
+    }
+    const download = (index: number) => api.download(request(`${root}/${ids[index]}/download`,tokens[index]),ids[index]);
+    pending.push(download(0));
+    await vi.waitFor(() => expect(scan).toHaveBeenCalledTimes(1));
+    expect((await download(0)).status).toBe(429);
+    pending.push(download(1),download(2),download(3));
+    await vi.waitFor(() => expect(scan).toHaveBeenCalledTimes(4));
+    expect((await download(4)).status).toBe(429);
+    expect(get).toHaveBeenCalledTimes(4);
+    release();
+    expect((await Promise.all(pending)).map(response => response.status)).toEqual([200,200,200,200]);
+    expect((await download(4)).status).toBe(200);
+    expect(get).toHaveBeenCalledTimes(5);
+  } finally {
+    release();await Promise.allSettled(pending);
+    await catalog.close();await rm(directory,{ recursive: true,force: true });
+  }
+});

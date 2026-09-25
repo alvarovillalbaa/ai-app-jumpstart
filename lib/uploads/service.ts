@@ -6,6 +6,7 @@ import type { UploadCatalog } from "./catalog-contract";
 import type { PrivateUploadObjects } from "./contract";
 import type { UploadScanner } from "./scanner";
 import { checkUpload } from "./validation";
+import { withDownloadScanSlot } from "./download-admission";
 
 /** Quarantined bytes leave storage only after an explicit, fresh scan-on-read policy. */
 export class UploadService {
@@ -40,24 +41,26 @@ export class UploadService {
     }
     const scanner = await this.scanner();
     if (!scanner) throw new AppError(503,"scanner_unavailable","A configured scanner is required for downloads.");
-    const bytes = await (await this.objects()).get(owner,id);
-    if (!bytes) throw new AppError(503,"upload_storage_unavailable","Upload bytes are unavailable.");
-    let checked;
-    try { checked = checkUpload(row.name,row.mediaType,bytes); }
-    catch { throw new AppError(503,"upload_integrity_failed","Stored upload failed validation."); }
-    if (checked.size !== row.size || checked.sha256 !== row.sha256) {
-      throw new AppError(503,"upload_integrity_failed","Stored upload does not match its private metadata.");
-    }
-    let verdict;
-    try { verdict = await scanner.scan(checked.bytes); }
-    catch { throw new AppError(503,"scanner_unavailable","Upload scanner is unavailable."); }
-    if (verdict === "infected") throw new AppError(422,"upload_rejected","Upload did not pass malware scanning.");
-    if (verdict !== "clean") throw new AppError(503,"scanner_unavailable","Upload scanner is unavailable.");
-    const current = await this.catalog.get(owner,id);
-    if (!current || current.state !== "quarantined" || current.sha256 !== row.sha256) {
-      throw new AppError(409,"upload_busy","Upload changed during scanning.");
-    }
-    return { row,bytes: checked.bytes };
+    return withDownloadScanSlot(owner,async () => {
+      const bytes = await (await this.objects()).get(owner,id);
+      if (!bytes) throw new AppError(503,"upload_storage_unavailable","Upload bytes are unavailable.");
+      let checked;
+      try { checked = checkUpload(row.name,row.mediaType,bytes); }
+      catch { throw new AppError(503,"upload_integrity_failed","Stored upload failed validation."); }
+      if (checked.size !== row.size || checked.sha256 !== row.sha256) {
+        throw new AppError(503,"upload_integrity_failed","Stored upload does not match its private metadata.");
+      }
+      let verdict;
+      try { verdict = await scanner.scan(checked.bytes); }
+      catch { throw new AppError(503,"scanner_unavailable","Upload scanner is unavailable."); }
+      if (verdict === "infected") throw new AppError(422,"upload_rejected","Upload did not pass malware scanning.");
+      if (verdict !== "clean") throw new AppError(503,"scanner_unavailable","Upload scanner is unavailable.");
+      const current = await this.catalog.get(owner,id);
+      if (!current || current.state !== "quarantined" || current.sha256 !== row.sha256) {
+        throw new AppError(409,"upload_busy","Upload changed during scanning.");
+      }
+      return { row,bytes: checked.bytes };
+    });
   }
   async delete(rawId: string) {
     const owner = this.owner("uploads:write"),id = uploadId.parse(rawId);
