@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { link, mkdtemp, open, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -35,10 +35,13 @@ export async function exportApplication(mode: Mode, output: string, call: Call, 
   const directory = await mkdtemp(join(dirname(destination), ".jumpstart-export-"));
   const temporary = join(directory, `${randomUUID()}.ndjson`);
   let file: Awaited<ReturnType<typeof open>> | undefined;
+  const digest = createHash("sha256");
   const counts = { profile: 0, records: 0, conversations: 0, projections: 0, artifacts: 0, uploads: 0, uploadUsage: 0, reservations: 0, corrections: 0, usage: 0 };
   async function write(type: string, value: unknown) {
     if (!file) throw new Error("Export file is unavailable.");
-    await file.writeFile(`${JSON.stringify({ type, value })}\n`);
+    const line = `${JSON.stringify({ type, value })}\n`;
+    if (type !== "end") digest.update(line);
+    await file.writeFile(line);
   }
   async function walk<T, C extends string | number>(
     path: (cursor: C | null) => string,
@@ -80,7 +83,7 @@ export async function exportApplication(mode: Mode, output: string, call: Call, 
         if (page.nextIndex !== nextIndex + page.scanned || (!page.complete && page.scanned === 0)) throw new Error("Source event pagination did not advance.");
         nextIndex = page.nextIndex;
         if (page.complete) {
-          await write("end", { counts: { sourceEvents }, nextIndex, complete: true });
+          await write("end", { counts: { sourceEvents }, nextIndex, complete: true, contentSha256: digest.digest("hex") });
           await file.sync();
           await file.close(); file = undefined;
           await link(temporary, destination);
@@ -142,7 +145,7 @@ export async function exportApplication(mode: Mode, output: string, call: Call, 
       );
       await write("usage", usage); counts.usage = 1;
     }
-    await write("end", { counts });
+    await write("end", { counts, contentSha256: digest.digest("hex") });
     await file.sync();
     await file.close(); file = undefined;
     // A hard link publishes the complete file atomically and never replaces an

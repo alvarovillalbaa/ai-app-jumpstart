@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -30,8 +30,15 @@ it("exports every paged record for one owner to a private file without replacing
     expect(exported.filter(line => line.type === "record").map(line => line.value.title)).not.toContain("Foreign");
     expect(exported.at(-1).value.counts.records).toBe(105);
     expect((await stat(output)).mode & 0o077).toBe(0);
+    expect(await run(["export", "verify", output], {})).toMatchObject({ mode: "records", counts: { records: 105 } });
     await expect(run(["export", "records", output], env, request)).rejects.toThrow("already exists");
     expect(await lines(output)).toEqual(exported);
+    const tampered = join(directory, "tampered.ndjson");
+    await writeFile(tampered, (await readFile(output, "utf8")).replace("Row 0", "Row X"));
+    await expect(run(["export", "verify", tampered], {})).rejects.toThrow("checksum");
+    const truncated = join(directory, "truncated.ndjson");
+    await writeFile(truncated, (await readFile(output, "utf8")).split("\n").slice(0, -2).join("\n") + "\n");
+    await expect(run(["export", "verify", truncated], {})).rejects.toThrow("footer");
   } finally { await repository.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -90,6 +97,7 @@ it("exports visible account data, including archived conversations and paged pro
     expect(exported.find(line => line.type === "upload")?.value).toMatchObject({ id: upload, state: "quarantined" });
     expect(exported.find(line => line.type === "upload_usage")?.value).toEqual({ files: 1, bytes: 4 });
     expect(exported.find(line => line.type === "budget_reservation")?.value).toMatchObject({ operationId: operation,actualMicros: 5 });
+    expect(await run(["export", "verify", output], {})).toMatchObject({ mode: "application", counts: { reservations: 2, corrections: 2 } });
     expect(exported.filter(line => line.type === "budget_reservation")[1].value).toMatchObject({ operationId: archivedOperation,status: "reserved" });
     expect(exported.filter(line => line.type === "budget_correction").map(line => line.value.correctionId)).toEqual([firstCorrection,secondCorrection]);
     expect(request.mock.calls[0]?.[0].toString()).toContain("/api/v1/account/profile");
@@ -143,6 +151,7 @@ it("exports an owned source stream across empty selected pages without losing it
     expect(exported.filter(line => line.type === "source_event").map(line => line.value.sourceIndex)).toEqual([1, 253]);
     expect(exported.at(-1).value).toMatchObject({ nextIndex: 254, complete: true });
     expect((await stat(output)).mode & 0o077).toBe(0);
+    expect(await run(["export", "verify", output], {})).toMatchObject({ mode: "source-events", counts: { sourceEvents: 2 } });
     await expect(run(["export", "source-events", operation, output], { APP_API_TOKEN: "owner-token" }, request)).rejects.toThrow("already exists");
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

@@ -9,6 +9,7 @@ import { artifactOptions } from "../lib/agent-access/artifact-contract";
 import { ledgerQueryOptions } from "../lib/budgets/contract";
 import { recordId, recordInput } from "../lib/data/contract";
 import { exportApplication } from "./export-application";
+import { verifyExport } from "./verify-export";
 import { saveUploadDownload } from "./download-upload";
 import { z } from "zod";
 import { MAX_API_UPLOAD_BYTES } from "../lib/uploads/validation";
@@ -29,10 +30,11 @@ export async function run(args: string[], env: Record<string, string | undefined
     uploads: "npm run app -- uploads <list | get UPLOAD_UUID | put FILE | download UPLOAD_UUID OUTPUT_FILE | delete UPLOAD_UUID> (download requires an enabled scan-on-read policy)",
     account: "npm run app -- account profile (selected fields; current registered-user token required)",
     usage: "npm run app -- usage [reservations|corrections [--limit N] [--cursor CURSOR]] (verified user token required)",
-    export: "npm run app -- export <records OUTPUT.ndjson | application OUTPUT.ndjson | source-events OPERATION_UUID OUTPUT.ndjson> (private, no-clobber; source events require an active owned Eve session)",
+    export: "npm run app -- export <records OUTPUT.ndjson | application OUTPUT.ndjson | source-events OPERATION_UUID OUTPUT.ndjson | verify FILE.ndjson> (private, no-clobber; verification works offline)",
     environment: "APP_API_URL (default http://localhost:3000), APP_API_TOKEN (server-issued credential)",
     note: "Record files contain title/content and, for update, revision. Conversation updates contain revision plus title and/or archived. Upload metadata/writes use uploads:read/write; download separately requires uploads:download or a registered user plus an enabled private scanner. Output is JSON. Errors exit nonzero. Writes are never automatically retried.",
   };
+  if (command === "export" && rest.length === 2 && rest[0] === "verify") return verifyExport(rest[1]);
   const origin = new URL(env.APP_API_URL ?? "http://localhost:3000");
   if (origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash || !["http:", "https:"].includes(origin.protocol)) throw new Error("APP_API_URL must be an HTTP(S) origin without credentials, path, query or fragment.");
   if (origin.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(origin.hostname)) throw new Error("Use HTTPS for remote servers.");
