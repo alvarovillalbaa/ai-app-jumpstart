@@ -146,7 +146,9 @@ try {
       const usage = await budgets.snapshot({ ...alice, now: Date.now() });
       return usage.chargedMicros === 20 && usage.active === 0;
     }, "Initial local turn did not settle before the snapshot.");
-    const exited = once(child,"exit"); child.kill("SIGTERM"); await exited;
+    const exited = once(child,"exit"); child.kill("SIGTERM");
+    const stopTimer = setTimeout(() => child?.kill("SIGKILL"),5_000);
+    try { await exited; } finally { clearTimeout(stopTimer); }
     await store.close(); await budgets.close(); storesOpen = false;
     const snapshot = join(directory,"snapshot"),restoredRoot = join(directory,"restored");
     const builtFixture = fixture;
