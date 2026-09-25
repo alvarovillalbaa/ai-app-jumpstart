@@ -132,6 +132,8 @@ test("a stored cost correction is owner-scoped across API, CLI, MCP and export",
 test("verified users create, replay and follow up; foreign users cannot resolve or stream; daily admission stops work", async ({ page, request }) => {
   const alice = await user(request), bob = await user(request);
   await login(page, alice.email);
+  const recoveryRoute = /\/api\/v1\/conversations\/[^/]+\/reconcile$/;
+  await page.route(recoveryRoute,route => route.abort("connectionreset"));
   await send(page, "Private deterministic conversation");
   await expect(page.getByText("Deterministic owned response", { exact: true })).toHaveCount(1, { timeout: 30_000 });
   await auditAccessibility(page, "completed chat turn");
@@ -150,9 +152,16 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
   expect(projections).toMatchObject({ schemaVersion: 1,source: "eve-stream" });
   expect(JSON.stringify(projections)).toContain("Private deterministic conversation");
   expect(JSON.stringify(projections)).toContain("Deterministic owned response");
+  expect(projections.items.every(item => item.sourceIndex === undefined)).toBe(true);
   expect((await request.get(projectionUrl,{ headers: { authorization: `Bearer ${bob.token}` } })).status()).toBe(404);
-  const recovery = await request.post(`/api/v1/conversations/${receipt.operationId}/reconcile`,{ headers: { authorization: `Bearer ${alice.token}` },data: {} });
-  expect(recovery.status()).toBe(200); expect(await recovery.json()).toMatchObject({ inserted: 0,complete: true });
+  await page.unroute(recoveryRoute);
+  await page.reload();
+  await expect.poll(async () => {
+    const current = projectionPage.parse(await (await request.get(projectionUrl,{ headers: { authorization: `Bearer ${alice.token}` } })).json());
+    return current.items.length > 0 && current.items.every(item => item.sourceIndex !== undefined);
+  },{ timeout: 30_000 }).toBe(true);
+  const recovery = await request.post(`/api/v1/conversations/${receipt.operationId}/reconcile`,{ headers: { authorization: `Bearer ${alice.token}` },data: { resume: true } });
+  expect(recovery.status()).toBe(200); expect(await recovery.json()).toMatchObject({ processed: 0,inserted: 0,complete: true });
   const recovered = projectionPage.parse(await (await request.get(projectionUrl,{ headers: { authorization: `Bearer ${alice.token}` } })).json());
   expect(recovered.items.map(({ sourceIndex,...entry }) => { expect(sourceIndex).toBeGreaterThanOrEqual(0); return entry; })).toEqual(projections.items);
   const history = await request.get("/api/v1/conversations",{ headers: { authorization: `Bearer ${alice.token}` } });
@@ -545,6 +554,10 @@ test("real account tokens share history across production REST, MCP resources/to
     const sourceTool = await client.callTool({ name: "conversations_source_events",arguments: { operationId } });
     expect(sourceTool.isError).not.toBe(true);
     expect(JSON.parse((sourceTool.content as { text: string }[])[0].text).items[0]).toEqual(sourcePage.items[0]);
+    expect(await runCli(["conversations","reconcile",operationId],env)).toMatchObject({ complete: true,checkpoint: expect.any(Number) });
+    const reconcileTool = await client.callTool({ name: "conversations_reconcile",arguments: { operationId } });
+    expect(reconcileTool.isError).not.toBe(true);
+    expect(JSON.parse((reconcileTool.content as { text: string }[])[0].text)).toMatchObject({ processed: 0,complete: true });
     expect((await request.get(`/api/v1/conversations/${operationId}/source-events`,{
       headers: { authorization: `Bearer ${bob.token}` },
     })).status()).toBe(404);

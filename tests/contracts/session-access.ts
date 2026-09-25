@@ -85,6 +85,29 @@ export function sessionAccessContract(name: string, factory: () => Promise<Sessi
       expect(await store.appendProjection(owner,input.operationId,sid("projection-session"),event(4))).toBe("unavailable");
       expect((await store.listProjections(owner,input.operationId,{})).items).toHaveLength(4);
     });
+    it("advances only an owned active projection checkpoint with a matching expected cursor",async () => {
+      const session = sid("checkpoint-session");
+      expect(await store.getProjectionCheckpoint(owner,input.operationId,session)).toBeNull();
+      await store.reserve(input);
+      expect(await store.getProjectionCheckpoint(owner,input.operationId,session)).toBeNull();
+      await store.bind(owner,input.operationId,session);
+      expect(await store.getProjectionCheckpoint(owner,input.operationId,session)).toBe(0);
+      for (const stranger of strangers) {
+        expect(await store.getProjectionCheckpoint(stranger,input.operationId,session)).toBeNull();
+        expect(await store.advanceProjectionCheckpoint(stranger,input.operationId,session,0,1)).toBe(false);
+      }
+      expect(await store.advanceProjectionCheckpoint(owner,input.operationId,sid("wrong-session"),0,1)).toBe(false);
+      const winners = await Promise.all([10,20].map(next => store.advanceProjectionCheckpoint(owner,input.operationId,session,0,next)));
+      expect(winners.filter(Boolean)).toHaveLength(1);
+      const current = await store.getProjectionCheckpoint(owner,input.operationId,session);
+      expect([10,20]).toContain(current);
+      expect(await store.advanceProjectionCheckpoint(owner,input.operationId,session,0,30)).toBe(false);
+      expect(await store.advanceProjectionCheckpoint(owner,input.operationId,session,current!,30)).toBe(true);
+      expect(await store.getProjectionCheckpoint(owner,input.operationId,session)).toBe(30);
+      await store.revoke(owner,input.id);
+      expect(await store.getProjectionCheckpoint(owner,input.operationId,session)).toBeNull();
+      expect(await store.advanceProjectionCheckpoint(owner,input.operationId,session,30,31)).toBe(false);
+    });
     it("reads one owned metadata record without revealing control fields or changing archive visibility",async () => {
       expect(await store.getDetails(owner,input.operationId)).toBeNull();
       await store.reserve(input,"Private metadata");

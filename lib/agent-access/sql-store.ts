@@ -83,6 +83,18 @@ export class SqlSessionAccessStore implements SessionAccessStore {
     const rows = await this.db.query("SELECT e.payload,e.ordinal,e.source_index FROM app_conversation_events e JOIN app_conversations c ON c.operation_id=e.operation_id WHERE c.tenant=? AND c.subject=? AND c.operation_id=? AND e.ordinal>? ORDER BY e.ordinal ASC LIMIT ?",[o.tenant,o.subject,id,q.after ?? 0,q.limit+1]);
     return pageOfProjections(rows.map(row => ({ entry: JSON.parse((row as { payload: string }).payload),index: Number((row as { ordinal: number }).ordinal),sourceIndex: (row as { source_index: string | number | null }).source_index === null ? null : Number((row as { source_index: string | number }).source_index) })),q.limit);
   }
+  async getProjectionCheckpoint(owner: AccessOwner, operation: string, session: string) {
+    const o = accessOwner.parse(owner),id = operationId.parse(operation),sid = sessionId.parse(session);
+    const rows = await this.db.query("SELECT projection_checkpoint FROM app_conversations WHERE tenant=? AND subject=? AND operation_id=? AND session_id=? AND status='active'",[o.tenant,o.subject,id,sid]);
+    return rows.length ? projectionSourceIndex.parse(Number((rows[0] as { projection_checkpoint: string | number }).projection_checkpoint)) : null;
+  }
+  async advanceProjectionCheckpoint(owner: AccessOwner, operation: string, session: string, expected: number, next: number) {
+    const o = accessOwner.parse(owner),id = operationId.parse(operation),sid = sessionId.parse(session);
+    const from = projectionSourceIndex.parse(expected),to = projectionSourceIndex.parse(next);
+    if (to <= from) throw new RangeError("Projection checkpoint must advance.");
+    const rows = await this.db.query("UPDATE app_conversations SET projection_checkpoint=? WHERE tenant=? AND subject=? AND operation_id=? AND session_id=? AND status='active' AND projection_checkpoint=? RETURNING operation_id",[to,o.tenant,o.subject,id,sid,from]);
+    return rows.length === 1;
+  }
   async reserve(input: Reservation, title = "New conversation") {
     const r = reservation.parse(input);
     return (await this.db.query("INSERT INTO app_conversations (id,tenant,subject,operation_id,request_hash,status,title,created_at) VALUES (?,?,?,?,?,'starting',?,?) ON CONFLICT DO NOTHING RETURNING id", [r.id, r.tenant, r.subject, r.operationId, r.requestHash, conversationTitle.parse(title), Date.now()])).length === 1;

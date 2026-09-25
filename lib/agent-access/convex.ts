@@ -13,6 +13,8 @@ export function convexAccessStore(url: string, secret: string, request: typeof f
     deleteArtifact: (owner,id) => backend.call("access.deleteArtifact",{ ...owner,id },z.boolean()),
     appendProjection: async (owner, operationId, sessionId, entry,sourceIndex) => backend.call("access.appendProjection",{ ...owner,operationId,sessionId,entry: projectionEntry.parse(entry),...(sourceIndex === undefined ? {} : { sourceIndex: projectionSourceIndex.parse(sourceIndex) }) },projectionOutcome),
     listProjections: async (owner, operationId, options) => backend.call("access.listProjections",{ ...owner,operationId,options: projectionOptions.parse(options) },projectionPage),
+    getProjectionCheckpoint: (owner,operationId,sessionId) => backend.call("access.getProjectionCheckpoint",{ ...owner,operationId,sessionId },projectionSourceIndex.nullable()),
+    advanceProjectionCheckpoint: (owner,operationId,sessionId,expected,next) => backend.call("access.advanceProjectionCheckpoint",{ ...owner,operationId,sessionId,expected: projectionSourceIndex.parse(expected),next: projectionSourceIndex.parse(next) },z.boolean()),
     reserve: (input: Reservation, title = "New conversation") => backend.call("access.reserve", { ...input,title }, z.boolean()),
     list: async (owner, options) => backend.call("access.list",{ ...owner,options: historyOptions.parse(options) },historyPage),
     getDetails: (owner, operationId) => backend.call("access.getDetails",{ ...owner,operationId },conversationSummary.nullable()),

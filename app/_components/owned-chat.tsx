@@ -84,6 +84,35 @@ export function OwnedChat({ settings, userId, initialOperationId, uploadsEnabled
     return () => { clearTimeout(timer); abort.abort(); };
   }, [initialOperationId, check]);
 
+  useEffect(() => {
+    if (!signedIn || !operation || !session) return;
+    const abort = new AbortController();
+    let running = false;
+    const sync = async () => {
+      if (running || abort.signal.aborted || document.visibilityState !== "visible") return;
+      running = true;
+      try {
+        for (let page = 0;page < 4 && !abort.signal.aborted;page++) {
+          const token = await credential();
+          const response = await fetch(`/api/v1/conversations/${encodeURIComponent(operation)}/reconcile`,{
+            method: "POST",headers: { authorization: `Bearer ${token}`,"content-type": "application/json" },
+            body: JSON.stringify({ resume: true }),cache: "no-store",
+            signal: AbortSignal.any([abort.signal,AbortSignal.timeout(25_000)]),
+          });
+          if (!response.ok) return; // Keep chat usable; a later visit can retry.
+          const body = z.object({ nextIndex: z.number().int().nonnegative(),checkpoint: z.number().int().nonnegative(),complete: z.boolean() }).parse(await response.json());
+          if (body.complete || body.checkpoint < body.nextIndex) return;
+        }
+      } catch { /* A best-effort secondary projection must not interrupt the Eve transcript. */ }
+      finally { running = false; }
+    };
+    const startup = setTimeout(() => { void sync(); },1500);
+    const interval = setInterval(() => { void sync(); },30_000);
+    const visible = () => { if (document.visibilityState === "visible") void sync(); };
+    document.addEventListener("visibilitychange",visible);
+    return () => { clearTimeout(startup);clearInterval(interval);document.removeEventListener("visibilitychange",visible);abort.abort(); };
+  },[signedIn,operation,session,credential]);
+
   async function create(message: string) {
     if (submission.current) return;
     submission.current = true;

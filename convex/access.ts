@@ -102,6 +102,25 @@ export const listProjections = internalQuery({
     return pageOfProjections(events.map(event => ({ entry: JSON.parse(event.payload),index: event.ordinal,sourceIndex: event.sourceIndex })),q.limit);
   },
 });
+export const getProjectionCheckpoint = internalQuery({
+  args: { ...ownerFields,operationId: v.string(),sessionId: v.string() },
+  handler: async (ctx,args) => {
+    const row = await ownedOperation(ctx,args,operationId.parse(args.operationId));
+    if (!row || row.status !== "active" || row.sessionId !== sessionId.parse(args.sessionId)) return null;
+    return projectionSourceIndex.parse(row.projectionCheckpoint ?? 0);
+  },
+});
+export const advanceProjectionCheckpoint = internalMutation({
+  args: { ...ownerFields,operationId: v.string(),sessionId: v.string(),expected: v.number(),next: v.number() },
+  handler: async (ctx,args) => {
+    const from = projectionSourceIndex.parse(args.expected),to = projectionSourceIndex.parse(args.next);
+    if (to <= from) throw new Error("Projection checkpoint must advance.");
+    const row = await ownedOperation(ctx,args,operationId.parse(args.operationId));
+    if (!row || row.status !== "active" || row.sessionId !== sessionId.parse(args.sessionId) || (row.projectionCheckpoint ?? 0) !== from) return false;
+    await ctx.db.patch(row._id,{ projectionCheckpoint: to });
+    return true;
+  },
+});
 // No public query/mutation can attach sessions or claim nonce receipts.
 export const reserve = internalMutation({
   args: { ...ownerFields, id: v.string(), operationId: v.string(), requestHash: v.string(), title: v.optional(v.string()) },

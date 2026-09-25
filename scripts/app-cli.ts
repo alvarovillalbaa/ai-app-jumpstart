@@ -4,6 +4,7 @@ import { basename } from "node:path";
 import { historyOptions, historyPatch, operationId } from "../lib/agent-access/contract";
 import { projectionOptions } from "../lib/agent-access/projection-contract";
 import { sourceEventOptions } from "../lib/agent-access/source-events";
+import { reconcileInput } from "../lib/agent-access/reconcile";
 import { artifactOptions } from "../lib/agent-access/artifact-contract";
 import { ledgerQueryOptions } from "../lib/budgets/contract";
 import { recordId, recordInput } from "../lib/data/contract";
@@ -22,7 +23,7 @@ export async function run(args: string[], env: Record<string, string | undefined
   if (!command || command === "help") return {
     records: "npm run app -- <list [cursor] | get ID | create JSON_FILE | update ID JSON_FILE | delete ID REVISION>",
     seed: "npm run app -- seed [--allow-remote] (two idempotent, owner-scoped example records)",
-    conversations: "npm run app -- conversations <list [--archived] [--limit N] [--cursor CURSOR] | get OPERATION_UUID | events OPERATION_UUID [AFTER_INGESTION_INDEX] | source-events OPERATION_UUID [START_SOURCE_INDEX] | update OPERATION_UUID JSON_FILE>",
+    conversations: "npm run app -- conversations <list [--archived] [--limit N] [--cursor CURSOR] | get OPERATION_UUID | events OPERATION_UUID [AFTER_INGESTION_INDEX] | source-events OPERATION_UUID [START_SOURCE_INDEX] | reconcile OPERATION_UUID [START_SOURCE_INDEX] | update OPERATION_UUID JSON_FILE>",
     artifacts: "npm run app -- artifacts <list [--limit N] [--cursor CURSOR] | get ARTIFACT_UUID | delete ARTIFACT_UUID>",
     uploads: "npm run app -- uploads <list | get UPLOAD_UUID | put FILE | delete UPLOAD_UUID> (private quarantine; no download)",
     account: "npm run app -- account profile (selected fields; current registered-user token required)",
@@ -38,7 +39,7 @@ export async function run(args: string[], env: Record<string, string | undefined
   const call = async (path: string, method = "GET", body?: string | Buffer, extraHeaders: Record<string,string> = {}) => {
     const response = await request(new URL(path, origin), {
       method, body: typeof body === "string" ? body : body ? new Blob([Uint8Array.from(body)]) : undefined,
-      redirect: "error", signal: AbortSignal.timeout(body && typeof body !== "string" ? 30_000 : 15_000),
+      redirect: "error", signal: AbortSignal.timeout(path.endsWith("/reconcile") || body && typeof body !== "string" ? 30_000 : 15_000),
       headers: { authorization: `Bearer ${env.APP_API_TOKEN}`, "content-type": body && typeof body !== "string" ? "application/octet-stream" : "application/json",
         ...extraHeaders,
         ...(env.VERCEL_AUTOMATION_BYPASS_SECRET ? { "x-vercel-protection-bypass": env.VERCEL_AUTOMATION_BYPASS_SECRET } : {}) },
@@ -136,6 +137,12 @@ export async function run(args: string[], env: Record<string, string | undefined
       const query = sourceEventOptions.safeParse(options[1] === undefined ? {} : { startIndex: Number(options[1]) });
       if (!id.success || !query.success) throw new Error("Provide a conversation operation UUID and optional absolute Eve stream index.");
       path += `/${id.data}/source-events${query.data.startIndex ? `?startIndex=${query.data.startIndex}` : ""}`;
+    } else if (action === "reconcile" && options.length >= 1 && options.length <= 2) {
+      const id = operationId.safeParse(options[0]);
+      const query = reconcileInput.safeParse(options[1] === undefined ? { resume: true } : { startIndex: Number(options[1]) });
+      if (!id.success || !query.success) throw new Error("Provide a conversation operation UUID and optional absolute Eve stream index.");
+      path += `/${id.data}/reconcile`;
+      method = "POST";body = JSON.stringify(query.data);
     } else if (action === "list") {
       const input: Record<string,unknown> = {}, seen = new Set<string>();
       for (let i = 0; i < options.length; i++) {

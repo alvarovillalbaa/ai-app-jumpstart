@@ -11,6 +11,7 @@ export function sqliteAccessStore(path: string) {
       id TEXT PRIMARY KEY, tenant TEXT NOT NULL, subject TEXT NOT NULL,
       operation_id TEXT NOT NULL UNIQUE, request_hash TEXT NOT NULL,
       session_id TEXT UNIQUE, status TEXT NOT NULL CHECK(status IN ('starting','active','revoked')),
+      projection_checkpoint INTEGER NOT NULL DEFAULT 0 CHECK(projection_checkpoint >= 0 AND projection_checkpoint <= 9007199254740991),
       CHECK(status != 'active' OR session_id IS NOT NULL));
     CREATE INDEX IF NOT EXISTS conversations_owner ON app_conversations(tenant, subject, operation_id);
     CREATE TABLE IF NOT EXISTS app_internal_nonces (id TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
@@ -26,7 +27,7 @@ export function sqliteAccessStore(path: string) {
   db.exec("BEGIN IMMEDIATE");
   try {
     const columns = new Set(db.prepare("PRAGMA table_info(app_conversations)").all().map(row => row.name));
-    for (const [name,definition] of Object.entries({ title: "TEXT NOT NULL DEFAULT 'New conversation'", created_at: "INTEGER NOT NULL DEFAULT 0", archived: "INTEGER NOT NULL DEFAULT 0 CHECK(archived IN (0,1))", revision: "INTEGER NOT NULL DEFAULT 1" })) {
+    for (const [name,definition] of Object.entries({ title: "TEXT NOT NULL DEFAULT 'New conversation'", created_at: "INTEGER NOT NULL DEFAULT 0", archived: "INTEGER NOT NULL DEFAULT 0 CHECK(archived IN (0,1))", revision: "INTEGER NOT NULL DEFAULT 1",projection_checkpoint: "INTEGER NOT NULL DEFAULT 0 CHECK(projection_checkpoint >= 0 AND projection_checkpoint <= 9007199254740991)" })) {
       if (!columns.has(name)) db.exec(`ALTER TABLE app_conversations ADD COLUMN ${name} ${definition}`);
     }
     const artifactColumns = new Set(db.prepare("PRAGMA table_info(app_artifacts)").all().map(row => row.name));

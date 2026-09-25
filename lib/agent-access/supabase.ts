@@ -53,6 +53,23 @@ export function supabaseAccessStore(url: string, secret: string): SessionAccessS
       if (error) throw error;
       return pageOfProjections(data.map(row => ({ entry: JSON.parse(row.payload),index: Number(row.ordinal),sourceIndex: row.source_index === null ? null : Number(row.source_index) })),q.limit);
     },
+    async getProjectionCheckpoint(owner,operation,session) {
+      const o = accessOwner.parse(owner),id = operationId.parse(operation),sid = sessionId.parse(session);
+      const { data,error } = await client.from("app_conversations").select("projection_checkpoint")
+        .eq("tenant",o.tenant).eq("subject",o.subject).eq("operation_id",id).eq("session_id",sid).eq("status","active").maybeSingle();
+      if (error) throw error;
+      return data ? projectionSourceIndex.parse(Number(data.projection_checkpoint)) : null;
+    },
+    async advanceProjectionCheckpoint(owner,operation,session,expected,next) {
+      const o = accessOwner.parse(owner),id = operationId.parse(operation),sid = sessionId.parse(session);
+      const from = projectionSourceIndex.parse(expected),to = projectionSourceIndex.parse(next);
+      if (to <= from) throw new RangeError("Projection checkpoint must advance.");
+      const { data,error } = await client.from("app_conversations").update({ projection_checkpoint: to })
+        .eq("tenant",o.tenant).eq("subject",o.subject).eq("operation_id",id).eq("session_id",sid).eq("status","active")
+        .eq("projection_checkpoint",from).select("operation_id");
+      if (error) throw error;
+      return data.length === 1;
+    },
     async reserve(input: Reservation, title = "New conversation") {
       const r = reservation.parse(input);
       const { error } = await client.from("app_conversations").insert({ id: r.id, tenant: r.tenant, subject: r.subject, operation_id: r.operationId, request_hash: r.requestHash, status: "starting", title: conversationTitle.parse(title), created_at: Date.now() });

@@ -46,6 +46,8 @@ export interface SessionAccessStore {
   deleteArtifact(owner: AccessOwner, id: string): Promise<boolean>;
   appendProjection(owner: AccessOwner, operation: string, session: string, entry: ProjectionEntry, sourceIndex?: number): Promise<z.infer<typeof projectionOutcome>>;
   listProjections(owner: AccessOwner, operation: string, options: ProjectionOptions): Promise<z.infer<typeof projectionPage>>;
+  getProjectionCheckpoint(owner: AccessOwner, operation: string, session: string): Promise<number | null>;
+  advanceProjectionCheckpoint(owner: AccessOwner, operation: string, session: string, expected: number, next: number): Promise<boolean>;
   reserve(input: Reservation, title?: string): Promise<boolean>;
   list(owner: AccessOwner, options: HistoryOptions): Promise<z.infer<typeof historyPage>>;
   getDetails(owner: AccessOwner, operation: string): Promise<ConversationSummary | null>;
@@ -66,6 +68,8 @@ export const accessCommand = z.discriminatedUnion("operation", [
   accessOwner.extend({ operation: z.literal("access.deleteArtifact"),id: z.uuid() }).strict(),
   accessOwner.extend({ operation: z.literal("access.appendProjection"),operationId,sessionId,entry: projectionEntry,sourceIndex: projectionSourceIndex.optional() }).strict(),
   accessOwner.extend({ operation: z.literal("access.listProjections"),operationId,options: projectionOptions }).strict(),
+  accessOwner.extend({ operation: z.literal("access.getProjectionCheckpoint"),operationId,sessionId }).strict(),
+  accessOwner.extend({ operation: z.literal("access.advanceProjectionCheckpoint"),operationId,sessionId,expected: projectionSourceIndex,next: projectionSourceIndex }).strict(),
   reservation.extend({ operation: z.literal("access.reserve"), title: conversationTitle.optional() }).strict(),
   accessOwner.extend({ operation: z.literal("access.list"), options: historyOptions }).strict(),
   accessOwner.extend({ operation: z.literal("access.getDetails"), operationId }).strict(),

@@ -224,6 +224,7 @@ export type Database = {
           created_at: number
           id: string
           operation_id: string
+          projection_checkpoint: number
           request_hash: string
           revision: number
           session_id: string | null
@@ -237,6 +238,7 @@ export type Database = {
           created_at?: number
           id: string
           operation_id: string
+          projection_checkpoint?: number
           request_hash: string
           revision?: number
           session_id?: string | null
@@ -250,6 +252,7 @@ export type Database = {
           created_at?: number
           id?: string
           operation_id?: string
+          projection_checkpoint?: number
           request_hash?: string
           revision?: number
           session_id?: string | null

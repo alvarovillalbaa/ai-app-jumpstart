@@ -14,6 +14,7 @@ import { getSessionAccessStore } from "./agent-access/store";
 import { chatSettings } from "./agent-access/settings";
 import { projectionOptions } from "./agent-access/projection-contract";
 import { readSourceEvents, sourceEventOptions } from "./agent-access/source-events";
+import { reconcileInput, reconcileProjections } from "./agent-access/reconcile";
 import { ArtifactService } from "./agent-access/artifacts";
 import { artifactOptions } from "./agent-access/artifact-contract";
 import { UsageService } from "./budgets/usage";
@@ -28,7 +29,7 @@ import { verifySupabaseIdentity } from "./auth/identity";
 import { profileSnapshot, type AccountProfile } from "./auth/profile";
 
 export function createMcpServer(service: RecordService, history?: ConversationHistoryService,artifacts?: ArtifactService,usage?: UsageService,uploads?: UploadService,
-  profile?: () => Promise<AccountProfile>,sourceEvents?: (operationId: string,options: unknown) => Promise<unknown>) {
+  profile?: () => Promise<AccountProfile>,sourceEvents?: (operationId: string,options: unknown) => Promise<unknown>,reconcile?: (operationId: string,options: unknown) => Promise<unknown>) {
   const server = new McpServer({ name: "ai-app-jumpstart-data", version: "1.0.0" });
   async function result(action: () => Promise<unknown>) {
     try { return { content: [{ type: "text" as const, text: JSON.stringify(await action()) }] }; }
@@ -76,6 +77,11 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
       inputSchema: z.object({ operationId,options: sourceEventOptions.optional() }).strict(),
       annotations: { readOnlyHint: true,openWorldHint: false },
     },input => result(() => sourceEvents(input.operationId,input.options)));
+    if (reconcile) server.registerTool("conversations_reconcile",{
+      description: "Copy selected safe events from an owned Eve stream into application storage. Resume from the durable checkpoint by default; no model turn is started. Repeat while complete is false.",
+      inputSchema: z.object({ operationId,options: reconcileInput.optional() }).strict(),
+      annotations: { readOnlyHint: false,destructiveHint: false,idempotentHint: true,openWorldHint: false },
+    },input => result(() => reconcile(input.operationId,input.options ?? { resume: true })));
     server.registerTool("conversations_list", {
       description: "List the signed-in user's private conversation metadata. Returns nextCursor; archive state only organizes history. This does not read transcripts or start a run.",
       inputSchema: historyOptions, annotations: { readOnlyHint: true, openWorldHint: false },
@@ -199,7 +205,9 @@ export function mcpHandler(repository: () => Promise<RecordRepository> = getRepo
     } : undefined;
     const sourceEvents = settings && ownedStore ? (operation: string,options: unknown) =>
       readSourceEvents(ownedStore,owner,operation,options,settings.origin,bearerToken(request),request.signal) : undefined;
-    const server = createMcpServer(new RecordService(await repository(), principal), history, artifacts, usage,uploads,profile,sourceEvents);
+    const reconcile = settings && ownedStore ? (operation: string,options: unknown) =>
+      reconcileProjections(ownedStore,owner,operation,options,settings.origin,bearerToken(request),request.signal) : undefined;
+    const server = createMcpServer(new RecordService(await repository(), principal), history, artifacts, usage,uploads,profile,sourceEvents,reconcile);
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     await server.connect(transport);
     try { return await transport.handleRequest(request, { parsedBody }); }

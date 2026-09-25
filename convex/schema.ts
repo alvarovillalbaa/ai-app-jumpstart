@@ -20,7 +20,7 @@ export default defineSchema({
   conversations: defineTable({
     id: v.string(), tenant: v.string(), subject: v.string(), operationId: v.string(), requestHash: v.string(),
     sessionId: v.union(v.string(), v.null()), status: v.union(v.literal("starting"), v.literal("active"), v.literal("revoked")),
-    projectionSequence: v.optional(v.number()),title: v.optional(v.string()), createdAt: v.optional(v.number()), archived: v.optional(v.boolean()), revision: v.optional(v.number()),
+    projectionSequence: v.optional(v.number()),projectionCheckpoint: v.optional(v.number()),title: v.optional(v.string()), createdAt: v.optional(v.number()), archived: v.optional(v.boolean()), revision: v.optional(v.number()),
   }).index("by_external_id", ["id"]).index("by_operation", ["operationId"]).index("by_session", ["sessionId"])
     .index("by_history", ["tenant","subject","archived","createdAt","id"]).index("by_archived", ["archived"]),
   internalNonces: defineTable({ id: v.string(), expiresAt: v.number() }).index("by_external_id", ["id"]).index("by_expiry", ["expiresAt"]),
