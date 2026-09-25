@@ -1,5 +1,5 @@
 import EmbeddedPostgres from "embedded-postgres";
-import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
@@ -13,6 +13,7 @@ import { Client } from "pg";
 import assert from "node:assert/strict";
 import { installPostgrest } from "./testing/postgrest.mjs";
 import { backupPostgresApplication, backupPostgresWorkflow } from "./backup-postgres.mjs";
+import { createPostgresDatabaseSet, verifyPostgresDatabaseSet } from "./backup-postgres-databases.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const withSupabase = process.argv.includes("--supabase");
@@ -171,7 +172,47 @@ async function rehearseBackup() {
   assert.equal(await stat(failedOutput).then(() => true, () => false), false, "Failed dump must not publish a partial file");
   assert.equal((await readdir(directory)).some(name => name.startsWith(".postgres-backup-")), false,
     "Failed dump must remove its temporary archive");
-  console.log("Private PostgreSQL archive, local restore, data preservation and no-clobber checks passed.");
+  await database.createDatabase("workflow_pair_test");
+  const workflowUrl = env.DATABASE_URL.replace(/\/app_test$/, "/workflow_pair_test");
+  await run(["scripts/migrate-workflow.mjs"], 0,
+    { ...env, WORKFLOW_POSTGRES_URL: workflowUrl, WORKFLOW_POSTGRES_JOB_PREFIX: "backup_pair_test" });
+  await database.createDatabase("app_pair_restore_test");
+  await database.createDatabase("workflow_pair_restore_test");
+  const appPairRestoreUrl = env.DATABASE_URL.replace(/\/app_test$/, "/app_pair_restore_test");
+  const workflowPairRestoreUrl = env.DATABASE_URL.replace(/\/app_test$/, "/workflow_pair_restore_test");
+  const pairOutput = join(directory, "database-set");
+  const pairEnv = { ...env, WORKFLOW_POSTGRES_URL: workflowUrl,
+    BACKUP_VERIFY_APP_DATABASE_URL: appPairRestoreUrl,
+    BACKUP_VERIFY_WORKFLOW_DATABASE_URL: workflowPairRestoreUrl };
+  await run(["scripts/backup-postgres-databases.mjs", "--create", "--output", pairOutput,
+    "--stopped", "--verify-restore"], 0, pairEnv);
+  assert.equal((await verifyPostgresDatabaseSet(pairOutput)).restoreVerified, true);
+  await run(["scripts/backup-postgres-databases.mjs", "--verify", pairOutput], 0,
+    { ...env, DATABASE_URL: "", WORKFLOW_POSTGRES_URL: "" });
+  assert.equal((await stat(pairOutput)).mode & 0o077, 0);
+  const appRestored = new Client({ connectionString: appPairRestoreUrl });
+  await appRestored.connect();
+  try { assert.equal((await appRestored.query("SELECT content FROM app_records WHERE id=$1", [recordId])).rows[0].content,
+    "private backup fixture"); }
+  finally { await appRestored.end(); }
+  const workflowRestored = new Client({ connectionString: workflowPairRestoreUrl });
+  await workflowRestored.connect();
+  try {
+    assert.ok((await workflowRestored.query("SELECT count(*)::int AS count FROM workflow_drizzle.workflow_migrations")).rows[0].count > 0);
+    assert.ok((await workflowRestored.query("SELECT count(*)::int AS count FROM graphile_worker.migrations")).rows[0].count > 0);
+  } finally { await workflowRestored.end(); }
+  await assert.rejects(createPostgresDatabaseSet({ applicationUrl: env.DATABASE_URL,
+    workflowUrl, output: pairOutput, stopped: true }), /destination already exists/);
+  await database.createDatabase("workflow_pair_missing_test");
+  const missingWorkflowUrl = env.DATABASE_URL.replace(/\/app_test$/, "/workflow_pair_missing_test");
+  const incompletePair = join(directory, "incomplete-database-set");
+  await assert.rejects(createPostgresDatabaseSet({ applicationUrl: env.DATABASE_URL,
+    workflowUrl: missingWorkflowUrl, output: incompletePair, stopped: true }), /not a migrated Eve Workflow database/);
+  assert.equal(await stat(incompletePair).then(() => true, () => false), false,
+    "A failed paired backup must not publish a partial directory");
+  await appendFile(join(pairOutput, "application.dump"), "tampered");
+  await assert.rejects(verifyPostgresDatabaseSet(pairOutput), /hashes or sizes differ/);
+  console.log("Private PostgreSQL application and paired Workflow archives, restores and integrity checks passed.");
 }
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => {
   stopping = true; child?.kill(signal);

@@ -16,6 +16,8 @@ Set `DATABASE_URL` to a private migration connection. Run `npm run db:migrate --
 
 Self-hosted PostgreSQL operators can create a private custom-format database archive with `npm run db:backup:postgres -- --output NEW_FILE.dump`; `--verify-restore` also rehearses it against an empty local database selected by `BACKUP_VERIFY_DATABASE_URL`. See [operations](operations.md) for the client-tool requirement, scope and separate Workflow/object backups. Managed Supabase providers may require a provider snapshot or additional database privileges; this command does not replace their backup and restore procedures.
 
+If the same self-hosted deployment uses a separate PostgreSQL Workflow database, follow the [stopped two-database recovery set](postgres-recovery.md) instead of keeping unrelated archive files without a shared manifest. External object storage still needs its own snapshot.
+
 For direct PostgreSQL access, set `DATA_PROVIDER=postgres` and `DATABASE_URL` on the application. Managed PostgreSQL services use this same adapter; configure TLS using the provider's connection instructions.
 
 For Supabase PostgREST, set `DATA_PROVIDER=supabase`, `SUPABASE_URL` and `SUPABASE_SECRET_KEY` on the application. Use a backend secret/service-role credential, never an anonymous or publishable key. The migration enables RLS and denies direct `anon` and `authenticated` table access. The backend enforces owner predicates on every operation. Browser signup is configured separately through `AUTH_PROVIDER=supabase`; see [authentication](authentication.md).

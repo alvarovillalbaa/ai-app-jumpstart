@@ -23,6 +23,8 @@ export function libpqEnvironment(connectionString, inherited = process.env) {
   delete env.DATABASE_URL;
   delete env.WORKFLOW_POSTGRES_URL;
   delete env.BACKUP_VERIFY_DATABASE_URL;
+  delete env.BACKUP_VERIFY_APP_DATABASE_URL;
+  delete env.BACKUP_VERIFY_WORKFLOW_DATABASE_URL;
   env.PGHOST = url.hostname.replace(/^\[|\]$/g, "");
   env.PGPORT = url.port || "5432";
   env.PGUSER = decodeURIComponent(url.username);

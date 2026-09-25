@@ -46,6 +46,8 @@ For a restore rehearsal, create a separate empty **loopback** PostgreSQL databas
 
 This archive covers one Workflow database only. If the application uses PostgreSQL, stop its writers in the same maintenance window and take a separate [application database archive](operations.md); these two commands do not create an atomic cross-database snapshot. Back up private object bytes separately. Vercel's default managed Workflow world is outside this command's scope; follow its provider recovery procedure.
 
+For an application and Workflow world that both use self-hosted PostgreSQL, the [two-database recovery set](postgres-recovery.md) runs both archives during one stopped window and publishes a shared hash manifest. Its dumps are still sequential and external object bytes remain separate.
+
 ## Validation and limits
 
 `npm run test:workflow-postgres` provisions a disposable native PostgreSQL instance, runs the workflow bootstrap twice and compiles a fresh Eve fixture with the production world selector, ownership and budget hooks. It exercises signed creation/recovery, follow-up, compaction, ownership denial and quota denial. It kills the runtime, removes local workflow files, restarts, replays completed history without a model rerun, and completes another owned turn. Fixture models make no paid provider calls. The application ownership/budget store in this test is intentionally separate SQLite; remote application adapters have their own contract suites.
