@@ -32,7 +32,7 @@ COPY --from=build --chown=node:node /app/migrations ./migrations
 COPY --from=build --chown=node:node /app/scripts ./scripts
 COPY --from=build --chown=node:node /app/public ./public
 COPY --from=build --chown=node:node /app/package.json /app/package-lock.json /app/next.config.ts /app/tsconfig.json /app/app.config.ts ./
-RUN mkdir -p /app/.data /app/.eve && chown -R node:node /app/.data /app/.eve
+RUN mkdir -p /app/.data /app/.eve /app/.backup && chown -R node:node /app/.data /app/.eve /app/.backup
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s CMD node -e "fetch('http://127.0.0.1:3000/api/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"

@@ -23,17 +23,17 @@ npm run backup:local -- --restore /PRIVATE_BACKUPS/snapshot-YYYYMMDD \
 npm run backup:local -- --verify /PRIVATE_RESTORE_TEST/jumpstart
 ```
 
-With the app stopped, map `app.sqlite` to the configured `SQLITE_PATH`, `workflow/` to the app root's `.eve/.workflow-data`, and `uploads/` to `UPLOAD_LOCAL_ROOT` only when the manifest says uploads were included. Eve's default local world selects that path from the running app root; setting `WORKFLOW_LOCAL_DATA_DIR` alone does not move it. Use fresh empty mounts/directories; do not mix the restored database with old `-wal` or `-shm` files. Restore the corresponding application build and private environment separately. Start the restored instance against a disposable origin and verify web/data/Eve readiness, owner-isolated REST/CLI/MCP reads, a previously completed conversation and a new owned turn before relying on it. `npm run test:session-runtime` now creates a real completed Eve session, snapshots its SQLite application data and local Workflow files after shutdown, restores them into a fresh app root, replays the same session without another model call, denies a foreign owner and completes a new owned turn. Focused tests also cover SQLite WAL capture, private-upload copying, tampering and no-clobber behavior. The production container contract creates and verifies a stopped snapshot from persistent app/Eve volumes, but does not restore a chat session there. A live production backup still needs transaction coordination across stores and deployment-specific recovery acceptance.
+With the app stopped, map `app.sqlite` to the configured `SQLITE_PATH`, `workflow/` to the app root's `.eve/.workflow-data`, and `uploads/` to `UPLOAD_LOCAL_ROOT` only when the manifest says uploads were included. Eve's default local world selects that path from the running app root; setting `WORKFLOW_LOCAL_DATA_DIR` alone does not move it. Use fresh empty mounts/directories; do not mix the restored database with old `-wal` or `-shm` files. Restore the corresponding application build and private environment separately. Start the restored instance against a disposable origin and verify web/data/Eve readiness, owner-isolated REST/CLI/MCP reads, a previously completed conversation and a new owned turn before relying on it. `npm run test:session-runtime` creates a real completed Eve session, snapshots its SQLite application data and local Workflow files after shutdown, restores them into a fresh app root, replays the same session without another model call, denies a foreign owner and completes a new owned turn. Focused tests also cover SQLite WAL capture, private-upload copying, tampering and no-clobber behavior. `npm run test:container` now writes the stopped snapshot to a separate Docker volume, verifies and restores it, then boots the production image with fresh application and Eve volumes; the original record and owner-isolated REST/CLI/MCP path survive. That image test does not restore a chat session. A live production backup still needs transaction coordination across stores and deployment-specific recovery acceptance.
 
-For the supplied Docker Compose service, stop `app` first and ensure its status is stopped. The production image contains this Node-only command. Mount a private host directory writable by the image's `node` user for the output:
+For the supplied Docker Compose service, stop `app` first and ensure its status is stopped. The production image contains this Node-only command and a node-owned `/app/.backup` mountpoint. Mount a **separate** private host directory writable by the image's `node` user for the output; keeping the only snapshot on `app-data` would lose it with that volume:
 
 ```sh
 docker compose stop app
-docker compose run --rm --no-deps --volume /HOST_PRIVATE_BACKUPS:/backup app \
+docker compose run --rm --no-deps --volume /HOST_PRIVATE_BACKUPS:/app/.backup app \
   node scripts/backup-local.mjs --create \
   --app-db /app/.data/app.sqlite \
   --workflow-dir /app/.eve/.workflow-data \
-  --no-uploads --output /backup/snapshot-YYYYMMDD --stopped
+  --no-uploads --output /app/.backup/snapshot-YYYYMMDD --stopped
 docker compose start app
 ```
 

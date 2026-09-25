@@ -7,6 +7,7 @@ node_modules
 **/.eve
 **/.output
 .data
+.backup
 .convex
 .env*
 **/.env*
