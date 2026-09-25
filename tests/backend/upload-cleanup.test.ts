@@ -59,7 +59,7 @@ it("runs an authorized scheduled pass without returning private metadata",async 
     async put() {},async get() { return null; },async delete() { return false; },
   };
   expect(await catalog.reserve(owner,row,{ maxBytes: 3,maxFiles: 1 })).toBe("reserved");
-  const handler = uploadCleanupHandler(async () => catalog,async () => objects,() => secret);
+  const handler = uploadCleanupHandler(async () => catalog,async () => objects,() => secret,() => "supabase");
   const response = await handler(new Request("http://localhost/api/internal/uploads/cleanup",{
     headers: { authorization: `Bearer ${secret}` },
   }));
@@ -77,7 +77,7 @@ it("reports cleanup failure to the scheduler while preserving the reservation",a
     async put() {},async get() { return null; },async delete() { throw new Error("private backend failed"); },
   };
   expect(await catalog.reserve(owner,row,{ maxBytes: 3,maxFiles: 1 })).toBe("reserved");
-  const handler = uploadCleanupHandler(async () => catalog,async () => objects,() => secret);
+  const handler = uploadCleanupHandler(async () => catalog,async () => objects,() => secret,() => "supabase");
   const response = await handler(new Request("http://localhost/api/internal/uploads/cleanup",{
     headers: { authorization: `Bearer ${secret}` },
   }));
@@ -86,4 +86,19 @@ it("reports cleanup failure to the scheduler while preserving the reservation",a
   expect(JSON.parse(body)).toMatchObject({ failed: 1,deleted: 0 });
   expect(body).not.toContain(row.id);
   expect(body).not.toContain(owner.subject);
+});
+
+it("acknowledges an authorized schedule without contacting providers when uploads are disabled",async () => {
+  const catalog = vi.fn(),objects = vi.fn(),secret = "s".repeat(40);
+  const handler = uploadCleanupHandler(catalog,objects,() => secret,() => undefined);
+  const denied = await handler(new Request("http://localhost/api/internal/uploads/cleanup"));
+  expect(denied.status).toBe(401);
+  const response = await handler(new Request("http://localhost/api/internal/uploads/cleanup",{
+    headers: { authorization: `Bearer ${secret}` },
+  }));
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(await response.json()).toEqual({ status: "storage_disabled" });
+  expect(catalog).not.toHaveBeenCalled();
+  expect(objects).not.toHaveBeenCalled();
 });

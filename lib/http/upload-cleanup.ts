@@ -17,6 +17,7 @@ export function uploadCleanupHandler(
   catalog: () => Promise<UploadCatalog> = createUploadCatalog,
   objects: () => Promise<PrivateUploadObjects> = createUploadObjects,
   secret: () => string | undefined = () => process.env.CRON_SECRET,
+  storageProvider: () => string | undefined = () => process.env.UPLOAD_STORAGE_PROVIDER,
 ) {
   return async (request: Request) => {
     const key = secret();
@@ -25,6 +26,9 @@ export function uploadCleanupHandler(
     });
     if (!authorized(request,key)) return Response.json({ error: "unauthorized" },{
       status: 401,headers: { "cache-control": "no-store" },
+    });
+    if (!storageProvider()) return Response.json({ status: "storage_disabled" },{
+      headers: { "cache-control": "no-store" },
     });
     let store: UploadCatalog | undefined;
     try {

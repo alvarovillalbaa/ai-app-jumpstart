@@ -11,7 +11,7 @@ if (existsSync(join(root, ".env.local"))) throw new Error("Remove .env.local bef
 // Do not let a maintainer's deployment settings make this structural build pass.
 const env = { ...process.env };
 for (const name of Object.keys(env)) {
-  if (/^(?:APP_|SUPABASE_|DATABASE_URL$|DATA_PROVIDER$|AUTH_PROVIDER$|AI_|EVE_|WORKFLOW_|OPENAI_|ANTHROPIC_|CONVEX_|VERCEL_|NEXT_PUBLIC_)/.test(name)) delete env[name];
+  if (/^(?:APP_|SUPABASE_|DATABASE_URL$|DATA_PROVIDER$|AUTH_PROVIDER$|AI_|EVE_|WORKFLOW_|OPENAI_|ANTHROPIC_|CONVEX_|CRON_SECRET$|UPLOAD_|VERCEL_|NEXT_PUBLIC_)/.test(name)) delete env[name];
 }
 env.VERCEL = "1";
 env.NEXT_TELEMETRY_DISABLED = "1";
@@ -31,6 +31,10 @@ const serviceRoot = join(root, ".eve/vercel-services/eve");
 const serviceOutput = join(serviceRoot, ".vercel/output");
 await rm(hostOutput, { recursive: true, force: true });
 await rm(serviceOutput, { recursive: true, force: true });
+
+const deployment = await json(join(root,"vercel.json"));
+assert.deepEqual(deployment.crons,[{ path: "/api/internal/uploads/cleanup",schedule: "0 2 * * *" }],
+  "The managed deployment must schedule one daily upload cleanup pass.");
 
 await command("npm", ["run", "build"], root);
 const host = await json(join(hostOutput, "config.json"));

@@ -6,6 +6,7 @@ const baseline = {
   DATA_PROVIDER: "supabase", AUTH_PROVIDER: "supabase", AI_CHAT_ENABLED: "false",
   APP_ORIGIN: "https://app.example.org", SUPABASE_URL: "https://data.example.org",
   SUPABASE_SECRET_KEY: "sb_secret_fixture_backend_key", SUPABASE_PUBLISHABLE_KEY: "sb_publishable_fixture_public_key",
+  CRON_SECRET: "s".repeat(40),
 };
 const chat = {
   ...baseline, AI_CHAT_ENABLED: "true", AI_RUNTIME_ORIGIN: "https://app.example.org",
@@ -29,6 +30,11 @@ it("rejects serverless-local storage, plaintext origins, wrong credentials and w
   expect(() => checkManagedConfig({ ...baseline, SUPABASE_SECRET_KEY: baseline.SUPABASE_PUBLISHABLE_KEY })).toThrow("SUPABASE_SECRET_KEY");
   expect(() => checkManagedConfig({ ...baseline, EVE_WORKFLOW_PROVIDER: "postgres" })).toThrow("default Workflow world");
   expect(() => checkManagedConfig({ ...baseline, APP_AGENT_READINESS: "local" })).toThrow("co-located Eve");
+  expect(() => checkManagedConfig({ ...baseline, CRON_SECRET: undefined })).toThrow("CRON_SECRET");
+  expect(() => checkManagedConfig({ ...baseline, CRON_SECRET: "short" })).toThrow("CRON_SECRET");
+  expect(() => checkManagedConfig({ ...baseline, CRON_SECRET: "x".repeat(31) + "\n" })).toThrow("CRON_SECRET");
+  expect(checkManagedConfig({ ...baseline, UPLOAD_STORAGE_PROVIDER: "supabase" })).toMatchObject({ target: "vercel-supabase" });
+  expect(() => checkManagedConfig({ ...baseline, UPLOAD_STORAGE_PROVIDER: "local" })).toThrow("UPLOAD_STORAGE_PROVIDER=supabase");
 });
 
 it("fails closed for incomplete or malformed enabled chat without echoing secret values", () => {

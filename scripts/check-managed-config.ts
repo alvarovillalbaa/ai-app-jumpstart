@@ -27,6 +27,12 @@ export function checkManagedConfig(env: NodeJS.ProcessEnv, requireChat = false) 
     throw new Error("The managed Vercel build must select the default Workflow world.");
   }
   if (env.APP_AGENT_READINESS === "local") throw new Error("APP_AGENT_READINESS=local requires a co-located Eve process; remove it on Vercel.");
+  if (!env.CRON_SECRET || env.CRON_SECRET.length < 32 || /\s/.test(env.CRON_SECRET)) {
+    throw new Error("Set CRON_SECRET to at least 32 non-whitespace characters for the scheduled upload cleanup route.");
+  }
+  if (env.UPLOAD_STORAGE_PROVIDER && env.UPLOAD_STORAGE_PROVIDER !== "supabase") {
+    throw new Error("Set UPLOAD_STORAGE_PROVIDER=supabase or leave uploads disabled on Vercel.");
+  }
   if (env.SUPABASE_SECRET_KEY === env.SUPABASE_PUBLISHABLE_KEY || env.SUPABASE_SECRET_KEY?.startsWith("sb_publishable_")) {
     throw new Error("SUPABASE_SECRET_KEY must be a backend credential distinct from SUPABASE_PUBLISHABLE_KEY.");
   }
