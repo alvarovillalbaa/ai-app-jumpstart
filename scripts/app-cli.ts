@@ -28,7 +28,7 @@ export async function run(args: string[], env: Record<string, string | undefined
     uploads: "npm run app -- uploads <list | get UPLOAD_UUID | put FILE | delete UPLOAD_UUID> (private quarantine; no download)",
     account: "npm run app -- account profile (selected fields; current registered-user token required)",
     usage: "npm run app -- usage [reservations|corrections [--limit N] [--cursor CURSOR]] (verified user token required)",
-    export: "npm run app -- export <records | application> OUTPUT.ndjson (private, no-clobber; application includes upload metadata, never bytes)",
+    export: "npm run app -- export <records OUTPUT.ndjson | application OUTPUT.ndjson | source-events OPERATION_UUID OUTPUT.ndjson> (private, no-clobber; source events require an active owned Eve session)",
     environment: "APP_API_URL (default http://localhost:3000), APP_API_TOKEN (server-issued credential)",
     note: "Record files contain title/content and, for update, revision. Conversation updates contain revision plus title and/or archived. Uploads require uploads:read/write scopes or a registered user and an explicitly configured private object backend; quarantined bytes cannot be downloaded. Output is JSON. Errors exit nonzero. Writes are never automatically retried.",
   };
@@ -85,6 +85,11 @@ export async function run(args: string[], env: Record<string, string | undefined
   }
   if (command === "export" && rest.length === 2 && (rest[0] === "records" || rest[0] === "application")) {
     return exportApplication(rest[0], rest[1], path => call(path));
+  }
+  if (command === "export" && rest.length === 3 && rest[0] === "source-events") {
+    const checked = operationId.safeParse(rest[1]);
+    if (!checked.success) throw new Error("Provide a conversation operation UUID.");
+    return exportApplication("source-events",rest[2],path => call(path),checked.data);
   }
   if (command === "account" && rest.length === 1 && rest[0] === "profile") return call("/api/v1/account/profile");
   if (command === "usage" && (rest[0] === "reservations" || rest[0] === "corrections")) {

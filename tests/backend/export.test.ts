@@ -111,3 +111,54 @@ it("publishes no partial export when a later page fails", async () => {
     expect(await readdir(directory)).toEqual([]);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
+
+it("exports an owned source stream across empty selected pages without losing its absolute cursor", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "jumpstart-source-export-"));
+  const operation = randomUUID(), output = join(directory, "source.ndjson");
+  const event = (sourceIndex: number) => ({ schemaVersion: 1, eventId: sourceIndex === 1
+    ? "evt_01ARZ3NDEKTSV4RRFFQ69G5FAV" : "evt_01ARZ3NDEKTSV4RRFFQ69G5FAW",
+    at: "2026-09-24T10:00:00.000Z", turnId: "turn_0", sequence: sourceIndex,
+    payload: { kind: "message", role: "user", parts: [{ type: "text", text: `part ${sourceIndex}` }] }, sourceIndex });
+  const cursors: number[] = [];
+  const request = vi.fn<typeof fetch>(async (url, init) => {
+    expect(new Headers(init?.headers).get("authorization")).toBe("Bearer owner-token");
+    const path = new URL(String(url));
+    expect(path.pathname).toBe(`/api/v1/conversations/${operation}/source-events`);
+    expect(path.searchParams.get("limit")).toBe("50");
+    const start = Number(path.searchParams.get("startIndex"));
+    cursors.push(start);
+    return Response.json(start === 0
+      ? { schemaVersion: 1, source: "eve-durable-stream", items: [event(1)], scanned: 2, nextIndex: 2, complete: false }
+      : start === 2
+        ? { schemaVersion: 1, source: "eve-durable-stream", items: [], scanned: 250, nextIndex: 252, complete: false }
+        : { schemaVersion: 1, source: "eve-durable-stream", items: [event(253)], scanned: 2, nextIndex: 254, complete: true });
+  });
+  try {
+    expect(await run(["export", "source-events", operation, output], { APP_API_TOKEN: "owner-token" }, request))
+      .toMatchObject({ mode: "source-events", counts: { sourceEvents: 2 }, nextIndex: 254 });
+    expect(cursors).toEqual([0, 2, 252]);
+    const exported = await lines(output);
+    expect(exported.map(line => line.type)).toEqual(["manifest", "source_event", "source_event", "end"]);
+    expect(exported[0].value).toMatchObject({ format: "ai-app-jumpstart-source-events-v1", operationId: operation });
+    expect(exported.filter(line => line.type === "source_event").map(line => line.value.sourceIndex)).toEqual([1, 253]);
+    expect(exported.at(-1).value).toMatchObject({ nextIndex: 254, complete: true });
+    expect((await stat(output)).mode & 0o077).toBe(0);
+    await expect(run(["export", "source-events", operation, output], { APP_API_TOKEN: "owner-token" }, request)).rejects.toThrow("already exists");
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+it("publishes no source export when the runtime fails after an earlier page", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "jumpstart-source-failure-"));
+  const operation = randomUUID(), output = join(directory, "incomplete.ndjson");
+  const request: typeof fetch = async url => {
+    const start = new URL(String(url)).searchParams.get("startIndex");
+    return start === "0"
+      ? Response.json({ schemaVersion: 1, source: "eve-durable-stream", items: [], scanned: 250, nextIndex: 250, complete: false })
+      : Response.json({ error: { code: "source_events_unavailable" } }, { status: 503 });
+  };
+  try {
+    await expect(run(["export", "source-events", operation, output], { APP_API_TOKEN: "owner-token" }, request)).rejects.toThrow("HTTP 503");
+    expect(existsSync(output)).toBe(false);
+    expect(await readdir(directory)).toEqual([]);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});

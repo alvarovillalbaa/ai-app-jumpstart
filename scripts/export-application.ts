@@ -6,13 +6,14 @@ import { z } from "zod";
 import { historyPage } from "../lib/agent-access/contract";
 import { artifactPage } from "../lib/agent-access/artifact-contract";
 import { projectionPage } from "../lib/agent-access/projection-contract";
+import { sourceEventPage } from "../lib/agent-access/source-events";
 import { accountProfile } from "../lib/auth/profile";
 import { ledgerPage, ownerCorrectionPage } from "../lib/budgets/contract";
 import { usageView } from "../lib/budgets/usage";
 import { recordId, recordInput } from "../lib/data/contract";
 import { uploadPage } from "../lib/uploads/catalog-contract";
 
-type Mode = "records" | "application";
+type Mode = "records" | "application" | "source-events";
 type Call = (path: string) => Promise<unknown>;
 const recordPage = z.object({
   items: z.array(recordInput.extend({
@@ -22,7 +23,7 @@ const recordPage = z.object({
 }).strict();
 
 /** Download the app's exposed data without keeping an unbounded response in memory. */
-export async function exportApplication(mode: Mode, output: string, call: Call) {
+export async function exportApplication(mode: Mode, output: string, call: Call, operationId?: string) {
   if (!output || output.includes("\u0000")) throw new Error("Provide an output file path.");
   const destination = resolve(output);
   if (existsSync(destination)) throw new Error("Export destination already exists; choose a new file.");
@@ -58,6 +59,36 @@ export async function exportApplication(mode: Mode, output: string, call: Call) 
   }
   try {
     file = await open(temporary, "wx", 0o600);
+    if (mode === "source-events") {
+      if (!operationId) throw new Error("Provide a conversation operation UUID.");
+      let sourceEvents = 0;
+      await write("manifest", {
+        format: "ai-app-jumpstart-source-events-v1", operationId, exportedAt: new Date().toISOString(),
+        consistency: "finite paged reads; concurrent events after the observed tail may be missed",
+        limitations: "Selected safe Eve stream events in source order, including interrupted attempts; not canonical model history or a complete transcript",
+      });
+      let nextIndex = 0;
+      for (let pages = 0; pages < 10_000; pages++) {
+        const page = sourceEventPage.parse(await call(`/api/v1/conversations/${operationId}/source-events?${new URLSearchParams({ startIndex: String(nextIndex), limit: "50" })}`));
+        let lastSourceIndex = nextIndex - 1;
+        for (const event of page.items) {
+          if (event.sourceIndex <= lastSourceIndex || event.sourceIndex >= page.nextIndex) throw new Error("Source event indexes are not in scanned order.");
+          await write("source_event", event);
+          sourceEvents++;
+          lastSourceIndex = event.sourceIndex;
+        }
+        if (page.nextIndex !== nextIndex + page.scanned || (!page.complete && page.scanned === 0)) throw new Error("Source event pagination did not advance.");
+        nextIndex = page.nextIndex;
+        if (page.complete) {
+          await write("end", { counts: { sourceEvents }, nextIndex, complete: true });
+          await file.sync();
+          await file.close(); file = undefined;
+          await link(temporary, destination);
+          return { file: destination, mode, counts: { sourceEvents }, nextIndex };
+        }
+      }
+      throw new Error("Export exceeded 10,000 source event pages.");
+    }
     await write("manifest", {
       format: "ai-app-jumpstart-visible-data-v5", mode, exportedAt: new Date().toISOString(),
       consistency: "paged-live-reads; concurrent changes may appear or be missed",
