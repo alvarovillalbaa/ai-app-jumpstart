@@ -37,6 +37,41 @@ async function cliGet(origin, token, id) {
   return JSON.parse(stdout);
 }
 
+async function browserRead({ origin, token, otherToken, protection, title }) {
+  const { chromium } = await import("@playwright/test");
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext();
+    if (Object.keys(protection).length) await context.route("**/*", route => {
+      const target = new URL(route.request().url());
+      return target.origin === origin
+        ? route.continue({ headers: { ...route.request().headers(), ...protection } })
+        : route.continue();
+    });
+    const page = await context.newPage();
+    const response = await page.goto(`${origin}/records`, { waitUntil: "domcontentloaded" });
+    assert.equal(response?.status(), 200, "Browser records page failed");
+    const connect = async (accessToken) => {
+      await page.getByLabel("Access token").fill(accessToken);
+      await page.getByRole("button", { name: "Connect", exact: true }).click();
+      await page.getByRole("button", { name: "Disconnect", exact: true }).waitFor({ state: "visible" });
+    };
+    await connect(token);
+    await page.getByRole("heading", { name: title, exact: true }).waitFor({ state: "visible" });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await connect(token);
+    await page.getByRole("heading", { name: title, exact: true }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "Disconnect", exact: true }).click();
+    await connect(otherToken);
+    assert.equal(await page.getByRole("heading", { name: title, exact: true }).count(), 0,
+      "Other owner can see the temporary record in the browser");
+  } catch (error) {
+    const redacted = [token, otherToken, ...Object.values(protection)]
+      .reduce((value, secret) => value.replaceAll(secret, "[redacted]"), message(error));
+    throw new Error(`Browser records smoke failed: ${redacted}`);
+  } finally { await browser.close(); }
+}
+
 async function runAgentSmoke({ origin, token, otherToken, protection, request }) {
   const operationId = randomUUID();
   console.log(`Agent smoke operation: ${operationId}`);
@@ -119,7 +154,7 @@ async function runAgentSmoke({ origin, token, otherToken, protection, request })
   return { operationId, sessionId: conversation.sessionId };
 }
 
-export async function runHostedSmoke({ url, token, otherToken, accounts = false, agent = false }) {
+export async function runHostedSmoke({ url, token, otherToken, accounts = false, agent = false, browser = false }) {
   const origin = targetOrigin(url);
   if (agent && !accounts) throw new Error("Agent smoke requires the two-account mode.");
   if (!token || !otherToken || token === otherToken) throw new Error("Set distinct APP_API_TOKEN and APP_API_OTHER_TOKEN with record read/write access for different owners.");
@@ -189,6 +224,7 @@ export async function runHostedSmoke({ url, token, otherToken, accounts = false,
     await client.connect(new StreamableHTTPClientTransport(new URL(`${origin}/api/mcp`), { requestInit: { headers: { ...protection, ...authorized } } }));
     const resource = await client.readResource({ uri: `records:///${record.id}` });
     assert.deepEqual(JSON.parse(resource.contents[0].text), record);
+    if (browser) await browserRead({ origin, token, otherToken, protection, title });
   } catch (error) { failure = error; }
   finally {
     try { await client?.close(); } catch (error) { cleanupFailure = error; }
@@ -203,18 +239,19 @@ export async function runHostedSmoke({ url, token, otherToken, accounts = false,
   if (failure) throw failure;
   if (cleanupFailure) throw cleanupFailure;
   const agentResult = agent ? await runAgentSmoke({ origin, token, otherToken, protection, request }) : undefined;
-  return { origin, recordId: record.id, agent: agentResult };
+  return { origin, recordId: record.id, agent: agentResult, browser };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
-  if (args.length > 1 || (args[0] && !["--accounts", "--agent"].includes(args[0]))) {
-    console.error("Supported options: --accounts (no model call) or --agent (one owned model turn).");
+  const flags = new Set(args);
+  if (flags.size !== args.length || args.some(arg => !["--accounts", "--agent", "--browser"].includes(arg))) {
+    console.error("Supported options: --accounts (no model call), --agent (one owned model turn), --browser (Chromium UI check).");
     process.exitCode = 2;
   } else {
-    const agent = args[0] === "--agent", accounts = agent || args[0] === "--accounts";
-    runHostedSmoke({ url: process.env.APP_API_URL, token: process.env.APP_API_TOKEN, otherToken: process.env.APP_API_OTHER_TOKEN, accounts, agent })
-      .then(({ origin }) => console.log(`Hosted smoke passed for ${origin}: readiness, Eve, web, ${accounts ? "Supabase accounts, " : ""}REST, owner isolation, CLI and MCP${agent ? ", one owned agent turn" : ""}.`))
+    const agent = flags.has("--agent"), accounts = agent || flags.has("--accounts"), browser = flags.has("--browser");
+    runHostedSmoke({ url: process.env.APP_API_URL, token: process.env.APP_API_TOKEN, otherToken: process.env.APP_API_OTHER_TOKEN, accounts, agent, browser })
+      .then(({ origin }) => console.log(`Hosted smoke passed for ${origin}: readiness, Eve, web, ${accounts ? "Supabase accounts, " : ""}REST, owner isolation, CLI and MCP${browser ? ", Chromium records UI" : ""}${agent ? ", one owned agent turn" : ""}.`))
       .catch(error => { console.error(message(error)); process.exitCode = 1; });
   }
 }

@@ -507,8 +507,9 @@ test("an approved tool saves one private artifact; denial saves none",async ({ p
 
 test("hosted smoke verifies two Supabase accounts and an owned agent turn",async ({ request }) => {
   const alice = await user(request),bob = await user(request);
-  const result = await runHostedSmoke({ url: process.env.APP_ORIGIN!,token: alice.token,otherToken: bob.token,accounts: true,agent: true });
+  const result = await runHostedSmoke({ url: process.env.APP_ORIGIN!,token: alice.token,otherToken: bob.token,accounts: true,agent: true,browser: true });
   expect(result.agent?.operationId).toMatch(/^[a-f0-9-]{36}$/);
+  expect(result.browser).toBe(true);
 });
 
 test("real account tokens share history across production REST, MCP resources/tools and CLI",async ({ request }) => {

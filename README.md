@@ -85,7 +85,7 @@ npm run test:workflow-compose
 
 `test:ai` uses a dedicated fixture model through Eve's real runtime with no paid model calls. `eval:live` exercises the unchanged production model and requires credentials. `test:providers` starts isolated real PostgreSQL, PostgREST and Convex services without hosted accounts. Run `test:integration` against a disposable configured PostgreSQL/Supabase/Convex backend; missing configuration fails explicitly. Reuse `tests/contracts/records.ts` for new providers.
 
-After deployment, run the provider-neutral [`smoke:hosted` check](docs/hosting.md#post-deployment-data-smoke) with two temporary record credentials. For enabled Supabase accounts, run its `--accounts` mode with two distinct signed-in users. Both modes verify the web, agent, REST, CLI and MCP surfaces without a model call.
+After deployment, run the provider-neutral [`smoke:hosted` check](docs/hosting.md#post-deployment-data-smoke) with two temporary record credentials. For enabled Supabase accounts, run its `--accounts` mode with two distinct signed-in users. Add `--browser` to verify the deployed records UI in Chromium. These modes verify the web, agent, REST, CLI and MCP surfaces without a model call; `--agent` explicitly adds one owned turn.
 
 On a reviewed staging account, `--agent` additionally verifies one authenticated model turn and cross-user stream denial; it can incur provider charges.
 
