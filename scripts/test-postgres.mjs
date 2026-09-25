@@ -1,9 +1,9 @@
 import EmbeddedPostgres from "embedded-postgres";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
@@ -35,11 +35,86 @@ let proxy;
 let restDiagnostics = "";
 let validationFailed = false;
 let stopping = false;
-async function run(args, expectedCode = 0) {
-  child = spawn(process.execPath, args, { cwd: root, env, stdio: expectedCode === 0 ? "inherit" : "ignore" });
+async function run(args, expectedCode = 0, commandEnv = env) {
+  child = spawn(process.execPath, args, { cwd: root, env: commandEnv, stdio: expectedCode === 0 ? "inherit" : "ignore" });
   const [code, signal] = await once(child, "exit");
   child = undefined;
   if (code !== expectedCode || signal) throw new Error(`Database validation failed (${signal ?? code}, expected ${expectedCode}).`);
+}
+async function rehearseUpgrade() {
+  // No release tag exists yet. This frozen migration boundary represents a
+  // populated schema before the source-index and checkpoint upgrades.
+  const baseline = "20260924233000_upload_cleanup_index.sql";
+  const names = (await readdir(join(root, "migrations"))).filter(name => /^\d+_[a-z0-9_]+\.sql$/.test(name)).sort();
+  const boundary = names.indexOf(baseline);
+  assert.ok(boundary >= 0 && boundary < names.length - 1, "Upgrade baseline must precede current migrations");
+  await database.createDatabase("app_upgrade_test");
+  const upgradeEnv = { ...env, DATABASE_URL: env.DATABASE_URL.replace(/\/app_test$/, "/app_upgrade_test") };
+  const probe = new Client({ connectionString: upgradeEnv.DATABASE_URL });
+  await probe.connect();
+  const recordId = randomUUID();
+  const conversationId = randomUUID();
+  const operationId = randomUUID();
+  const eventId = `evt_${"0".repeat(26)}`;
+  const event = JSON.stringify({
+    schemaVersion: 1, eventId, at: "2026-09-24T00:00:00.000Z", turnId: "upgrade-turn", sequence: 0,
+    payload: { kind: "message", role: "user", parts: [{ type: "text", text: "Preserved across upgrade" }] },
+  });
+  try {
+    await probe.query("BEGIN");
+    if (withSupabase) await probe.query(`CREATE SCHEMA storage;
+      CREATE TABLE storage.objects (bucket_id text NOT NULL, name text NOT NULL, PRIMARY KEY(bucket_id,name));
+      ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
+      CREATE POLICY test_broad_storage ON storage.objects FOR ALL TO PUBLIC USING (true) WITH CHECK (true);
+      GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+      INSERT INTO storage.objects(bucket_id,name) VALUES ('app-private-uploads','existing-private-object');`);
+    await probe.query("CREATE TABLE app_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())");
+    for (const name of names.slice(0, boundary + 1)) {
+      await probe.query(await readFile(join(root, "migrations", name), "utf8"));
+      await probe.query("INSERT INTO app_migrations(name) VALUES($1)", [name]);
+    }
+    await probe.query("INSERT INTO app_records(id,tenant,subject,title,content) VALUES($1,$2,$3,$4,$5)",
+      [recordId, "upgrade-tenant", "upgrade-owner", "Before upgrade", "Keep this private record"]);
+    await probe.query(`INSERT INTO app_conversations(id,tenant,subject,operation_id,request_hash,session_id,status,title,created_at)
+      VALUES($1,$2,$3,$4,$5,$6,'active',$7,$8)`,
+      [conversationId, "upgrade-tenant", "upgrade-owner", operationId, "a".repeat(64), "upgrade-session", "Before upgrade", 1]);
+    await probe.query("INSERT INTO app_conversation_events(operation_id,event_id,payload) VALUES($1,$2,$3)", [operationId, eventId, event]);
+    await probe.query("COMMIT");
+
+    const appliedBefore = await probe.query("SELECT count(*)::int AS count FROM app_migrations");
+    assert.equal(appliedBefore.rows[0].count, boundary + 1);
+    assert.equal((await probe.query("SELECT 1 FROM information_schema.columns WHERE table_name='app_conversation_events' AND column_name='source_index'")).rowCount, 0);
+    await run(["scripts/migrate.ts", "--dry-run"], 0, upgradeEnv);
+    assert.equal((await probe.query("SELECT count(*)::int AS count FROM app_migrations")).rows[0].count, boundary + 1,
+      "Upgrade dry-run changed the migration ledger");
+    assert.equal((await probe.query("SELECT 1 FROM information_schema.columns WHERE table_name='app_conversation_events' AND column_name='source_index'")).rowCount, 0,
+      "Upgrade dry-run changed the event schema");
+    await run(["scripts/migrate.ts"], 0, upgradeEnv);
+    await run(["scripts/migrate.ts"], 0, upgradeEnv);
+    await run(["scripts/migrate.ts", "--dry-run"], 0, upgradeEnv);
+    assert.equal((await probe.query("SELECT count(*)::int AS count FROM app_migrations")).rows[0].count, names.length);
+    assert.deepEqual((await probe.query("SELECT title,content,revision FROM app_records WHERE id=$1", [recordId])).rows[0],
+      { title: "Before upgrade", content: "Keep this private record", revision: 1 });
+    assert.deepEqual((await probe.query("SELECT tenant,subject,status,projection_checkpoint FROM app_conversations WHERE operation_id=$1", [operationId])).rows[0],
+      { tenant: "upgrade-tenant", subject: "upgrade-owner", status: "active", projection_checkpoint: "0" });
+    assert.deepEqual((await probe.query("SELECT payload,source_index FROM app_conversation_events WHERE event_id=$1", [eventId])).rows[0],
+      { payload: event, source_index: null });
+    if (withSupabase) await probe.query("SET ROLE service_role");
+    try {
+      assert.equal((await probe.query("SELECT app_append_conversation_event($1,$2,$3,$4,$5,$6,$7) AS outcome",
+        ["upgrade-tenant", "upgrade-owner", operationId, "upgrade-session", eventId, event, 7])).rows[0].outcome, "duplicate");
+    } finally { if (withSupabase) await probe.query("RESET ROLE"); }
+    assert.equal((await probe.query("SELECT source_index FROM app_conversation_events WHERE event_id=$1", [eventId])).rows[0].source_index, "7");
+    if (withSupabase) {
+      assert.equal((await probe.query(`SELECT has_function_privilege('authenticated',
+        'public.app_append_conversation_event(text,text,uuid,text,text,text,bigint)','EXECUTE') AS allowed`)).rows[0].allowed, false);
+      assert.equal((await probe.query(`SELECT polpermissive FROM pg_policy
+        WHERE polrelid='storage.objects'::regclass AND polname='app_private_uploads_quarantine'`)).rows[0]?.polpermissive, false);
+      assert.equal((await probe.query("SELECT count(*)::int AS count FROM storage.objects WHERE name='existing-private-object'")).rows[0].count, 1);
+    }
+    console.log(`Populated ${withSupabase ? "Supabase" : "PostgreSQL"} schema upgrade passed (${names.length - boundary - 1} later migrations).`);
+  } catch (error) { await probe.query("ROLLBACK").catch(() => {}); throw error; }
+  finally { await probe.end(); }
 }
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => {
   stopping = true; child?.kill(signal);
@@ -83,6 +158,7 @@ try {
     await run(["scripts/migrate.ts"], 1);
     await driftProbe.query("DELETE FROM app_migrations WHERE name=$1", ["99999999_unknown.sql"]);
   } finally { await driftProbe.end(); }
+  await rehearseUpgrade();
   if (withSupabase) {
     const executable = await installPostgrest(join(directory, "postgrest"));
     const reservation = createServer();
