@@ -165,14 +165,16 @@ try {
       "--no-uploads","--output",snapshot,"--stopped"]),/Verified local snapshot:/);
     assert.match(await localBackup(["--verify",snapshot]),/Local snapshot verified:/);
     assert.match(await localBackup(["--restore",snapshot,"--output",restoredRoot]),/Local snapshot restored to new directory:/);
-    env.SQLITE_PATH = join(restoredRoot,"app.sqlite");
     fixture = join(directory,"restored-app");
     await mkdir(join(fixture,".eve"),{ recursive: true });
+    await mkdir(join(fixture,".data"),{ recursive: true });
     await cp(join(builtFixture,".output"),join(fixture,".output"),{ recursive: true });
     await cp(join(builtFixture,"package.json"),join(fixture,"package.json"));
     await symlink(join(root,"node_modules"),join(fixture,"node_modules"),"dir");
-    await cp(join(restoredRoot,"workflow"),join(fixture,".eve/.workflow-data"),{ recursive: true });
+    env.SQLITE_PATH = join(fixture,".data/app.sqlite");
     env.WORKFLOW_LOCAL_DATA_DIR = join(fixture,".eve/.workflow-data");
+    assert.match(await localBackup(["--install",restoredRoot,"--app-db",env.SQLITE_PATH,
+      "--workflow-dir",env.WORKFLOW_LOCAL_DATA_DIR,"--stopped"]),/Installed verified snapshot/);
     const restoredRecords = new SqliteRepository(env.SQLITE_PATH);
     assert.deepEqual(await restoredRecords.get(alice,record.id),record);
     assert.equal(await restoredRecords.get({ ...alice,subject: "bob" },record.id),null);

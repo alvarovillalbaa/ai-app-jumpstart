@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
 import { afterEach, expect, it } from "vitest";
-import { createLocalSnapshot, verifyLocalSnapshot } from "../../scripts/backup-local.mjs";
+import { createLocalSnapshot, installLocalSnapshot, verifyLocalSnapshot } from "../../scripts/backup-local.mjs";
 
 const execFileAsync = promisify(execFile),directories: string[] = [];
 afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path,{ recursive: true,force: true }))); });
@@ -68,5 +68,28 @@ it("rejects changed files, existing output and symlinks without publishing a par
     await expect(createLocalSnapshot({ appDb: f.databasePath,workflowDir: f.workflow,uploadsDir: null,output: rejected }))
       .rejects.toThrow("symlinks are not supported");
     expect(await readdir(f.root)).not.toContain("rejected");
+  } finally { f.database.close(); }
+});
+
+it("installs a verified snapshot only into fresh targets, including its private uploads",async () => {
+  const f = await fixture();
+  try {
+    const snapshot = join(f.root,"snapshot"),mounts = join(f.root,"mounts");
+    await createLocalSnapshot({ appDb: f.databasePath,workflowDir: f.workflow,uploadsDir: f.uploads,output: snapshot });
+    await mkdir(mounts);
+    const appDb = join(mounts,"app.sqlite"),workflowDir = join(mounts,"world"),uploadsDir = join(mounts,"objects");
+    await expect(installLocalSnapshot(snapshot,{ appDb,workflowDir })).rejects.toThrow("upload target exactly");
+    await writeFile(`${appDb}-wal`,"old WAL");
+    await expect(installLocalSnapshot(snapshot,{ appDb,workflowDir,uploadsDir })).rejects.toThrow("old SQLite companion");
+    expect(await readdir(mounts)).toEqual(["app.sqlite-wal"]);
+    await rm(`${appDb}-wal`);
+    expect(await installLocalSnapshot(snapshot,{ appDb,workflowDir,uploadsDir })).toMatchObject({ targets: 3,uploads: "included" });
+    expect((await stat(appDb)).mode & 0o777).toBe(0o600);
+    expect((await stat(workflowDir)).mode & 0o777).toBe(0o700);
+    expect(await readFile(join(uploadsDir,"private-object"))).toEqual(Buffer.from([0,1,2,3]));
+    await expect(installLocalSnapshot(snapshot,{ appDb,workflowDir,uploadsDir })).rejects.toThrow("already exists");
+    const restored = new DatabaseSync(appDb);
+    try { expect(restored.prepare("SELECT content FROM app_records WHERE id='one'").get()?.content).toBe("original"); }
+    finally { restored.close(); }
   } finally { f.database.close(); }
 });

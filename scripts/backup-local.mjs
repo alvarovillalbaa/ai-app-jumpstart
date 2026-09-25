@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
-import { createReadStream } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { constants, createReadStream } from "node:fs";
 import { chmod, copyFile, link, lstat, mkdir, open, readFile, readdir, realpath, rm, unlink } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -22,15 +22,19 @@ async function privateDirectory(path,requirePrivate = false) {
 async function copyTree(source, target) {
   await privateDirectory(source);
   await mkdir(target, { mode: 0o700 });
-  for (const name of await readdir(source)) {
-    const from = join(source,name),to = join(target,name),details = await lstat(from);
-    if (details.isSymbolicLink()) fail("symlinks are not supported in local snapshot data.");
-    if (details.isDirectory()) await copyTree(from,to);
-    else if (details.isFile()) {
-      await copyFile(from,to);
-      await chmod(to,0o600);
-    } else fail("local snapshot data contains a non-file entry.");
-  }
+  let complete = false;
+  try {
+    for (const name of await readdir(source)) {
+      const from = join(source,name),to = join(target,name),details = await lstat(from);
+      if (details.isSymbolicLink()) fail("symlinks are not supported in local snapshot data.");
+      if (details.isDirectory()) await copyTree(from,to);
+      else if (details.isFile()) {
+        await copyFile(from,to,constants.COPYFILE_EXCL);
+        await chmod(to,0o600);
+      } else fail("local snapshot data contains a non-file entry.");
+    }
+    complete = true;
+  } finally { if (!complete) await rm(target,{ recursive: true,force: true }); }
 }
 async function filesUnder(root,prefix = "") {
   const files = [];
@@ -196,6 +200,84 @@ export async function restoreLocalSnapshot(source,output) {
   } finally { if (!complete) await rm(destination,{ recursive: true,force: true }); }
 }
 
+/** Install a verified snapshot into unused mounts while every writer is stopped.
+ * @param {string} source
+ * @param {{ appDb: string, workflowDir: string, uploadsDir?: string }} options
+ */
+export async function installLocalSnapshot(source,{ appDb,workflowDir,uploadsDir }) {
+  if (process.env.DATA_PROVIDER && process.env.DATA_PROVIDER !== "sqlite")
+    fail("install requires SQLite application data.");
+  if (process.env.WORKFLOW_EXPECTED_PROVIDER === "postgres" || process.env.EVE_WORKFLOW_PROVIDER === "postgres")
+    fail("install requires the default local Workflow world.");
+  const marker = await readFile(new URL("../.output/jumpstart-workflow-provider",import.meta.url),"utf8")
+    .catch(error => { if (error.code === "ENOENT") return null;throw error; });
+  if (marker !== null && marker.trim() !== "default")
+    fail("the built Workflow world is not the default local world.");
+  const root = await realpath(source);
+  const verified = await verifyLocalSnapshot(root);
+  const manifest = validateManifest(JSON.parse(await readFile(join(root,manifestName),"utf8")));
+  if (process.env.UPLOAD_STORAGE_PROVIDER === "local" && verified.uploads !== "included")
+    fail("configured local uploads are missing from the snapshot.");
+  if (process.env.UPLOAD_STORAGE_PROVIDER && process.env.UPLOAD_STORAGE_PROVIDER !== "local" && verified.uploads === "included")
+    fail("configured remote uploads cannot be installed as local objects.");
+  if (!appDb || !workflowDir || Boolean(uploadsDir) !== (verified.uploads === "included"))
+    fail("install requires app DB, Workflow directory and an upload target exactly when uploads are included.");
+  const targets = [];
+  for (const [name,input] of [["app.sqlite",appDb],["workflow",workflowDir],...(uploadsDir ? [["uploads",uploadsDir]] : [])]) {
+    const parent = await realpath(dirname(resolve(input)));
+    await privateDirectory(parent);
+    const target = join(parent,basename(input));
+    if (inside(root,target) || inside(target,root)) fail("install targets must be separate from the snapshot.");
+    const exists = await lstat(target).then(() => true,error => {
+      if (error.code === "ENOENT") return false;
+      throw error;
+    });
+    if (exists) fail("install target already exists; use fresh empty mounts.");
+    if (name === "app.sqlite") for (const suffix of ["-wal","-shm"]) {
+      if (await lstat(`${target}${suffix}`).then(() => true,error => {
+        if (error.code === "ENOENT") return false;
+        throw error;
+      })) fail("install database target has an old SQLite companion file; use a fresh mount.");
+    }
+    targets.push({ name,target });
+  }
+  for (let left = 0;left < targets.length;left++) for (let right = left + 1;right < targets.length;right++) {
+    if (inside(targets[left].target,targets[right].target) || inside(targets[right].target,targets[left].target))
+      fail("install targets must be separate.");
+  }
+  const installed = [];
+  try {
+    for (const { name,target } of targets) {
+      if (name === "app.sqlite") {
+        const temporary = join(dirname(target),`.jumpstart-restore-${randomUUID()}`);
+        try {
+          await copyFile(join(root,name),temporary,constants.COPYFILE_EXCL);
+          await chmod(temporary,0o600);
+          await link(temporary,target);
+          installed.push(target);
+        } finally { await rm(temporary,{ force: true }); }
+      } else {
+        await copyTree(join(root,name),target);
+        installed.push(target);
+      }
+    }
+    for (const row of manifest.files) {
+      const [first,...rest] = row.path.split("/");
+      const target = targets.find(entry => entry.name === first)?.target;
+      if (!target) fail("install target is missing a snapshot component.");
+      const file = rest.length ? join(target,...rest) : target;
+      const details = await lstat(file);
+      if (!details.isFile() || details.size !== row.bytes || (details.mode & 0o077) !== 0 ||
+          await fileDigest(file) !== row.sha256) fail("installed file does not match the verified snapshot.");
+    }
+    await checkApplicationDatabase(targets[0].target);
+    return { targets: targets.length,...verified };
+  } catch (error) {
+    for (const target of installed.reverse()) await rm(target,{ recursive: true,force: true });
+    throw error;
+  }
+}
+
 async function main(args) {
   if (args[0] === "--verify" && args.length === 2) {
     const result = await verifyLocalSnapshot(args[1]);
@@ -205,6 +287,19 @@ async function main(args) {
   if (args[0] === "--restore" && args.length === 4 && args[2] === "--output") {
     const result = await restoreLocalSnapshot(args[1],args[3]);
     console.log(`Local snapshot restored to new directory: ${result.output}.`);
+    return;
+  }
+  if (args[0] === "--install") {
+    const options = new Map();
+    for (let index = 2;index < args.length;index++) {
+      const key = args[index];
+      if (options.has(key) || !["--app-db","--workflow-dir","--uploads-dir","--stopped"].includes(key)) fail("invalid install options.");
+      options.set(key,key === "--stopped" ? true : args[++index]);
+    }
+    if (!args[1] || !options.get("--stopped")) fail("install requires a snapshot and --stopped.");
+    const result = await installLocalSnapshot(args[1],{ appDb: options.get("--app-db"),
+      workflowDir: options.get("--workflow-dir"),uploadsDir: options.get("--uploads-dir") });
+    console.log(`Installed verified snapshot into ${result.targets} fresh targets; uploads ${result.uploads}.`);
     return;
   }
   if (args[0] === "--create") {
@@ -223,7 +318,7 @@ async function main(args) {
     console.log(`Verified local snapshot: ${result.output} (${result.files} files; uploads ${result.uploads}).`);
     return;
   }
-  fail("usage: --create --app-db FILE --workflow-dir DIR (--uploads-dir DIR|--no-uploads) --output NEW_DIR --stopped | --verify DIR | --restore DIR --output NEW_DIR");
+  fail("usage: --create --app-db FILE --workflow-dir DIR (--uploads-dir DIR|--no-uploads) --output NEW_DIR --stopped | --verify DIR | --restore DIR --output NEW_DIR | --install DIR --app-db NEW_FILE --workflow-dir NEW_DIR [--uploads-dir NEW_DIR] --stopped");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href)

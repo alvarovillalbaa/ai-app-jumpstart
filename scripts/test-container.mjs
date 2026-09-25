@@ -75,19 +75,11 @@ try {
     "scripts/backup-local.mjs", "--verify", snapshot), /Local snapshot verified:/);
   assert.match(await docker("run", "--rm", "--mount", backupMount, "--entrypoint", "node", image,
     "scripts/backup-local.mjs", "--restore", snapshot, "--output", restoredRoot), /Local snapshot restored to new directory:/);
-  const install = `import { cp,lstat,stat } from "node:fs/promises";
-    for (const [source,target] of [["/app/.backup/restored/app.sqlite","/app/.data/app.sqlite"],
-      ["/app/.backup/restored/workflow","/app/.eve/.workflow-data"]]) {
-      const exists = await lstat(target).then(() => true,error => { if (error.code === "ENOENT") return false; throw error; });
-      if (exists) throw new Error("Refusing to replace an installed recovery target.");
-      await cp(source,target,{ recursive: true,force: false,errorOnExist: true });
-      if (((await stat(target)).mode & 0o077) !== 0) throw new Error("Restored data is not private.");
-    }
-    console.log("Installed verified snapshot into fresh volumes.");`;
   assert.match(await docker("run", "--rm", "--mount", backupMount,
     "--mount", `type=volume,source=${restoredVolume},target=/app/.data`,
     "--mount", `type=volume,source=${restoredEveVolume},target=/app/.eve`,
-    "--entrypoint", "node", image, "--input-type=module", "-e", install), /Installed verified snapshot/);
+    "--entrypoint", "node", image, "scripts/backup-local.mjs", "--install", restoredRoot,
+    "--app-db", "/app/.data/app.sqlite", "--workflow-dir", "/app/.eve/.workflow-data", "--stopped"), /Installed verified snapshot/);
   await docker("run", "--detach", "--init", "--name", restoredName, "--publish", `127.0.0.1:${hostPort}:3000`, "--env-file", join(directory, "env"),
     "--mount", `type=volume,source=${restoredVolume},target=/app/.data`,
     "--mount", `type=volume,source=${restoredEveVolume},target=/app/.eve`,image);
