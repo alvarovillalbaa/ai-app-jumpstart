@@ -62,7 +62,11 @@ try {
   await docker("network", "create", name);
   await runContainer("postgres", "postgres:17-bookworm", { POSTGRES_PASSWORD: password, POSTGRES_USER: "auth_test", POSTGRES_DB: "auth_test" });
   // TCP readiness excludes the image's temporary socket-only bootstrap server.
-  await waitFor(async () => (await docker("exec", `${name}-postgres`, "pg_isready", "-h", "127.0.0.1", "-U", "auth_test", "-d", "auth_test")).includes("accepting"), "PostgreSQL");
+  await waitFor(async () => (await docker("exec", `${name}-postgres`, "pg_isready", "-h", "127.0.0.1", "-U", "auth_test", "-d", "auth_test")).includes("accepting"), "PostgreSQL", async () => {
+    if (await docker("inspect", "--format", "{{.State.Running}}", `${name}-postgres`) === "true") return true;
+    const logs = await docker("logs", "--tail", "12", `${name}-postgres`);
+    throw new Error(`PostgreSQL startup failed: ${logs.replaceAll(password,"[redacted]").slice(-1200)}`);
+  });
   await docker("exec", `${name}-postgres`, "psql", "-U", "auth_test", "-d", "auth_test", "-v", "ON_ERROR_STOP=1", "-c", "CREATE ROLE postgres NOLOGIN; CREATE SCHEMA auth AUTHORIZATION auth_test; ALTER ROLE auth_test SET search_path = auth, public;");
   const mail = await runContainer("mail", "axllent/mailpit:v1.31.2", {}, ["--publish", "127.0.0.1::8025"]);
   const mailOrigin = `http://127.0.0.1:${await portOf(mail, 8025)}`;

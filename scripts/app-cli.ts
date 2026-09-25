@@ -3,6 +3,7 @@ import { readFile,stat } from "node:fs/promises";
 import { basename } from "node:path";
 import { historyOptions, historyPatch, operationId } from "../lib/agent-access/contract";
 import { projectionOptions } from "../lib/agent-access/projection-contract";
+import { sourceEventOptions } from "../lib/agent-access/source-events";
 import { artifactOptions } from "../lib/agent-access/artifact-contract";
 import { ledgerQueryOptions } from "../lib/budgets/contract";
 import { recordId, recordInput } from "../lib/data/contract";
@@ -21,7 +22,7 @@ export async function run(args: string[], env: Record<string, string | undefined
   if (!command || command === "help") return {
     records: "npm run app -- <list [cursor] | get ID | create JSON_FILE | update ID JSON_FILE | delete ID REVISION>",
     seed: "npm run app -- seed [--allow-remote] (two idempotent, owner-scoped example records)",
-    conversations: "npm run app -- conversations <list [--archived] [--limit N] [--cursor CURSOR] | get OPERATION_UUID | events OPERATION_UUID [AFTER_INGESTION_INDEX] | update OPERATION_UUID JSON_FILE>",
+    conversations: "npm run app -- conversations <list [--archived] [--limit N] [--cursor CURSOR] | get OPERATION_UUID | events OPERATION_UUID [AFTER_INGESTION_INDEX] | source-events OPERATION_UUID [START_SOURCE_INDEX] | update OPERATION_UUID JSON_FILE>",
     artifacts: "npm run app -- artifacts <list [--limit N] [--cursor CURSOR] | get ARTIFACT_UUID | delete ARTIFACT_UUID>",
     uploads: "npm run app -- uploads <list | get UPLOAD_UUID | put FILE | delete UPLOAD_UUID> (private quarantine; no download)",
     account: "npm run app -- account profile (selected fields; current registered-user token required)",
@@ -130,6 +131,11 @@ export async function run(args: string[], env: Record<string, string | undefined
       const id = operationId.safeParse(options[0]), query = projectionOptions.safeParse(options[1] ? { after: Number(options[1]) } : {});
       if (!id.success || !query.success) throw new Error("Provide a conversation operation UUID and optional projection ingestion cursor.");
       path += `/${id.data}/events${query.data.after ? `?after=${encodeURIComponent(query.data.after)}` : ""}`;
+    } else if (action === "source-events" && options.length >= 1 && options.length <= 2) {
+      const id = operationId.safeParse(options[0]);
+      const query = sourceEventOptions.safeParse(options[1] === undefined ? {} : { startIndex: Number(options[1]) });
+      if (!id.success || !query.success) throw new Error("Provide a conversation operation UUID and optional absolute Eve stream index.");
+      path += `/${id.data}/source-events${query.data.startIndex ? `?startIndex=${query.data.startIndex}` : ""}`;
     } else if (action === "list") {
       const input: Record<string,unknown> = {}, seen = new Set<string>();
       for (let i = 0; i < options.length; i++) {

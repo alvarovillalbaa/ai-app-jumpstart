@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { creationBody, requestHash } from "../../lib/agent-access/signing";
+import { sourceEventPage } from "../../lib/agent-access/source-events";
 import { auditAccessibility } from "../helpers/accessibility";
 import { runHostedSmoke } from "../../scripts/smoke-hosted.mjs";
 
@@ -528,6 +529,23 @@ test("real account tokens share history across production REST, MCP resources/to
     expect(entries).toMatchObject({ source: "eve-stream",schemaVersion: 1 });
     expect(JSON.stringify(entries)).toContain("Shared metadata across transports");
     expect(await runCli(["conversations","events",operationId],env)).toMatchObject({ schemaVersion: 1,source: "eve-stream" });
+    const sourceResponse = await request.get(`/api/v1/conversations/${operationId}/source-events?limit=1`,{
+      headers: { authorization: `Bearer ${alice.token}` },
+    });
+    expect(sourceResponse.status()).toBe(200);
+    expect(sourceResponse.headers()["cache-control"]).toBe("no-store");
+    const sourcePage = sourceEventPage.parse(await sourceResponse.json());
+    expect(sourcePage).toMatchObject({ schemaVersion: 1,source: "eve-durable-stream",complete: false });
+    expect(sourcePage.items).toHaveLength(1);
+    expect(sourcePage.items[0].sourceIndex).toBeGreaterThanOrEqual(0);
+    expect(sourcePage.nextIndex).toBeGreaterThan(sourcePage.items[0].sourceIndex);
+    expect(sourceEventPage.parse(await runCli(["conversations","source-events",operationId],env)).items[0]).toEqual(sourcePage.items[0]);
+    const sourceTool = await client.callTool({ name: "conversations_source_events",arguments: { operationId } });
+    expect(sourceTool.isError).not.toBe(true);
+    expect(JSON.parse((sourceTool.content as { text: string }[])[0].text).items[0]).toEqual(sourcePage.items[0]);
+    expect((await request.get(`/api/v1/conversations/${operationId}/source-events`,{
+      headers: { authorization: `Bearer ${bob.token}` },
+    })).status()).toBe(404);
     await expect(runCli(["conversations","get",operationId],{ ...env,APP_API_TOKEN: bob.token })).rejects.toThrow("HTTP 404");
     await expect(runCli(["conversations","update",operationId,file],env)).rejects.toThrow("HTTP 409");
     const logout = await request.post(`${auth}/auth/v1/logout?scope=local`,{ headers: { apikey: process.env.SUPABASE_PUBLISHABLE_KEY!,authorization: `Bearer ${alice.token}` } });

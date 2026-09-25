@@ -13,6 +13,7 @@ import { historyOptions, historyPatch, operationId, type SessionAccessStore } fr
 import { getSessionAccessStore } from "./agent-access/store";
 import { chatSettings } from "./agent-access/settings";
 import { projectionOptions } from "./agent-access/projection-contract";
+import { readSourceEvents, sourceEventOptions } from "./agent-access/source-events";
 import { ArtifactService } from "./agent-access/artifacts";
 import { artifactOptions } from "./agent-access/artifact-contract";
 import { UsageService } from "./budgets/usage";
@@ -27,7 +28,7 @@ import { verifySupabaseIdentity } from "./auth/identity";
 import { profileSnapshot, type AccountProfile } from "./auth/profile";
 
 export function createMcpServer(service: RecordService, history?: ConversationHistoryService,artifacts?: ArtifactService,usage?: UsageService,uploads?: UploadService,
-  profile?: () => Promise<AccountProfile>) {
+  profile?: () => Promise<AccountProfile>,sourceEvents?: (operationId: string,options: unknown) => Promise<unknown>) {
   const server = new McpServer({ name: "ai-app-jumpstart-data", version: "1.0.0" });
   async function result(action: () => Promise<unknown>) {
     try { return { content: [{ type: "text" as const, text: JSON.stringify(await action()) }] }; }
@@ -70,6 +71,11 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
       description: "Read versioned conversation stream projections, including finalized text and run boundaries. These may contain retried attempts and may lag Eve; they are not canonical model history. Empty results do not prove a conversation was empty.",
       inputSchema: z.object({ operationId,options: projectionOptions.optional() }).strict(),annotations: { readOnlyHint: true,openWorldHint: false },
     }, input => result(() => history.events(input.operationId,input.options)));
+    if (sourceEvents) server.registerTool("conversations_source_events",{
+      description: "Read selected safe events in exact Eve stream order using an absolute source cursor. This is not canonical model history: interrupted attempts may both appear. No model turn is started.",
+      inputSchema: z.object({ operationId,options: sourceEventOptions.optional() }).strict(),
+      annotations: { readOnlyHint: true,openWorldHint: false },
+    },input => result(() => sourceEvents(input.operationId,input.options)));
     server.registerTool("conversations_list", {
       description: "List the signed-in user's private conversation metadata. Returns nextCursor; archive state only organizes history. This does not read transcripts or start a run.",
       inputSchema: historyOptions, annotations: { readOnlyHint: true, openWorldHint: false },
@@ -191,7 +197,9 @@ export function mcpHandler(repository: () => Promise<RecordRepository> = getRepo
       }
       return profileSnapshot(current.user);
     } : undefined;
-    const server = createMcpServer(new RecordService(await repository(), principal), history, artifacts, usage,uploads,profile);
+    const sourceEvents = settings && ownedStore ? (operation: string,options: unknown) =>
+      readSourceEvents(ownedStore,owner,operation,options,settings.origin,bearerToken(request),request.signal) : undefined;
+    const server = createMcpServer(new RecordService(await repository(), principal), history, artifacts, usage,uploads,profile,sourceEvents);
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     await server.connect(transport);
     try { return await transport.handleRequest(request, { parsedBody }); }

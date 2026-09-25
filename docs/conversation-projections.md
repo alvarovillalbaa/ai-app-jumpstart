@@ -25,7 +25,7 @@ The event's identity deduplicates repeated ingestion. Reusing an ID with differe
 
 Source event IDs are time-ordered but not a total order across workers. Pagination uses database ingestion order. Writes to one conversation are serialized, so a late event with an older source timestamp receives a new ingestion index and remains visible after an earlier cursor. Indices can have gaps. Recovery of missed older events appends them at the end of ingestion order; this order is **not** exact runtime stream order. Turn/step coordinates and emission times provide context but do not establish a total order or identify successful attempts.
 
-The live UI continues using Eve's reducer and replay. Dedicated materialized run views, exact source-index projections and an application transcript renderer remain future work. Clearing model context does not delete these events. Archiving, cancellation, revocation and data deletion remain distinct operations.
+The live UI continues using Eve's reducer and replay. A read-through source-order event view is available below; durable source-index projections, dedicated materialized run views and an application transcript renderer remain future work. Clearing model context does not delete these events. Archiving, cancellation, revocation and data deletion remain distinct operations.
 
 ## Read through REST, CLI or MCP
 
@@ -36,6 +36,12 @@ Use a current registered-user bearer token with account chat enabled. Record API
 - MCP: `conversations_events` accepts `{operationId,options?:{limit,after}}` through `/api/mcp`. It shares the REST owner checks and response contract.
 
 Client bodies cannot create or edit projection entries. Neither reads nor recovery dispatches a model turn. Responses are private and uncached. No runtime session IDs or owner identifiers are added to these read envelopes; payloads retain public tool-event data.
+
+## Read selected events in source order
+
+For an active owned session, `GET /api/v1/conversations/OPERATION_UUID/source-events?startIndex=0&limit=20` reads Eve's durable stream directly using the caller's verified account token. CLI `npm run app -- conversations source-events OPERATION_UUID [START_SOURCE_INDEX]` and MCP `conversations_source_events` with `{operationId,options?:{startIndex,limit}}` expose the same view. Record API keys and another account cannot access it. The result is `{schemaVersion:1,source:"eve-durable-stream",items,scanned,nextIndex,complete}`. Each selected entry has an absolute `sourceIndex` and the same safe, bounded projection payload defined above. Resume at `nextIndex`, even if `items` is empty: unselected stream events also advance the cursor.
+
+One read processes at most 250 raw events, returns at most 50 selected entries and has a 20-second replay deadline. `complete:true` means the read reached the tail observed when it opened; future events can still arrive. The view requires retained, reachable Eve stream data and does not write an application projection or dispatch a model turn. It gives exact **source event order**, including interrupted attempts; it is not canonical model history or proof that a completed block was the winning provider attempt. It excludes token deltas, reasoning, raw diagnostics and file URLs. Use the persisted `/events` path for portable database reads when Eve is unavailable, and use the source view when exact stream ordering matters.
 
 ## Recover missed writes
 
