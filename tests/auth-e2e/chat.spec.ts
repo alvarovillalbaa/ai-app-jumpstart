@@ -35,6 +35,14 @@ async function send(page: Page, message: string) {
   const input = page.getByPlaceholder("Send a message…");
   await expect(input).toBeEnabled(); await input.fill(message); await input.press("Enter");
 }
+async function expectSettledTurn(page: Page, request: APIRequestContext, token: string, count: number) {
+  await expect(page.getByRole("button", { name: "Stop" })).toHaveCount(0, { timeout: 30_000 });
+  await expect.poll(async () => {
+    const response = await request.get("/api/v1/usage", { headers: { authorization: `Bearer ${token}` } });
+    expect(response.status()).toBe(200);
+    return response.json();
+  }, { timeout: 30_000 }).toMatchObject({ chargedMicros: count * 20, reservedMicros: 0, active: 0, unknownCosts: count });
+}
 async function receiptGate(open: boolean) {
   if (process.env.TEST_CHAT_CONTAINER) {
     execFileSync("docker", ["exec", process.env.TEST_CHAT_CONTAINER, "sh", "-c", open ? "printf ready > /app/.data/gate" : "rm -f /app/.data/gate"]);
@@ -175,10 +183,13 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
   await page.getByLabel("Show archived").uncheck();
   await page.getByRole("link",{ name: "Renamed private chat" }).click();
   await expect(page.getByText("Deterministic owned response",{ exact: true })).toHaveCount(1,{ timeout: 30_000 });
+  await expectSettledTurn(page, request, alice.token, 1);
   await send(page, "Second owned turn");
   await expect(page.getByText("Deterministic owned response", { exact: true })).toHaveCount(2, { timeout: 30_000 });
+  await expectSettledTurn(page, request, alice.token, 2);
   await send(page, "Third owned turn");
   await expect(page.getByText("Deterministic owned response", { exact: true })).toHaveCount(3, { timeout: 30_000 });
+  await expectSettledTurn(page, request, alice.token, 3);
   await send(page, "This turn must be denied");
   await expect(page.getByRole("main").getByRole("alert")).toContainText("daily_limit", { timeout: 30_000 });
   await expect(page.getByText("Deterministic owned response", { exact: true })).toHaveCount(3);
