@@ -111,6 +111,7 @@ export function ConversationHistory({ settings, userId }: { settings: PublicAuth
         <button className="rounded border px-3 py-2" disabled={busy || !title.trim()}>Save title</button>
         <button type="button" disabled={busy} onClick={() => setEditing(undefined)}>Cancel</button>
       </form> : <div className="flex gap-4">
+        <Link className="underline" href={`/conversations/${item.operationId}/activity`}>Saved activity</Link>
         <button disabled={busy} onClick={() => { setEditing(item.id); setTitle(item.title); }}>Rename</button>
         <button disabled={busy} onClick={() => void update(item, { archived: !archived })}>{archived ? "Restore" : "Archive"}</button>
         {item.status === "starting" && <button disabled={busy} onClick={() => void cancelStart(item)}>Cancel pending start</button>}

@@ -512,7 +512,7 @@ test("hosted smoke verifies two Supabase accounts and an owned agent turn",async
   expect(result.browser).toBe(true);
 });
 
-test("real account tokens share history across production REST, MCP resources/tools and CLI",async ({ request }) => {
+test("real account tokens share history across production REST, MCP resources/tools, CLI and saved activity UI",async ({ page,browser,request }) => {
   const alice = await user(request), bob = await user(request), operationId = randomUUID();
   const created = await request.post("/api/v1/conversations",{ headers: { authorization: `Bearer ${alice.token}` },data: { operationId,message: "Shared metadata across transports" } });
   expect([200,202]).toContain(created.status());
@@ -541,6 +541,24 @@ test("real account tokens share history across production REST, MCP resources/to
     expect(entries).toMatchObject({ source: "eve-stream",schemaVersion: 1 });
     expect(JSON.stringify(entries)).toContain("Shared metadata across transports");
     expect(await runCli(["conversations","events",operationId],env)).toMatchObject({ schemaVersion: 1,source: "eve-stream" });
+    await login(page,alice.email);
+    await page.goto("/conversations");
+    await page.getByLabel("Show archived").check();
+    await page.getByRole("link",{ name: "Saved activity" }).click();
+    await expect(page).toHaveURL(new RegExp(`/conversations/${operationId}/activity$`));
+    await expect(page.getByRole("heading",{ name: "Saved activity" })).toBeVisible();
+    await expect(page.locator("ol")).toContainText("Shared metadata across transports");
+    await page.reload();
+    await expect(page.locator("ol")).toContainText("Shared metadata across transports");
+    await auditAccessibility(page,"saved activity");
+    const foreignContext = await browser.newContext();
+    try {
+      const foreignPage = await foreignContext.newPage();
+      await login(foreignPage,bob.email);
+      await foreignPage.goto(`/conversations/${operationId}/activity`);
+      await expect(foreignPage.locator("main [role=alert]")).toContainText("Conversation not found");
+      await expect(foreignPage.locator("ol")).not.toContainText("Shared metadata across transports");
+    } finally { await foreignContext.close(); }
     const sourceResponse = await request.get(`/api/v1/conversations/${operationId}/source-events?limit=1`,{
       headers: { authorization: `Bearer ${alice.token}` },
     });

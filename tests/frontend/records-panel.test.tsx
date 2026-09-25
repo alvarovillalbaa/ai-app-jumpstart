@@ -2,8 +2,14 @@
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { renderToString } from "react-dom/server";
 import { RecordsPanel } from "../../app/_components/records-panel";
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+it("keeps token entry and submission disabled until browser hydration", () => {
+  const html = new DOMParser().parseFromString(renderToString(<RecordsPanel />), "text/html");
+  expect(html.querySelector('input[type="password"]')?.hasAttribute("disabled")).toBe(true);
+  expect(html.querySelector('button[type="submit"]')?.hasAttribute("disabled")).toBe(true);
+});
 it("reports rejected credentials and never shows a successful connection", async () => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ error: { message: "Invalid credential." } }, { status: 401 })));
   render(<RecordsPanel />);

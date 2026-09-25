@@ -1,11 +1,16 @@
 "use client";
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import type { AppRecord, RecordPage } from "@/lib/data/contract";
 import { storedStructuredDraft } from "@/lib/agent-access/structured-record";
 
 /** A small reference UI for any backend implementing the versioned record API. */
+const subscribe = () => () => {};
+const clientSnapshot = () => true;
+const serverSnapshot = () => false;
+
 export function RecordsPanel({ credential, headingLevel = 1 }: { credential?: () => Promise<string>; headingLevel?: 1 | 2 } = {}) {
+  const hydrated = useSyncExternalStore(subscribe, clientSnapshot, serverSnapshot);
   const [token, setToken] = useState("");
   const [connected, setConnected] = useState(false);
   const [records, setRecords] = useState<AppRecord[]>([]);
@@ -52,9 +57,9 @@ export function RecordsPanel({ credential, headingLevel = 1 }: { credential?: ()
     {headingLevel === 1 ? <h1 id="records-heading" className="text-2xl font-semibold">Your records</h1> : <h2 id="records-heading" className="text-2xl font-semibold">Your records</h2>}
     <p>Create private notes and use the same data through the API, CLI, and MCP.</p>
     {!connected ? <form className="space-y-3" onSubmit={event => { event.preventDefault(); void action(load); }}>
-      {!credential && <><label className="block">Access token<input className={inputClass} type="password" autoComplete="off" value={token} onChange={e => setToken(e.target.value)} required minLength={32} /></label>
+      {!credential && <><label className="block">Access token<input className={inputClass} type="password" autoComplete="off" value={token} onChange={e => setToken(e.target.value)} disabled={!hydrated} required minLength={32} /></label>
       <p className="text-sm text-muted-foreground">Use a credential issued by your administrator. It stays in this tab’s memory.</p></>}
-      <button className={buttonClass} disabled={busy} type="submit">{credential ? "Load records" : "Connect"}</button>
+      <button className={buttonClass} disabled={!hydrated || busy} type="submit">{credential ? "Load records" : "Connect"}</button>
     </form> : <>
       <div className="flex gap-3"><button className={buttonClass} disabled={busy} onClick={() => void action(load)}>Refresh</button><button className={buttonClass} onClick={disconnect}>Disconnect</button></div>
       <form className="space-y-3" onSubmit={event => {
