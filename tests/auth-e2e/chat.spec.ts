@@ -505,10 +505,12 @@ test("an approved tool saves one private artifact; denial saves none",async ({ p
   expect((await (await request.get(artifactsUrl,{ headers: { authorization: `Bearer ${denying.token}` } })).json()).items).toEqual([]);
 });
 
-test("hosted smoke verifies two Supabase accounts and an owned agent turn",async ({ request }) => {
+test("hosted smoke verifies two Supabase accounts, an owned turn and its source stream",async ({ request }) => {
   const alice = await user(request),bob = await user(request);
   const result = await runHostedSmoke({ url: process.env.APP_ORIGIN!,token: alice.token,otherToken: bob.token,accounts: true,agent: true,browser: true });
   expect(result.agent?.operationId).toMatch(/^[a-f0-9-]{36}$/);
+  expect(result.agent?.sourceEvents).toBeGreaterThan(0);
+  expect(result.agent?.sourceIndex).toBeGreaterThan(0);
   expect(result.browser).toBe(true);
 });
 

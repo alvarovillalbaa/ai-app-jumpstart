@@ -151,7 +151,35 @@ async function runAgentSmoke({ origin, token, otherToken, protection, request })
     if (!projected) await new Promise(resolve => setTimeout(resolve, 250));
   } while (!projected && Date.now() < projectionDeadline);
   assert.ok(projected, `Completed agent turn was not projected for operation ${operationId}`);
-  return { operationId, sessionId: conversation.sessionId };
+  const sourcePath = `/api/v1/conversations/${operationId}/source-events`;
+  assert.equal((await request(sourcePath, { headers: other })).status, 404,
+    "Other account can read the agent source stream");
+  let sourceIndex = 0, sourceEvents = 0, lastSelected = -1;
+  let sourceAnswer = false, sourceCompleted = false, sourceTail = false;
+  for (let pageNumber = 0; pageNumber < 100; pageNumber++) {
+    const query = new URLSearchParams({ startIndex: String(sourceIndex), limit: "50" });
+    const response = await request(`${sourcePath}?${query}`, { headers: authorized });
+    assert.equal(response.status, 200, `Agent source stream failed (HTTP ${response.status})`);
+    const page = await response.json();
+    assert.equal(page.schemaVersion, 1);
+    assert.equal(page.source, "eve-durable-stream");
+    assert.ok(Array.isArray(page.items) && Number.isSafeInteger(page.scanned) && page.scanned >= 0);
+    assert.equal(page.nextIndex, sourceIndex + page.scanned, "Source cursor skipped or repeated events");
+    for (const entry of page.items) {
+      assert.ok(Number.isSafeInteger(entry.sourceIndex) && entry.sourceIndex > lastSelected &&
+        entry.sourceIndex >= sourceIndex && entry.sourceIndex < page.nextIndex, "Source events are out of order");
+      lastSelected = entry.sourceIndex;
+      sourceEvents++;
+      if (entry.payload?.kind === "message" && entry.payload.role === "assistant" &&
+        entry.payload.parts?.some(part => part.type === "text" && part.text?.trim())) sourceAnswer = true;
+      if (entry.payload?.kind === "run" && entry.payload.state === "completed") sourceCompleted = true;
+    }
+    sourceIndex = page.nextIndex;
+    if (page.complete) { sourceTail = true; break; }
+    assert.ok(page.scanned > 0, "Agent source cursor did not advance");
+  }
+  assert.ok(sourceTail && sourceAnswer && sourceCompleted, `Agent source stream is incomplete for operation ${operationId}`);
+  return { operationId, sessionId: conversation.sessionId, sourceEvents, sourceIndex };
 }
 
 export async function runHostedSmoke({ url, token, otherToken, accounts = false, agent = false, browser = false }) {
@@ -251,7 +279,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   } else {
     const agent = flags.has("--agent"), accounts = agent || flags.has("--accounts"), browser = flags.has("--browser");
     runHostedSmoke({ url: process.env.APP_API_URL, token: process.env.APP_API_TOKEN, otherToken: process.env.APP_API_OTHER_TOKEN, accounts, agent, browser })
-      .then(({ origin }) => console.log(`Hosted smoke passed for ${origin}: readiness, Eve, web, ${accounts ? "Supabase accounts, " : ""}REST, owner isolation, CLI and MCP${browser ? ", Chromium records UI" : ""}${agent ? ", one owned agent turn" : ""}.`))
+      .then(({ origin }) => console.log(`Hosted smoke passed for ${origin}: readiness, Eve, web, ${accounts ? "Supabase accounts, " : ""}REST, owner isolation, CLI and MCP${browser ? ", Chromium records UI" : ""}${agent ? ", one owned agent turn and source-stream read" : ""}.`))
       .catch(error => { console.error(message(error)); process.exitCode = 1; });
   }
 }

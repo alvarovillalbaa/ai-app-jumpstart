@@ -2,6 +2,8 @@
 
 Updated 2026-09-25. The original goal remains active. `IMPLEMENTATION.md` remains the detailed target; this is not a production-readiness certificate.
 
+The optional `smoke:hosted -- --agent` now verifies the completed turn's owner-only source-event view, absolute cursor progress and cross-owner denial in addition to its existing REST/CLI/MCP, projection and Eve checks. The focused real-Auth browser contract passed locally against a production Next build and compiled deterministic Eve fixture. A deployed production-model source read remains unverified; source ordering still does not identify the winning model-history attempt.
+
 The CLI's records, application and source-event NDJSON exports now carry a SHA-256 digest of their exact content lines and can be checked offline with `npm run app -- export verify FILE.ndjson`. The streaming verifier checks format, section counts, a complete footer and source-index order; focused tests cover all three modes, byte tampering and truncation. This detects artifact corruption after publication but neither authenticates a maliciously rewritten file nor fills the export omissions below.
 
 The owner CLI can now export one active conversation's selected Eve source stream to a private no-clobber NDJSON file. It follows absolute indexes through pages with no selected events and publishes only after a complete finite read; see [data access](data-access.md#export-visible-application-data). This gives an owner a portable source-order view while the broader application export remains v5. It does not determine the winning model attempt, supply a canonical transcript or include raw Eve history. The focused export tests cover cursor traversal and failure cleanup; hosted runtime retrieval remains unverified.
