@@ -122,6 +122,26 @@ it("fails the scanner probe closed for partial config, missing sockets and malfo
   expect((await scannerHealth()).status).toBe(503);
 });
 
+it("coalesces public scanner health bursts and expires the short probe cache",async () => {
+  let probes = 0;
+  const path = await pingDaemon("PONG\0",() => { probes++; });
+  vi.stubEnv("UPLOAD_SCANNER_PROVIDER","clamd");
+  vi.stubEnv("UPLOAD_CLAMD_SOCKET",path);
+  vi.stubEnv("VERCEL","");
+  vi.stubEnv("AWS_LAMBDA_FUNCTION_NAME","");
+  const now = Date.now(),clock = vi.spyOn(Date,"now").mockReturnValue(now);
+  try {
+    const burst = await Promise.all(Array.from({ length: 20 },() => scannerHealth()));
+    expect(burst.every(response => response.status === 200)).toBe(true);
+    expect(probes).toBe(1);
+    expect((await scannerHealth()).status).toBe(200);
+    expect(probes).toBe(1);
+    clock.mockReturnValue(now + 5_001);
+    expect((await scannerHealth()).status).toBe(200);
+    expect(probes).toBe(2);
+  } finally { clock.mockRestore(); }
+});
+
 it("streams exact bytes to clamd and accepts only a clean verdict",async () => {
   const payload = Buffer.from("private file bytes");
   let frame: Buffer | undefined;
