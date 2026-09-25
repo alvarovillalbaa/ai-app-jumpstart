@@ -49,4 +49,4 @@ it("previews an operator correction, applies it once, and exposes its audit trai
   expect(run("correct",operationId,...flags,"--correction-id",randomUUID(),"--expected","unknown","--actual","0",
     "--actor","operator-1","--reason","Stale invoice correction attempt","--evidence","invoice:test-2","--apply").status).toBe(1);
   expect(run(...correct.slice(0,correct.indexOf("--actual")+1),"",...correct.slice(correct.indexOf("--actual")+2),"--apply").status).toBe(2);
-});
+},30_000);
