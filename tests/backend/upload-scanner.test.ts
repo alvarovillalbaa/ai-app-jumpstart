@@ -8,7 +8,8 @@ import { spawn } from "node:child_process";
 import { afterEach, expect, it, vi } from "vitest";
 import { sqliteUploadCatalog } from "../../lib/uploads/catalog-sqlite";
 import { UploadIntake } from "../../lib/uploads/intake";
-import { createUploadScanner, scanWithClamd } from "../../lib/uploads/scanner";
+import { createUploadScanner, pingClamd, scanWithClamd } from "../../lib/uploads/scanner";
+import { GET as scannerHealth } from "../../app/api/health/upload-scanner/route";
 import { uploadHandlers } from "../../lib/http/uploads";
 import { localUploadObjects } from "../../lib/uploads/local";
 import { run } from "../../scripts/app-cli";
@@ -68,6 +69,58 @@ async function daemon(reply: string | ((frame: Buffer) => string), observe: (fra
   servers.push(server);server.listen(path);await once(server,"listening");
   return path;
 }
+
+async function pingDaemon(reply: string,observe: (command: string) => void = () => {}) {
+  const root = await mkdtemp(join(tmpdir(),"jumpstart-clamd-ping-"));roots.push(root);
+  const path = join(root,"clamd.sock");
+  const server = createServer(socket => {
+    socket.once("data",chunk => {
+      observe(chunk.toString());
+      socket.end(Buffer.from(reply));
+    });
+  });
+  servers.push(server);server.listen(path);await once(server,"listening");
+  return path;
+}
+
+it("reports scanner liveness separately from application readiness",async () => {
+  vi.stubEnv("UPLOAD_SCANNER_PROVIDER","");
+  vi.stubEnv("UPLOAD_CLAMD_SOCKET","");
+  vi.stubEnv("UPLOAD_DOWNLOAD_POLICY","");
+  vi.stubEnv("VERCEL","");
+  vi.stubEnv("AWS_LAMBDA_FUNCTION_NAME","");
+  const disabled = await scannerHealth();
+  expect(disabled.status).toBe(200);
+  expect(await disabled.json()).toEqual({ status: "disabled",checks: { scanner: "disabled" } });
+  let command = "";
+  const path = await pingDaemon("PONG\0",value => { command = value; });
+  vi.stubEnv("UPLOAD_SCANNER_PROVIDER","clamd");
+  vi.stubEnv("UPLOAD_CLAMD_SOCKET",path);
+  expect(await pingClamd(path)).toBe(true);
+  const ready = await scannerHealth();
+  expect(ready.status).toBe(200);
+  expect(ready.headers.get("cache-control")).toBe("no-store");
+  expect(await ready.json()).toEqual({ status: "ready",checks: { scanner: "ok" } });
+  expect(command).toBe("zPING\0");
+  vi.stubEnv("VERCEL","1");
+  const denied = await scannerHealth();
+  expect(denied.status).toBe(503);
+  expect(await denied.json()).toEqual({ status: "unavailable",checks: { scanner: "failed" } });
+});
+
+it("fails the scanner probe closed for partial config, missing sockets and malformed replies",async () => {
+  vi.stubEnv("UPLOAD_DOWNLOAD_POLICY","scan-on-read");
+  vi.stubEnv("UPLOAD_SCANNER_PROVIDER","");
+  vi.stubEnv("UPLOAD_CLAMD_SOCKET","");
+  expect((await scannerHealth()).status).toBe(503);
+  vi.stubEnv("UPLOAD_SCANNER_PROVIDER","clamd");
+  vi.stubEnv("UPLOAD_CLAMD_SOCKET",join(tmpdir(),"missing-clamd.sock"));
+  expect((await scannerHealth()).status).toBe(503);
+  const path = await pingDaemon("NOPE\0");
+  vi.stubEnv("UPLOAD_CLAMD_SOCKET",path);
+  expect(await pingClamd(path)).toBe(false);
+  expect((await scannerHealth()).status).toBe(503);
+});
 
 it("streams exact bytes to clamd and accepts only a clean verdict",async () => {
   const payload = Buffer.from("private file bytes");

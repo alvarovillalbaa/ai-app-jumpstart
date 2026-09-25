@@ -6,6 +6,28 @@ import { MAX_UPLOAD_BYTES } from "./validation";
 export type UploadScanVerdict = "clean" | "infected";
 export interface UploadScanner { scan(bytes: Uint8Array): Promise<UploadScanVerdict> }
 
+/** A bounded daemon liveness probe; it does not validate signatures or scan policy. */
+export function pingClamd(socketPath: string): Promise<boolean> {
+  if (!isAbsolute(socketPath)) return Promise.resolve(false);
+  return new Promise(resolve => {
+    const socket = createConnection({ path: socketPath });
+    let settled = false,reply = Buffer.alloc(0);
+    function finish(ready: boolean) {
+      if (settled) return;
+      settled = true;socket.destroy();resolve(ready);
+    }
+    socket.setTimeout(1500,() => finish(false));
+    socket.on("error",() => finish(false));
+    socket.on("close",() => finish(false));
+    socket.on("data",chunk => {
+      if (reply.length + chunk.length > 5) return finish(false);
+      reply = Buffer.concat([reply,chunk]);
+      if (reply.includes(0)) finish(reply.equals(Buffer.from("PONG\0")));
+    });
+    socket.on("connect",() => socket.write("zPING\0"));
+  });
+}
+
 /** ClamAV's INSTREAM protocol keeps paths and backend credentials off the scanner. */
 export function scanWithClamd(socketPath: string, bytes: Uint8Array): Promise<UploadScanVerdict> {
   if (!isAbsolute(socketPath) || !bytes.length || bytes.length > MAX_UPLOAD_BYTES) {
