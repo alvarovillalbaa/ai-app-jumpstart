@@ -58,7 +58,7 @@ The CLI can also create a private, paged [export of visible application data](do
 | Self-hosted Node / Docker | `build:local`, supervised Eve + Next startup; SQLite restart/API/MCP/CLI and deterministic owned-chat browser contracts verified in the image; [streaming Compose overlay](compose.streaming.yaml) |
 | Split Next and Eve services | [Streaming ingress recipe](docs/hosting.md#split-next-and-eve-behind-one-streaming-ingress) and Docker route/SSE fixture check; deployed owned-turn acceptance pending |
 | Maintainer-managed Vercel + Supabase | Offline runtime-configuration preflight and Eve deployment recipe; production acceptance pending |
-| AWS ECS / Azure Container Apps / GCP Cloud Run | [Container definitions and recipes](docs/cloud-containers.md); PostgreSQL workflow restart and dual-database Compose proofs passed locally; cloud acceptance pending |
+| AWS ECS / Azure Container Apps / GCP Cloud Run | [Container definitions and recipes](docs/cloud-containers.md) with an offline filled-manifest preflight; PostgreSQL workflow restart and dual-database Compose proofs passed locally; cloud acceptance pending |
 | AWS Amplify | Documented Next.js version/streaming incompatibility with the current app; compatibility gate remains open |
 
 Run `npm run db:migrate -- --dry-run` with the target `DATABASE_URL` to review pending SQL, then run `npm run db:migrate` after backup review and before PostgreSQL/Supabase use. Remote migrations never run per request. SQLite is not for ephemeral serverless or shared network filesystems. Application data and Eve workflow storage are separate.

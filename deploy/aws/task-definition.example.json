@@ -34,7 +34,7 @@
       { "name": "AI_GATEWAY_API_KEY", "valueFrom": "REPLACE_WITH_MODEL_SECRET_ARN" }
     ],
     "healthCheck": {
-      "command": ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"],
+      "command": ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"],
       "interval": 30, "timeout": 5, "retries": 3, "startPeriod": 60
     },
     "logConfiguration": {

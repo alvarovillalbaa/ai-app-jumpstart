@@ -22,6 +22,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
+      - run: npm run check:cloud-templates
       - run: npm run test:ai
       - run: npm run test:session-runtime
       - run: npm run test:workflow-postgres
