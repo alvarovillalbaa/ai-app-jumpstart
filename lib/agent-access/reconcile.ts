@@ -20,7 +20,7 @@ export async function reconcileProjections(store: SessionAccessStore, owner: Acc
       deadline.throwIfAborted();
       const entry = projectEvent(event);
       if (entry) {
-        const outcome = await store.appendProjection(o,id,row.sessionId,entry);
+        const outcome = await store.appendProjection(o,id,row.sessionId,entry,startIndex+processed);
         if (outcome === "inserted") inserted++;
         else if (outcome === "duplicate") duplicates++;
         else throw new Error("Projection conflict or revoked binding.");

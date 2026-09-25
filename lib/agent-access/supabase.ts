@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { accessOwner, reservation, operationId, sessionId, bodyHash, fromAccessRow, type AccessOwner, type Reservation, type SessionAccessStore } from "./contract";
 import { conversationTitle, historyOptions, historyPatch, pageOfHistory, summaryFromRow } from "./contract";
-import { projectionEntry, projectionOptions, projectionOutcome, pageOfProjections } from "./projection-contract";
+import { projectionEntry, projectionOptions, projectionOutcome, projectionSourceIndex, pageOfProjections } from "./projection-contract";
 import { artifactInput, artifactCallId, artifactOptions, artifactSaveResult, artifactFromRow, pageOfArtifacts } from "./artifact-contract";
 import { createHash, randomUUID } from "node:crypto";
 import type { Database } from "../data/supabase.generated";
@@ -39,9 +39,9 @@ export function supabaseAccessStore(url: string, secret: string): SessionAccessS
       if (error) throw error;
       return z.boolean().parse(data);
     },
-    async appendProjection(owner,operation,session,entry) {
+    async appendProjection(owner,operation,session,entry,sourceIndex) {
       const o = accessOwner.parse(owner), e = projectionEntry.parse(entry);
-      const { data,error } = await client.rpc("app_append_conversation_event",{ p_tenant: o.tenant,p_subject: o.subject,p_operation: operationId.parse(operation),p_session: sessionId.parse(session),p_event: e.eventId,p_payload: JSON.stringify(e) });
+      const { data,error } = await client.rpc("app_append_conversation_event",{ p_tenant: o.tenant,p_subject: o.subject,p_operation: operationId.parse(operation),p_session: sessionId.parse(session),p_event: e.eventId,p_payload: JSON.stringify(e),...(sourceIndex === undefined ? {} : { p_source_index: projectionSourceIndex.parse(sourceIndex) }) });
       if (error) throw error;
       return projectionOutcome.parse(data);
     },
@@ -49,9 +49,9 @@ export function supabaseAccessStore(url: string, secret: string): SessionAccessS
       const o = accessOwner.parse(owner), id = operationId.parse(operation), q = projectionOptions.parse(options);
       // The relationship filter is an inner join, so owner predicates constrain
       // event rows even though this client uses a privileged server credential.
-      const { data,error } = await client.from("app_conversation_events").select("payload,ordinal,app_conversations!inner(tenant,subject)").eq("operation_id",id).eq("app_conversations.tenant",o.tenant).eq("app_conversations.subject",o.subject).gt("ordinal",q.after ?? 0).order("ordinal",{ ascending: true }).limit(q.limit+1);
+      const { data,error } = await client.from("app_conversation_events").select("payload,ordinal,source_index,app_conversations!inner(tenant,subject)").eq("operation_id",id).eq("app_conversations.tenant",o.tenant).eq("app_conversations.subject",o.subject).gt("ordinal",q.after ?? 0).order("ordinal",{ ascending: true }).limit(q.limit+1);
       if (error) throw error;
-      return pageOfProjections(data.map(row => ({ entry: JSON.parse(row.payload),index: Number(row.ordinal) })),q.limit);
+      return pageOfProjections(data.map(row => ({ entry: JSON.parse(row.payload),index: Number(row.ordinal),sourceIndex: row.source_index === null ? null : Number(row.source_index) })),q.limit);
     },
     async reserve(input: Reservation, title = "New conversation") {
       const r = reservation.parse(input);

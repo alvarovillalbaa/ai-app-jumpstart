@@ -72,6 +72,14 @@ export function sessionAccessContract(name: string, factory: () => Promise<Sessi
       // A late write whose source clock is older must still follow the cursor.
       await store.appendProjection(owner,input.operationId,sid("projection-session"),event(0));
       expect((await store.listProjections(owner,input.operationId,{ after: last.items[0].ingestionIndex })).items[0]).toMatchObject(event(0));
+      expect(await store.appendProjection(owner,input.operationId,sid("projection-session"),event(2),7)).toBe("duplicate");
+      expect(await store.appendProjection(owner,input.operationId,sid("projection-session"),event(2),7)).toBe("duplicate");
+      expect(await store.appendProjection(owner,input.operationId,sid("projection-session"),event(2),8)).toBe("conflict");
+      expect(await store.appendProjection(owner,input.operationId,sid("projection-session"),event(1),7)).toBe("conflict");
+      expect(await store.appendProjection(owner,input.operationId,sid("projection-session"),event(3),9)).toBe("duplicate");
+      expect(await store.appendProjection(owner,input.operationId,sid("projection-session"),event(4),9)).toBe("conflict");
+      expect((await store.listProjections(owner,input.operationId,{})).items.map(item => [item.eventId,item.sourceIndex]))
+        .toEqual([[event(2).eventId,7],[event(1).eventId,undefined],[event(3).eventId,9],[event(0).eventId,undefined]]);
       for (const stranger of strangers) expect((await store.listProjections(stranger,input.operationId,{})).items).toEqual([]);
       await store.revoke(owner,input.id);
       expect(await store.appendProjection(owner,input.operationId,sid("projection-session"),event(4))).toBe("unavailable");

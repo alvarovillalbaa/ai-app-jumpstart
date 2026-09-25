@@ -21,7 +21,7 @@ export function sqliteAccessStore(path: string) {
       title TEXT NOT NULL,content TEXT NOT NULL,created_at INTEGER NOT NULL,deleted_at INTEGER,
       UNIQUE(operation_id,call_id));
     CREATE INDEX IF NOT EXISTS artifacts_owner_time ON app_artifacts(operation_id,created_at DESC,id DESC);
-    CREATE TABLE IF NOT EXISTS app_conversation_events (ordinal INTEGER PRIMARY KEY AUTOINCREMENT,operation_id TEXT NOT NULL REFERENCES app_conversations(operation_id),event_id TEXT NOT NULL,payload TEXT NOT NULL,UNIQUE(operation_id,event_id));`);
+    CREATE TABLE IF NOT EXISTS app_conversation_events (ordinal INTEGER PRIMARY KEY AUTOINCREMENT,operation_id TEXT NOT NULL REFERENCES app_conversations(operation_id),event_id TEXT NOT NULL,payload TEXT NOT NULL,source_index INTEGER CHECK(source_index >= 0),UNIQUE(operation_id,event_id),UNIQUE(operation_id,source_index));`);
   // Additive upgrade for existing local databases, serialized across processes.
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -31,6 +31,9 @@ export function sqliteAccessStore(path: string) {
     }
     const artifactColumns = new Set(db.prepare("PRAGMA table_info(app_artifacts)").all().map(row => row.name));
     if (!artifactColumns.has("deleted_at")) db.exec("ALTER TABLE app_artifacts ADD COLUMN deleted_at INTEGER");
+    const eventColumns = new Set(db.prepare("PRAGMA table_info(app_conversation_events)").all().map(row => row.name));
+    if (!eventColumns.has("source_index")) db.exec("ALTER TABLE app_conversation_events ADD COLUMN source_index INTEGER CHECK(source_index >= 0)");
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS conversation_events_source ON app_conversation_events(operation_id,source_index)");
     db.exec("CREATE INDEX IF NOT EXISTS conversations_history ON app_conversations(tenant,subject,archived,created_at DESC,id DESC); COMMIT");
   } catch (error) { db.exec("ROLLBACK"); db.close(); throw error; }
   return new SqlSessionAccessStore({ query: async (sql, parameters) => db.prepare(sql).all(...parameters), close: async () => db.close() });

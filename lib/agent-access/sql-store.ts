@@ -1,6 +1,6 @@
 import { accessOwner, reservation, operationId, sessionId, bodyHash, fromAccessRow, type AccessOwner, type Reservation, type SessionAccessStore } from "./contract";
 import { conversationTitle, historyOptions, historyPatch, pageOfHistory, summaryFromRow, type HistoryOptions, type HistoryPatch } from "./contract";
-import { projectionEntry, projectionOptions, pageOfProjections, type ProjectionEntry, type ProjectionOptions } from "./projection-contract";
+import { projectionEntry, projectionOptions, projectionSourceIndex, pageOfProjections, type ProjectionEntry, type ProjectionOptions } from "./projection-contract";
 import { artifactInput, artifactCallId, artifactOptions, artifactFromRow, pageOfArtifacts, type ArtifactInput, type ArtifactOptions } from "./artifact-contract";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -48,18 +48,40 @@ export class SqlSessionAccessStore implements SessionAccessStore {
       ["0".repeat(64),Date.now(),operationId.parse(id),o.tenant,o.subject]);
     return rows.length === 1;
   }
-  async appendProjection(owner: AccessOwner, operation: string, session: string, entry: ProjectionEntry) {
+  async appendProjection(owner: AccessOwner, operation: string, session: string, entry: ProjectionEntry, sourceIndex?: number) {
     const o = accessOwner.parse(owner), id = operationId.parse(operation), sid = sessionId.parse(session), e = projectionEntry.parse(entry), body = JSON.stringify(e);
-    const inserted = await this.db.query(`INSERT INTO app_conversation_events (operation_id,event_id,payload) SELECT operation_id,?,? FROM app_conversations WHERE tenant=? AND subject=? AND operation_id=? AND session_id=? AND status='active' ${this.db.lockBinding ? "FOR UPDATE" : ""} ON CONFLICT DO NOTHING RETURNING event_id`,[e.eventId,body,o.tenant,o.subject,id,sid]);
+    const source = sourceIndex === undefined ? null : projectionSourceIndex.parse(sourceIndex);
+    const inserted = await this.db.query(`INSERT INTO app_conversation_events (operation_id,event_id,payload,source_index) SELECT operation_id,?,?,? FROM app_conversations WHERE tenant=? AND subject=? AND operation_id=? AND session_id=? AND status='active' ${this.db.lockBinding ? "FOR UPDATE" : ""} ON CONFLICT DO NOTHING RETURNING event_id`,[e.eventId,body,source,o.tenant,o.subject,id,sid]);
     if (inserted.length) return "inserted" as const;
-    const rows = await this.db.query("SELECT e.payload FROM app_conversation_events e JOIN app_conversations c ON c.operation_id=e.operation_id WHERE c.tenant=? AND c.subject=? AND c.operation_id=? AND c.session_id=? AND c.status='active' AND e.event_id=?",[o.tenant,o.subject,id,sid,e.eventId]);
-    if (!rows.length) return "unavailable" as const;
-    return (rows[0] as { payload: string }).payload === body ? "duplicate" as const : "conflict" as const;
+    const binding = "FROM app_conversation_events e JOIN app_conversations c ON c.operation_id=e.operation_id WHERE c.tenant=? AND c.subject=? AND c.operation_id=? AND c.session_id=? AND c.status='active' AND e.event_id=?";
+    const values = [o.tenant,o.subject,id,sid,e.eventId];
+    const rows = await this.db.query(`SELECT e.payload,e.source_index ${binding}`,values);
+    if (!rows.length) {
+      if (source === null) return "unavailable" as const;
+      const collision = await this.db.query("SELECT e.event_id FROM app_conversation_events e JOIN app_conversations c ON c.operation_id=e.operation_id WHERE c.tenant=? AND c.subject=? AND c.operation_id=? AND c.session_id=? AND c.status='active' AND e.source_index=?",[o.tenant,o.subject,id,sid,source]);
+      return collision.length ? "conflict" as const : "unavailable" as const;
+    }
+    const existing = rows[0] as { payload: string;source_index: number | null };
+    if (existing.payload !== body || source !== null && existing.source_index !== null && Number(existing.source_index) !== source) return "conflict" as const;
+    if (source !== null && existing.source_index === null) {
+      try {
+        await this.db.query(`UPDATE app_conversation_events SET source_index=? WHERE event_id=? AND source_index IS NULL AND operation_id IN (SELECT operation_id FROM app_conversations WHERE tenant=? AND subject=? AND operation_id=? AND session_id=? AND status='active') RETURNING event_id`,[source,e.eventId,o.tenant,o.subject,id,sid]);
+      } catch (error) {
+        const code = (error as { code?: string }).code;
+        if (code === "23505" || code === "ERR_SQLITE_ERROR" && /UNIQUE constraint failed/.test((error as Error).message)) return "conflict" as const;
+        throw error;
+      }
+      const updated = await this.db.query(`SELECT e.source_index ${binding}`,values);
+      if (!updated.length) return "unavailable" as const;
+      const updatedSource = (updated[0] as { source_index: number | null }).source_index;
+      if (updatedSource === null || Number(updatedSource) !== source) return "conflict" as const;
+    }
+    return "duplicate" as const;
   }
   async listProjections(owner: AccessOwner, operation: string, options: ProjectionOptions) {
     const o = accessOwner.parse(owner), id = operationId.parse(operation), q = projectionOptions.parse(options);
-    const rows = await this.db.query("SELECT e.payload,e.ordinal FROM app_conversation_events e JOIN app_conversations c ON c.operation_id=e.operation_id WHERE c.tenant=? AND c.subject=? AND c.operation_id=? AND e.ordinal>? ORDER BY e.ordinal ASC LIMIT ?",[o.tenant,o.subject,id,q.after ?? 0,q.limit+1]);
-    return pageOfProjections(rows.map(row => ({ entry: JSON.parse((row as { payload: string }).payload),index: Number((row as { ordinal: number }).ordinal) })),q.limit);
+    const rows = await this.db.query("SELECT e.payload,e.ordinal,e.source_index FROM app_conversation_events e JOIN app_conversations c ON c.operation_id=e.operation_id WHERE c.tenant=? AND c.subject=? AND c.operation_id=? AND e.ordinal>? ORDER BY e.ordinal ASC LIMIT ?",[o.tenant,o.subject,id,q.after ?? 0,q.limit+1]);
+    return pageOfProjections(rows.map(row => ({ entry: JSON.parse((row as { payload: string }).payload),index: Number((row as { ordinal: number }).ordinal),sourceIndex: (row as { source_index: string | number | null }).source_index === null ? null : Number((row as { source_index: string | number }).source_index) })),q.limit);
   }
   async reserve(input: Reservation, title = "New conversation") {
     const r = reservation.parse(input);

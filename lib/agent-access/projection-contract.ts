@@ -15,11 +15,12 @@ export const projectionPayload = z.discriminatedUnion("kind",[
 export const projectionEntry = z.object({ schemaVersion: z.literal(1),eventId: projectionEventId,at: z.iso.datetime(),turnId: z.string().min(1).max(512),sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),stepIndex: z.number().int().nonnegative().optional(),payload: projectionPayload }).strict()
   .refine(value => new TextEncoder().encode(JSON.stringify(value)).byteLength <= 49_152,"Projection exceeds 48 KiB.");
 export type ProjectionEntry = z.infer<typeof projectionEntry>;
+export const projectionSourceIndex = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 export const projectionOptions = z.object({ limit: z.number().int().min(1).max(50).default(20),after: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional() }).strict();
 export type ProjectionOptions = z.input<typeof projectionOptions>;
-export const projectionPage = z.object({ schemaVersion: z.literal(1),source: z.literal("eve-stream"),items: z.array(z.object({ ...projectionEntry.shape,ingestionIndex: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).strict()),nextCursor: z.number().int().positive().nullable() }).strict();
+export const projectionPage = z.object({ schemaVersion: z.literal(1),source: z.literal("eve-stream"),items: z.array(z.object({ ...projectionEntry.shape,ingestionIndex: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),sourceIndex: projectionSourceIndex.optional() }).strict()),nextCursor: z.number().int().positive().nullable() }).strict();
 export const projectionOutcome = z.enum(["inserted","duplicate","conflict","unavailable"]);
-export function pageOfProjections(rows: { entry: unknown; index: number }[], limit: number) {
-  const items = rows.slice(0,limit).map(row => ({ ...projectionEntry.parse(row.entry),ingestionIndex: row.index }));
+export function pageOfProjections(rows: { entry: unknown; index: number; sourceIndex?: number | null }[], limit: number) {
+  const items = rows.slice(0,limit).map(row => ({ ...projectionEntry.parse(row.entry),ingestionIndex: row.index,...(row.sourceIndex == null ? {} : { sourceIndex: projectionSourceIndex.parse(row.sourceIndex) }) }));
   return projectionPage.parse({ schemaVersion: 1,source: "eve-stream",items,nextCursor: rows.length > limit ? items.at(-1)?.ingestionIndex : null });
 }

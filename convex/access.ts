@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery, type QueryCtx } from "./_generated/server";
 import { accessOwner, reservation, operationId, sessionId, bodyHash, type AccessOwner } from "../lib/agent-access/contract";
 import { conversation, conversationTitle, conversationSummary, historyOptions, historyPatch, pageOfHistory } from "../lib/agent-access/contract";
-import { projectionEntry, projectionOptions, pageOfProjections } from "../lib/agent-access/projection-contract";
+import { projectionEntry, projectionOptions, projectionSourceIndex, pageOfProjections } from "../lib/agent-access/projection-contract";
 import { artifactInput, artifactCallId, artifactOptions, artifact, pageOfArtifacts } from "../lib/agent-access/artifact-contract";
 
 const ownerFields = { tenant: v.string(), subject: v.string() };
@@ -67,16 +67,29 @@ export const listArtifacts = internalQuery({
 });
 // Serializable internal mutations enforce uniqueness across concurrent writers.
 export const appendProjection = internalMutation({
-  args: { ...ownerFields,operationId: v.string(),sessionId: v.string(),entry: v.any() },
+  args: { ...ownerFields,operationId: v.string(),sessionId: v.string(),entry: v.any(),sourceIndex: v.optional(v.number()) },
   handler: async (ctx,args) => {
     const entry = projectionEntry.parse(args.entry), row = await ownedOperation(ctx,args,args.operationId);
     if (!row || row.status !== "active" || row.sessionId !== sessionId.parse(args.sessionId)) return "unavailable";
+    const source = args.sourceIndex === undefined ? undefined : projectionSourceIndex.parse(args.sourceIndex);
     const existing = await ctx.db.query("conversationEvents").withIndex("by_operation_event",q => q.eq("operationId",args.operationId).eq("eventId",entry.eventId)).unique();
     const payload = JSON.stringify(entry);
-    if (existing) return existing.payload === payload ? "duplicate" : "conflict";
+    if (existing) {
+      if (existing.payload !== payload || source !== undefined && existing.sourceIndex !== undefined && existing.sourceIndex !== source) return "conflict";
+      if (source !== undefined && existing.sourceIndex === undefined) {
+        const taken = await ctx.db.query("conversationEvents").withIndex("by_operation_source",q => q.eq("operationId",args.operationId).eq("sourceIndex",source)).first();
+        if (taken) return "conflict";
+        await ctx.db.patch(existing._id,{ sourceIndex: source });
+      }
+      return "duplicate";
+    }
+    if (source !== undefined) {
+      const taken = await ctx.db.query("conversationEvents").withIndex("by_operation_source",q => q.eq("operationId",args.operationId).eq("sourceIndex",source)).first();
+      if (taken) return "conflict";
+    }
     const ordinal = (row.projectionSequence ?? 0)+1;
     await ctx.db.patch(row._id,{ projectionSequence: ordinal });
-    await ctx.db.insert("conversationEvents",{ operationId: args.operationId,eventId: entry.eventId,ordinal,payload });
+    await ctx.db.insert("conversationEvents",{ operationId: args.operationId,eventId: entry.eventId,ordinal,payload,...(source === undefined ? {} : { sourceIndex: source }) });
     return "inserted";
   },
 });
@@ -86,7 +99,7 @@ export const listProjections = internalQuery({
     const q = projectionOptions.parse(args.options), row = await ownedOperation(ctx,args,args.operationId);
     if (!row) return pageOfProjections([],q.limit);
     const events = await ctx.db.query("conversationEvents").withIndex("by_operation_ordinal",index => index.eq("operationId",args.operationId).gt("ordinal",q.after ?? 0)).order("asc").take(q.limit+1);
-    return pageOfProjections(events.map(event => ({ entry: JSON.parse(event.payload),index: event.ordinal })),q.limit);
+    return pageOfProjections(events.map(event => ({ entry: JSON.parse(event.payload),index: event.ordinal,sourceIndex: event.sourceIndex })),q.limit);
   },
 });
 // No public query/mutation can attach sessions or claim nonce receipts.

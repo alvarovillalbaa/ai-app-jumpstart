@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { projectionEntry, projectionOptions, projectionPage, projectionOutcome, type ProjectionEntry, type ProjectionOptions } from "./projection-contract";
+import { projectionEntry, projectionOptions, projectionPage, projectionOutcome, projectionSourceIndex, type ProjectionEntry, type ProjectionOptions } from "./projection-contract";
 import { artifactInput, artifactCallId, artifactOptions, artifactPage, artifactSaveResult, artifact, type ArtifactInput, type ArtifactOptions } from "./artifact-contract";
 
 export const accessOwner = z.object({ tenant: z.string().min(1).max(200), subject: z.string().min(1).max(200) }).strict();
@@ -44,7 +44,7 @@ export interface SessionAccessStore {
   listArtifacts(owner: AccessOwner, options: ArtifactOptions): Promise<z.infer<typeof artifactPage>>;
   getArtifact(owner: AccessOwner, id: string): Promise<z.infer<typeof artifact> | null>;
   deleteArtifact(owner: AccessOwner, id: string): Promise<boolean>;
-  appendProjection(owner: AccessOwner, operation: string, session: string, entry: ProjectionEntry): Promise<z.infer<typeof projectionOutcome>>;
+  appendProjection(owner: AccessOwner, operation: string, session: string, entry: ProjectionEntry, sourceIndex?: number): Promise<z.infer<typeof projectionOutcome>>;
   listProjections(owner: AccessOwner, operation: string, options: ProjectionOptions): Promise<z.infer<typeof projectionPage>>;
   reserve(input: Reservation, title?: string): Promise<boolean>;
   list(owner: AccessOwner, options: HistoryOptions): Promise<z.infer<typeof historyPage>>;
@@ -64,7 +64,7 @@ export const accessCommand = z.discriminatedUnion("operation", [
   accessOwner.extend({ operation: z.literal("access.listArtifacts"),options: artifactOptions }).strict(),
   accessOwner.extend({ operation: z.literal("access.getArtifact"),id: z.uuid() }).strict(),
   accessOwner.extend({ operation: z.literal("access.deleteArtifact"),id: z.uuid() }).strict(),
-  accessOwner.extend({ operation: z.literal("access.appendProjection"),operationId,sessionId,entry: projectionEntry }).strict(),
+  accessOwner.extend({ operation: z.literal("access.appendProjection"),operationId,sessionId,entry: projectionEntry,sourceIndex: projectionSourceIndex.optional() }).strict(),
   accessOwner.extend({ operation: z.literal("access.listProjections"),operationId,options: projectionOptions }).strict(),
   reservation.extend({ operation: z.literal("access.reserve"), title: conversationTitle.optional() }).strict(),
   accessOwner.extend({ operation: z.literal("access.list"), options: historyOptions }).strict(),

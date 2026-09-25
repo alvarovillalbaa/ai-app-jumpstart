@@ -192,18 +192,21 @@ export type Database = {
           operation_id: string
           ordinal: number
           payload: string
+          source_index: number | null
         }
         Insert: {
           event_id: string
           operation_id: string
           ordinal?: never
           payload: string
+          source_index?: number | null
         }
         Update: {
           event_id?: string
           operation_id?: string
           ordinal?: never
           payload?: string
+          source_index?: number | null
         }
         Relationships: [
           {
@@ -367,6 +370,7 @@ export type Database = {
           p_operation: string
           p_payload: string
           p_session: string
+          p_source_index?: number
           p_subject: string
           p_tenant: string
         }

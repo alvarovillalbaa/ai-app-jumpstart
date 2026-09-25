@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { creationBody, requestHash } from "../../lib/agent-access/signing";
 import { sourceEventPage } from "../../lib/agent-access/source-events";
+import { projectionPage } from "../../lib/agent-access/projection-contract";
 import { auditAccessibility } from "../helpers/accessibility";
 import { runHostedSmoke } from "../../scripts/smoke-hosted.mjs";
 
@@ -145,14 +146,15 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
     const body = await response.json();
     return body.items?.some((entry: { payload: { kind: string;state?: string } }) => entry.payload.kind === "run" && entry.payload.state === "completed");
   }).toBe(true);
-  const projections = await (await request.get(projectionUrl,{ headers: { authorization: `Bearer ${alice.token}` } })).json();
+  const projections = projectionPage.parse(await (await request.get(projectionUrl,{ headers: { authorization: `Bearer ${alice.token}` } })).json());
   expect(projections).toMatchObject({ schemaVersion: 1,source: "eve-stream" });
   expect(JSON.stringify(projections)).toContain("Private deterministic conversation");
   expect(JSON.stringify(projections)).toContain("Deterministic owned response");
   expect((await request.get(projectionUrl,{ headers: { authorization: `Bearer ${bob.token}` } })).status()).toBe(404);
   const recovery = await request.post(`/api/v1/conversations/${receipt.operationId}/reconcile`,{ headers: { authorization: `Bearer ${alice.token}` },data: {} });
   expect(recovery.status()).toBe(200); expect(await recovery.json()).toMatchObject({ inserted: 0,complete: true });
-  expect((await (await request.get(projectionUrl,{ headers: { authorization: `Bearer ${alice.token}` } })).json()).items).toEqual(projections.items);
+  const recovered = projectionPage.parse(await (await request.get(projectionUrl,{ headers: { authorization: `Bearer ${alice.token}` } })).json());
+  expect(recovered.items.map(({ sourceIndex,...entry }) => { expect(sourceIndex).toBeGreaterThanOrEqual(0); return entry; })).toEqual(projections.items);
   const history = await request.get("/api/v1/conversations",{ headers: { authorization: `Bearer ${alice.token}` } });
   expect(history.status()).toBe(200);
   const summary = (await history.json()).items[0];

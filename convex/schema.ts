@@ -8,7 +8,7 @@ export default defineSchema({
     .index("by_cleanup",["state","createdAt","id"]),
   artifacts: defineTable({ id: v.string(),tenant: v.string(),subject: v.string(),operationId: v.string(),sessionId: v.string(),callId: v.string(),inputHash: v.string(),title: v.string(),content: v.string(),createdAt: v.number(),deletedAt: v.optional(v.number()) })
     .index("by_external_id",["id"]).index("by_operation_call",["operationId","callId"]).index("by_owner_time",["tenant","subject","createdAt","id"]),
-  conversationEvents: defineTable({ operationId: v.string(),eventId: v.string(),ordinal: v.number(),payload: v.string() }).index("by_operation_event",["operationId","eventId"]).index("by_operation_ordinal",["operationId","ordinal"]),
+  conversationEvents: defineTable({ operationId: v.string(),eventId: v.string(),ordinal: v.number(),payload: v.string(),sourceIndex: v.optional(v.number()) }).index("by_operation_event",["operationId","eventId"]).index("by_operation_ordinal",["operationId","ordinal"]).index("by_operation_source",["operationId","sourceIndex"]),
   budgetAttempts: defineTable({ operationId: v.string(), attemptId: v.string() }).index("by_operation_attempt", ["operationId","attemptId"]),
   budgetCorrections: defineTable({ correctionId: v.string(),operationId: v.string(),tenant: v.string(),subject: v.string(),
     previousActualMicros: v.union(v.number(),v.null()),correctedActualMicros: v.number(),actor: v.string(),reason: v.string(),

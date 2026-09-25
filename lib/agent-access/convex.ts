@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { ConvexBackend } from "../data/convex-client";
 import { conversation, historyOptions, historyPage, conversationSummary, type AccessOwner, type Reservation, type SessionAccessStore } from "./contract";
-import { projectionEntry, projectionOptions, projectionOutcome, projectionPage } from "./projection-contract";
+import { projectionEntry, projectionOptions, projectionOutcome, projectionPage, projectionSourceIndex } from "./projection-contract";
 import { artifactInput, artifactCallId, artifactOptions, artifactSaveResult, artifactPage, artifact } from "./artifact-contract";
 
 export function convexAccessStore(url: string, secret: string, request: typeof fetch = fetch): SessionAccessStore {
@@ -11,7 +11,7 @@ export function convexAccessStore(url: string, secret: string, request: typeof f
     listArtifacts: (owner,options) => backend.call("access.listArtifacts",{ ...owner,options: artifactOptions.parse(options) },artifactPage),
     getArtifact: (owner,id) => backend.call("access.getArtifact",{ ...owner,id },artifact.nullable()),
     deleteArtifact: (owner,id) => backend.call("access.deleteArtifact",{ ...owner,id },z.boolean()),
-    appendProjection: async (owner, operationId, sessionId, entry) => backend.call("access.appendProjection",{ ...owner,operationId,sessionId,entry: projectionEntry.parse(entry) },projectionOutcome),
+    appendProjection: async (owner, operationId, sessionId, entry,sourceIndex) => backend.call("access.appendProjection",{ ...owner,operationId,sessionId,entry: projectionEntry.parse(entry),...(sourceIndex === undefined ? {} : { sourceIndex: projectionSourceIndex.parse(sourceIndex) }) },projectionOutcome),
     listProjections: async (owner, operationId, options) => backend.call("access.listProjections",{ ...owner,operationId,options: projectionOptions.parse(options) },projectionPage),
     reserve: (input: Reservation, title = "New conversation") => backend.call("access.reserve", { ...input,title }, z.boolean()),
     list: async (owner, options) => backend.call("access.list",{ ...owner,options: historyOptions.parse(options) },historyPage),

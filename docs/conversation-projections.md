@@ -4,7 +4,7 @@ Account sessions persist selected Eve runtime events in the configured applicati
 
 ## What is stored
 
-Each immutable entry has `schemaVersion: 1`, its source `eventId` and emission time, `turnId`, `sequence`, an optional `stepIndex`, a typed `payload`, and a database-assigned `ingestionIndex` in read responses.
+Each immutable entry has `schemaVersion: 1`, its source `eventId` and emission time, `turnId`, `sequence`, an optional `stepIndex`, a typed `payload`, and a database-assigned `ingestionIndex` in read responses. A `sourceIndex` is present only after an authenticated finite replay has verified that event's absolute position in Eve's durable stream. It is stored separately from the immutable payload.
 
 | Payload kind | Stored content |
 | --- | --- |
@@ -23,9 +23,9 @@ The event's identity deduplicates repeated ingestion. Reusing an ID with differe
 
 **These are stream projections, not canonical model history or proof of complete capture.** Eve can emit multiple completed blocks at the same turn/step coordinates after interrupted attempts, under different event IDs. It does not mark which attempt entered durable model history. Keep both; do not collapse content using turn/step coordinates, content equality or a guessed winner. A completed message block alone does not mean the turn completed.
 
-Source event IDs are time-ordered but not a total order across workers. Pagination uses database ingestion order. Writes to one conversation are serialized, so a late event with an older source timestamp receives a new ingestion index and remains visible after an earlier cursor. Indices can have gaps. Recovery of missed older events appends them at the end of ingestion order; this order is **not** exact runtime stream order. Turn/step coordinates and emission times provide context but do not establish a total order or identify successful attempts.
+Source event IDs are time-ordered but not a total order across workers. Pagination uses database ingestion order. Writes to one conversation are serialized, so a late event with an older source timestamp receives a new ingestion index and remains visible after an earlier cursor. Indices can have gaps. Recovery of missed older events appends them at the end of ingestion order; this order is **not** exact runtime stream order. Reconciliation stores verified `sourceIndex` values for newly copied events and matching previously captured events. A source index is unique per conversation; another event claiming it, or the same event claiming a different index, is a conflict. Missing indexes mean the relevant stream range was not verified, not that it was empty. Turn/step coordinates and emission times provide context but do not establish a total order or identify successful attempts.
 
-The live UI continues using Eve's reducer and replay. A read-through source-order event view is available below; durable source-index projections, dedicated materialized run views and an application transcript renderer remain future work. Clearing model context does not delete these events. Archiving, cancellation, revocation and data deletion remain distinct operations.
+The live UI continues using Eve's reducer and replay. A read-through source-order event view is available below; complete indexed capture with checkpoints, dedicated materialized run views and an application transcript renderer remain future work. Clearing model context does not delete these events. Archiving, cancellation, revocation and data deletion remain distinct operations.
 
 ## Read through REST, CLI or MCP
 
@@ -53,8 +53,10 @@ Each request processes at most 250 source events with a 20-second replay deadlin
 
 On failure the API returns `503 projection_recovery_failed`. Earlier inserts may already have committed; retry the same starting cursor after restoring the provider/runtime. Duplicate ingestion is safe. Conflicting payloads, revoked bindings and unsupported/unstamped historical events do not silently succeed. Starting/revoked conversations cannot be recovered through this endpoint. Runtime streams must still be retained and reachable; missing/deleted upstream history requires operator investigation. The structured-result screen attempts one replay when a completed result is missing or stays pending, but background scheduling, recovery checkpoints and historical stream-version migrations remain unimplemented.
 
+Successful replay also records each selected event's absolute source index, including a matching event that the runtime hook had already captured. The persisted `/events` response then includes that optional index while retaining ingestion-order pagination. Replay does not certify unrequested earlier ranges or future events; the view can mix indexed and unindexed rows. It does not change the model-history attribution limit above.
+
 ## Setup and validation
 
-Run `db:migrate` before deploying PostgreSQL/Supabase code; the canonical migration is `20260922113556_conversation_projections.sql`, generated with Supabase CLI. SQLite creates the additive table on connection. Deploy the updated Convex schema/functions before the app. PostgreSQL's insert path locks the conversation before allocating its ingestion sequence; the Supabase invoker-security RPC uses the same binding lock. Convex increments a per-conversation sequence transactionally.
+Run `db:migrate` before deploying PostgreSQL/Supabase code; the projection migrations are `20260922113556_conversation_projections.sql` and `20260925103000_projection_source_index.sql`. SQLite adds the source column and unique index on connection. Deploy the updated Convex schema/functions before the app. PostgreSQL's insert path locks the conversation before allocating its ingestion sequence; the Supabase invoker-security RPC uses the same binding lock. Convex increments a per-conversation sequence transactionally.
 
 Shared provider contracts cover concurrent duplicates, immutable content conflicts, owner/session denial, cursor traversal, late older events and revoked bindings. Unit recovery tests cover bounded pages, partial write failures and repeated replay. `test:chat` checks server-side capture of real compiled Eve events, owner-only reads and idempotent recovery through production Next, plus CLI/MCP access. Models remain deterministic in these tests. They do not prove hosted durability, complete attempt attribution or retention compliance.
