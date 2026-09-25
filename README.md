@@ -51,7 +51,7 @@ The CLI can also create a private, paged [export of visible application data](do
 
 | Option | Configuration / status |
 | --- | --- |
-| SQLite | `DATA_PROVIDER=sqlite`; one persistent instance |
+| SQLite | `DATA_PROVIDER=sqlite`; one persistent instance; [consistent private backup command](docs/operations.md) |
 | PostgreSQL / managed PostgreSQL | `DATA_PROVIDER=postgres`, `DATABASE_URL`; adapter, migrations, contract tests |
 | Supabase PostgREST | `DATA_PROVIDER=supabase`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`; migrated project required |
 | Convex | `DATA_PROVIDER=convex`, `CONVEX_SITE_URL`, `CONVEX_BACKEND_SECRET`; internal functions behind an authenticated HTTP action |

@@ -6,6 +6,8 @@ The record service fixes ownership from the authenticated principal. Every adapt
 
 Set `DATA_PROVIDER=sqlite` and optionally `SQLITE_PATH` (default `.data/app.sqlite`). The first connection initializes the schema. Persist this directory and run one application instance. Do not use SQLite on ephemeral serverless storage or share its WAL files between replicas.
 
+Use the [SQLite backup procedure](operations.md) before upgrades and rehearse restoring its single-file snapshot into a fresh directory. The command accepts an explicit source path, so point it at the actual `SQLITE_PATH` for that deployment. It does not cover local upload objects or Eve's separate workflow state.
+
 ## PostgreSQL and Supabase
 
 Set `DATABASE_URL` to a private migration connection. Run `npm run db:migrate -- --dry-run` to list pending SQL files without creating the migration ledger or changing the schema, review the list and a restorable backup, then run `npm run db:migrate` in a serial release job. Both commands refuse a database whose ledger contains migrations absent from this checkout, so an older release cannot silently treat a newer schema as current. The migration runner records applied versions and uses a transaction and advisory lock. A dry run checks the current ledger only; it does not validate SQL execution or prevent another release from changing the database before the apply step. Never migrate per request.

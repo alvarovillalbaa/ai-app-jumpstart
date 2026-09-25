@@ -34,6 +34,7 @@ yarn-error.log*
 .env*
 !.env.example
 .data/
+backups/
 .convex/
 supabase/.temp/
 supabase/.branches/
