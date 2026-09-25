@@ -55,7 +55,7 @@ The CLI can also create a private, paged [export of visible application data](do
 | PostgreSQL / managed PostgreSQL | `DATA_PROVIDER=postgres`, `DATABASE_URL`; adapter, migrations, contract tests |
 | Supabase PostgREST | `DATA_PROVIDER=supabase`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`; migrated project required |
 | Convex | `DATA_PROVIDER=convex`, `CONVEX_SITE_URL`, `CONVEX_BACKEND_SECRET`; internal functions behind an authenticated HTTP action |
-| Self-hosted Node / Docker | `build:local`, supervised Eve + Next startup; SQLite restart/API/MCP/CLI and deterministic owned-chat browser contracts verified in the image; [streaming Compose overlay](compose.streaming.yaml) |
+| Self-hosted Node / Docker | `build:local`, supervised Eve + Next startup; SQLite restart/API/MCP/CLI and deterministic owned-chat browser contracts verified in the image; [streaming Compose overlay](compose.streaming.yaml) and [offline snapshot/restore](docs/local-recovery.md) |
 | Split Next and Eve services | [Streaming ingress recipe](docs/hosting.md#split-next-and-eve-behind-one-streaming-ingress) and Docker route/SSE fixture check; deployed owned-turn acceptance pending |
 | Maintainer-managed Vercel + Supabase | Offline runtime-configuration preflight and Eve deployment recipe; production acceptance pending |
 | AWS ECS / Azure Container Apps / GCP Cloud Run | [Container definitions and recipes](docs/cloud-containers.md) with an offline filled-manifest preflight; PostgreSQL workflow restart and dual-database Compose proofs passed locally; cloud acceptance pending |

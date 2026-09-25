@@ -11,6 +11,7 @@ import { once } from "node:events";
 const image = process.env.TEST_CONTAINER_IMAGE ?? "ai-app-jumpstart:test";
 const name = `jumpstart-contract-${randomBytes(6).toString("hex")}`;
 const volume = `${name}-data`;
+const eveVolume = `${name}-eve`;
 const directory = await mkdtemp(join(tmpdir(), "jumpstart-container-"));
 const tokens = [randomBytes(32).toString("base64url"), randomBytes(32).toString("base64url")];
 const keys = tokens.map((token, index) => ({ sha256: createHash("sha256").update(token).digest("hex"), tenant: "container-test", subject: `user-${index}`, scopes: ["records:read", "records:write"] }));
@@ -50,7 +51,9 @@ try {
   const origin = `http://127.0.0.1:${hostPort}`;
   await writeFile(join(directory, "env"), `APP_ORIGIN=${origin}\nAPP_API_KEYS=${JSON.stringify(keys)}\nDATA_PROVIDER=sqlite\nSQLITE_PATH=/app/.data/app.sqlite\n`, { mode: 0o600 });
   await docker("volume", "create", volume);
-  await docker("run", "--detach", "--init", "--name", name, "--publish", `127.0.0.1:${hostPort}:3000`, "--env-file", join(directory, "env"), "--mount", `type=volume,source=${volume},target=/app/.data`, image);
+  await docker("volume", "create", eveVolume);
+  await docker("run", "--detach", "--init", "--name", name, "--publish", `127.0.0.1:${hostPort}:3000`, "--env-file", join(directory, "env"),
+    "--mount", `type=volume,source=${volume},target=/app/.data`,"--mount", `type=volume,source=${eveVolume},target=/app/.eve`,image);
   await ready(origin);
   assert.notEqual(await docker("exec", name, "id", "-u"), "0", "App must run as a non-root user");
   const headers = { authorization: `Bearer ${tokens[0]}`, "content-type": "application/json", origin };
@@ -58,6 +61,16 @@ try {
   assert.equal(created.status, 201);
   const record = await created.json();
   assert.equal((await fetch(`${origin}/api/v1/records/${record.id}`, { headers: { authorization: `Bearer ${tokens[1]}` } })).status, 404);
+  await docker("stop", "--time", "20", name);
+  const snapshot = "/app/.data/container-contract-snapshot";
+  const localSnapshot = await docker("run", "--rm", "--volumes-from", name, "--entrypoint", "node", image,
+    "scripts/backup-local.mjs", "--create", "--app-db", "/app/.data/app.sqlite",
+    "--workflow-dir", "/app/.eve/.workflow-data", "--no-uploads", "--output", snapshot, "--stopped");
+  assert.match(localSnapshot, /Verified local snapshot:/);
+  assert.match(await docker("run", "--rm", "--volumes-from", name, "--entrypoint", "node", image,
+    "scripts/backup-local.mjs", "--verify", snapshot), /Local snapshot verified:/);
+  await docker("start", name);
+  await ready(origin);
   await docker("restart", "--time", "20", name);
   await ready(origin);
   const restored = await fetch(`${origin}/api/v1/records/${record.id}`, { headers });
@@ -68,7 +81,7 @@ try {
   });
   assert.match(smoke, /Hosted smoke passed for/);
   assert.equal((await fetch(`${origin}/api/v1/records/${record.id}?revision=1`, { method: "DELETE", headers })).status, 204);
-  console.log("Container passed: non-root runtime, readiness, owner isolation, restart persistence, REST, MCP and CLI.");
+  console.log("Container passed: non-root runtime, readiness, private local snapshot, owner isolation, restart persistence, REST, MCP and CLI.");
 } catch (error) {
   console.error(error instanceof Error ? error.message : "Container validation failed.");
   console.error(await docker("logs", "--tail", "80", name).catch(() => "No container logs available."));
@@ -76,5 +89,6 @@ try {
 } finally {
   await docker("rm", "--force", name).catch(() => {});
   await docker("volume", "rm", volume).catch(() => {});
+  await docker("volume", "rm", eveVolume).catch(() => {});
   await rm(directory, { recursive: true, force: true });
 }

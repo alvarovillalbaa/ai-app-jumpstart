@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
 import { afterEach, expect, it } from "vitest";
-import { backupSqliteApplication } from "../../scripts/backup-sqlite";
+import { backupSqliteApplication } from "../../scripts/backup-sqlite.mjs";
 
 const directories: string[] = [];
 const execFileAsync = promisify(execFile);
@@ -21,10 +21,11 @@ it("backs up uncheckpointed WAL writes and restores a writable, private applicat
     const id = randomUUID();
     database.prepare("INSERT INTO app_records(id,content) VALUES (?,?)").run(id,"private fixture");
     expect((await stat(`${source}-wal`)).size).toBeGreaterThan(0);
-    const { stdout } = await execFileAsync(process.execPath,["--import","tsx","scripts/backup-sqlite.ts","--source",source,"--output",destination]);
+    const { stdout } = await execFileAsync(process.execPath,["scripts/backup-sqlite.mjs","--source",source,"--output",destination]);
     expect(stdout).toContain("Verified private SQLite backup:");
     expect((await stat(destination)).size).toBeGreaterThan(0);
     expect((await stat(destination)).mode & 0o777).toBe(0o600);
+    expect((await readdir(directory)).filter(name => name.startsWith("backup.sqlite-"))).toEqual([]);
     database.prepare("UPDATE app_records SET content=? WHERE id=?").run("changed later",id);
     const restoredPath = join(directory,"restored.sqlite");
     await copyFile(destination,restoredPath);

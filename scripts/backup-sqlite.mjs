@@ -4,22 +4,27 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 /** Publish one consistent application SQLite snapshot without replacing an existing file. */
-export async function backupSqliteApplication(sourcePath: string, outputPath: string) {
+export async function backupSqliteApplication(sourcePath, outputPath) {
   const source = resolve(sourcePath), output = resolve(outputPath);
   if (source === output) throw new Error("Source and backup paths must differ.");
   const sourceInfo = await stat(source).catch(() => null);
   if (!sourceInfo?.isFile()) throw new Error("Source SQLite database is missing or is not a file.");
   if (await lstat(output).then(() => true, error => {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    if (error.code === "ENOENT") return false;
     throw error;
   })) throw new Error("Backup destination already exists; choose a new path.");
 
   const tempDir = await mkdtemp(join(dirname(output), ".sqlite-backup-"));
   const temporary = join(tempDir, "snapshot.sqlite");
-  let database: DatabaseSync | undefined;
+  let database;
   try {
     database = new DatabaseSync(source, { readOnly: true, timeout: 5_000 });
     const pages = await backup(database, temporary);
+    // The source may use WAL. Make the isolated backup self-contained so later
+    // read-only verification cannot create sidecar files beside a published copy.
+    const standalone = new DatabaseSync(temporary);
+    try { standalone.exec("PRAGMA journal_mode=DELETE"); }
+    finally { standalone.close(); }
     await chmod(temporary, 0o600);
 
     const snapshot = new DatabaseSync(temporary, { readOnly: true });
@@ -35,7 +40,7 @@ export async function backupSqliteApplication(sourcePath: string, outputPath: st
     try { await handle.sync(); } finally { await handle.close(); }
     try { await link(temporary, output); }
     catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST")
+      if (error.code === "EEXIST")
         throw new Error("Backup destination already exists; choose a new path.");
       throw error;
     }
@@ -46,7 +51,7 @@ export async function backupSqliteApplication(sourcePath: string, outputPath: st
   }
 }
 
-async function main(args: string[]) {
+async function main(args) {
   if (args.length !== 4 || args[0] !== "--source" || args[2] !== "--output" || !args[1] || !args[3])
     throw new Error("Usage: npm run db:backup:sqlite -- --source SOURCE.sqlite --output NEW_BACKUP.sqlite");
   const result = await backupSqliteApplication(args[1], args[3]);

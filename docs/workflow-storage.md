@@ -8,6 +8,8 @@ Application records, ownership and budgets use `DATA_PROVIDER`. Eve execution us
 | Managed Vercel | Default | Vercel Workflow |
 | Long-running containers on AWS/Azure/GCP or other hosts | `EVE_WORKFLOW_PROVIDER=postgres` | Explicit private PostgreSQL database |
 
+For the default local world, use the [offline self-hosted snapshot](local-recovery.md) to copy `.eve/.workflow-data` alongside the application SQLite database and optional local upload objects after stopping writers. The PostgreSQL world needs its own database backup and restore rehearsal.
+
 The production model is unchanged. `agent/lib/workflow.ts` selects the world at **build time**, through Eve's documented `experimental.workflow.world` option. Runtime environment variables alone cannot turn a default/local artifact into a PostgreSQL artifact. `build:local` writes the selected world into `.output/jumpstart-workflow-provider`; the production supervisor reads this marker before starting either service. Set `WORKFLOW_EXPECTED_PROVIDER=postgres` on long-running cloud containers, as the supplied manifests do. Startup fails if the artifact is unmarked, has the wrong world, or the PostgreSQL world lacks its connection URL. A default-world build also refuses an accidental `WORKFLOW_POSTGRES_URL`. Rebuild when changing the world. Keep each environment's image digest, build selection and database references in its release record.
 
 ## PostgreSQL setup
