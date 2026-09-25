@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp,rm,writeFile } from "node:fs/promises";
+import { mkdtemp,readFile,rm,stat,writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach,expect,it,vi } from "vitest";
@@ -21,15 +21,18 @@ afterEach(() => vi.unstubAllEnvs());
 
 it("uses the authenticated binary HTTP path from CLI for put, list, get and delete",async () => {
   vi.stubEnv("AUTH_PROVIDER","api-key");
+  vi.stubEnv("UPLOAD_DOWNLOAD_POLICY","scan-on-read");
   vi.stubEnv("APP_API_KEYS",JSON.stringify([{ sha256: createHash("sha256").update(token).digest("hex"),
-    tenant: "test",subject: "alice",scopes: ["uploads:read","uploads:write"] }]));
+    tenant: "test",subject: "alice",scopes: ["uploads:read","uploads:write","uploads:download"] }]));
   const directory = await mkdtemp(join(tmpdir(),"jumpstart-upload-cli-")),file = join(directory,"note.txt");
   await writeFile(file,"cli secret bytes");
-  const catalog = sqliteUploadCatalog(":memory:"),api = uploadHandlers(async () => catalog,async () => localUploadObjects(join(directory,"objects")));
+  const catalog = sqliteUploadCatalog(":memory:"),api = uploadHandlers(async () => catalog,
+    async () => localUploadObjects(join(directory,"objects")),async () => ({ scan: async () => "clean" }));
   const request: typeof fetch = (url,init) => {
     const req = new Request(url,init),id = new URL(req.url).pathname.split("/")[4];
     if (req.method === "POST") return api.create(req);
     if (req.method === "DELETE") return api.delete(req,id);
+    if (new URL(req.url).pathname.endsWith("/download")) return api.download(req,id);
     return id ? api.get(req,id) : api.list(req);
   };
   const env = { APP_API_TOKEN: token };
@@ -38,6 +41,11 @@ it("uses the authenticated binary HTTP path from CLI for put, list, get and dele
     expect(row.state).toBe("quarantined");
     expect(await run(["uploads","list"],env,request)).toMatchObject({ items: [{ id: row.id }],usage: { files: 1 } });
     expect(await run(["uploads","get",row.id],env,request)).toMatchObject({ id: row.id,state: "quarantined" });
+    const output = join(directory,"download.txt");
+    expect(await run(["uploads","download",row.id,output],env,request)).toMatchObject({ file: output,size: 16 });
+    expect(await readFile(output,"utf8")).toBe("cli secret bytes");
+    expect((await stat(output)).mode & 0o077).toBe(0);
+    await expect(run(["uploads","download",row.id,output],env,request)).rejects.toThrow("already exists");
     expect(await run(["uploads","delete",row.id],env,request)).toEqual({ deleted: true });
     expect(await run(["uploads","list"],env,request)).toEqual({ items: [],usage: { files: 0,bytes: 0 } });
     await expect(run(["uploads","get",row.id],env,request)).rejects.toThrow("HTTP 404");

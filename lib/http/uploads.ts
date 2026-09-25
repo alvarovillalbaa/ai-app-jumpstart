@@ -61,6 +61,16 @@ export function uploadHandlers(catalog: () => Promise<UploadCatalog> = getUpload
       return Response.json(row,{ status: 201,headers: { location: `/api/v1/uploads/${row.id}` } });
     }),
     get: (request: Request,id: string) => handle(request,async () => Response.json(await (await service(request)).get(id))),
+    download: (request: Request,id: string) => handle(request,async () => {
+      const { row,bytes } = await (await service(request)).download(id);
+      return new Response(Buffer.from(bytes),{ headers: {
+        "content-type": "application/octet-stream",
+        "content-length": String(bytes.length),
+        "content-disposition": `attachment; filename="download"; filename*=UTF-8''${encodeURIComponent(row.name).replace(/[!'()*]/g,char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)}`,
+        "content-security-policy": "sandbox",
+        "cross-origin-resource-policy": "same-origin",
+      } });
+    }),
     delete: (request: Request,id: string) => handle(request,async () => {
       await (await service(request)).delete(id);
       return new Response(null,{ status: 204 });

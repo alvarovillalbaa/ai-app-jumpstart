@@ -35,6 +35,8 @@ it("rejects serverless-local storage, plaintext origins, wrong credentials and w
   expect(() => checkManagedConfig({ ...baseline, CRON_SECRET: "x".repeat(31) + "\n" })).toThrow("CRON_SECRET");
   expect(checkManagedConfig({ ...baseline, UPLOAD_STORAGE_PROVIDER: "supabase" })).toMatchObject({ target: "vercel-supabase" });
   expect(() => checkManagedConfig({ ...baseline, UPLOAD_STORAGE_PROVIDER: "local" })).toThrow("UPLOAD_STORAGE_PROVIDER=supabase");
+  expect(() => checkManagedConfig({ ...baseline, UPLOAD_STORAGE_PROVIDER: "supabase",UPLOAD_DOWNLOAD_POLICY: "scan-on-read" }))
+    .toThrow("self-hosted private scanner socket");
 });
 
 it("fails closed for incomplete or malformed enabled chat without echoing secret values", () => {

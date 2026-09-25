@@ -13,7 +13,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 it("uses the verified identity, excludes editable metadata, and does not cache identity responses", async () => {
   const fetcher = vi.fn().mockResolvedValue(Response.json(user)); vi.stubGlobal("fetch", fetcher);
-  expect(await authenticate(request(), settings)).toEqual({ tenant: "supabase:https://identity.example", subject: user.id, scopes: ["records:read", "records:write", "uploads:read", "uploads:write"], credentialType: "user" });
+  expect(await authenticate(request(), settings)).toEqual({ tenant: "supabase:https://identity.example", subject: user.id, scopes: ["records:read", "records:write", "uploads:read", "uploads:write", "uploads:download"], credentialType: "user" });
   const [url, options] = fetcher.mock.calls[0];
   expect(String(url)).toBe("https://identity.example/auth/v1/user");
   expect(new Headers(options.headers).get("authorization")).toBe(`Bearer ${token}`);

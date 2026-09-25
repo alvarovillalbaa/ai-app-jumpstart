@@ -33,6 +33,9 @@ export function checkManagedConfig(env: NodeJS.ProcessEnv, requireChat = false) 
   if (env.UPLOAD_STORAGE_PROVIDER && env.UPLOAD_STORAGE_PROVIDER !== "supabase") {
     throw new Error("Set UPLOAD_STORAGE_PROVIDER=supabase or leave uploads disabled on Vercel.");
   }
+  if (env.UPLOAD_DOWNLOAD_POLICY) {
+    throw new Error("UPLOAD_DOWNLOAD_POLICY=scan-on-read requires a self-hosted private scanner socket; leave downloads disabled on Vercel.");
+  }
   if (env.SUPABASE_SECRET_KEY === env.SUPABASE_PUBLISHABLE_KEY || env.SUPABASE_SECRET_KEY?.startsWith("sb_publishable_")) {
     throw new Error("SUPABASE_SECRET_KEY must be a backend credential distinct from SUPABASE_PUBLISHABLE_KEY.");
   }

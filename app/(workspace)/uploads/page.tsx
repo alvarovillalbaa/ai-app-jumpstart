@@ -13,8 +13,10 @@ export default async function UploadsPage() {
     return <main className="p-8"><h1>Uploads are not enabled</h1><p>Configure a private upload storage provider to use this workspace.</p><Link href="/records">Open records</Link></main>;
   }
   const settings = authSettings();
-  if (!settings) return <UploadQuarantine />;
+  const downloadEnabled = process.env.UPLOAD_DOWNLOAD_POLICY === "scan-on-read" &&
+    !process.env.VERCEL && !process.env.AWS_LAMBDA_FUNCTION_NAME;
+  if (!settings) return <UploadQuarantine downloadEnabled={downloadEnabled} />;
   const user = await currentUser();
   if (!user) redirect("/login?next=/uploads");
-  return <UploadQuarantine key={user.id} settings={settings} userId={user.id} />;
+  return <UploadQuarantine key={user.id} settings={settings} userId={user.id} downloadEnabled={downloadEnabled} />;
 }

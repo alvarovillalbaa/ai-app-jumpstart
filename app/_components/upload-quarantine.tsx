@@ -7,7 +7,7 @@ import type { PublicAuthSettings } from "@/lib/auth/settings";
 import { DEFAULT_UPLOAD_QUOTA, uploadEntry, uploadPage, type UploadEntry } from "@/lib/uploads/catalog-contract";
 import { MAX_API_UPLOAD_BYTES, uploadName, type UploadMediaType } from "@/lib/uploads/schema";
 
-type Props = { settings?: PublicAuthSettings; userId?: string };
+type Props = { settings?: PublicAuthSettings; userId?: string; downloadEnabled?: boolean };
 type Page = ReturnType<typeof uploadPage.parse>;
 const extensions: Record<string, UploadMediaType> = {
   txt: "text/plain", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", pdf: "application/pdf",
@@ -30,11 +30,12 @@ function checkedFile(file: File): { name: string; mediaType: UploadMediaType } {
   return { name, mediaType };
 }
 
-export function UploadQuarantine({ settings, userId }: Props) {
+export function UploadQuarantine({ settings, userId, downloadEnabled = false }: Props) {
   const client = settings ? browserAuth(settings) : null;
   const identity = useRef(userId ?? "");
   const generation = useRef(0);
   const listController = useRef<AbortController | null>(null);
+  const downloadController = useRef<AbortController | null>(null);
   const uploadRequest = useRef<XMLHttpRequest | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const [token, setToken] = useState("");
@@ -86,17 +87,17 @@ export function UploadQuarantine({ settings, userId }: Props) {
       identity.current = session?.user.id ?? "";
       if (identity.current !== userId) {
         generation.current++;
-        listController.current?.abort(); uploadRequest.current?.abort();
+        listController.current?.abort(); downloadController.current?.abort(); uploadRequest.current?.abort();
         setSignedIn(false); setPage(null); setFile(null); setBusy(false); setUploading(false);
       }
     });
     const timer = setTimeout(() => { void load(); }, 0);
-    return () => { clearTimeout(timer); data.subscription.unsubscribe(); generationRef.current++; listController.current?.abort(); uploadRequest.current?.abort(); };
+    return () => { clearTimeout(timer); data.subscription.unsubscribe(); generationRef.current++; listController.current?.abort(); downloadController.current?.abort(); uploadRequest.current?.abort(); };
   }, [client, load, userId]);
 
   function disconnect() {
     generation.current++;
-    listController.current?.abort(); uploadRequest.current?.abort();
+    listController.current?.abort(); downloadController.current?.abort(); uploadRequest.current?.abort();
     if (fileInput.current) fileInput.current.value = "";
     setToken(""); setConnected(false); setPage(null); setFile(null); setError(""); setNotice(""); setBusy(false); setUploading(false); setActing(null);
   }
@@ -133,7 +134,7 @@ export function UploadQuarantine({ settings, userId }: Props) {
       });
       if (current !== generation.current) return;
       if (fileInput.current) fileInput.current.value = "";
-      setFile(null); setNotice(`“${row.name}” is quarantined. It cannot be downloaded or used by the agent.`);
+      setFile(null); setNotice(`“${row.name}” is quarantined. ${downloadEnabled ? "An owner download requires a fresh clean scanner verdict." : "It cannot be downloaded or used by the agent."}`);
       await load();
     } catch (cause) {
       if (current === generation.current) setError(cause instanceof Error ? cause.message : "Upload failed.");
@@ -164,10 +165,43 @@ export function UploadQuarantine({ settings, userId }: Props) {
     } finally { if (current === generation.current) setActing(null); }
   }
 
+  async function download(item: UploadEntry) {
+    const current = generation.current,controller = new AbortController();
+    downloadController.current = controller;
+    setActing(item.id);setError("");setNotice("");
+    try {
+      const accessToken = await credential();
+      if (current !== generation.current || controller.signal.aborted) return;
+      const response = await fetch(`/api/v1/uploads/${item.id}/download`,{
+        cache: "no-store",signal: AbortSignal.any([controller.signal,AbortSignal.timeout(60_000)]),
+        headers: { authorization: `Bearer ${accessToken}` },
+      });
+      if (!response.ok) {
+        const body: unknown = await response.json().catch(() => null);
+        throw new Error(messageFrom(body,`Download failed (${response.status}).`));
+      }
+      if (response.headers.get("content-type")?.split(";")[0] !== "application/octet-stream") throw new Error("Download response was invalid.");
+      const blob = await response.blob();
+      if (blob.size !== item.size || current !== generation.current || controller.signal.aborted) throw new Error("Download was interrupted or changed.");
+      const url = URL.createObjectURL(blob),anchor = document.createElement("a");
+      anchor.href = url;anchor.download = item.name;anchor.style.display = "none";
+      document.body.append(anchor);anchor.click();anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url),60_000);
+      setNotice(`“${item.name}” passed a fresh scan and was downloaded.`);
+    } catch (cause) {
+      if (current === generation.current && !controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Download failed.");
+    } finally {
+      if (downloadController.current === controller) downloadController.current = null;
+      if (current === generation.current) setActing(null);
+    }
+  }
+
   if (!signedIn) return <main className="p-8"><p role="alert">Your account changed or your session ended.</p><Link href="/login?next=/uploads">Sign in again</Link></main>;
   return <main className="mx-auto max-w-3xl space-y-6 p-6 sm:p-8">
     <h1 className="text-3xl font-medium">Private uploads</h1>
-    <p className="text-muted-foreground">Store files in private quarantine. Files cannot be downloaded, previewed or used by the agent until scanning and release are available.</p>
+    <p className="text-muted-foreground">{downloadEnabled
+      ? "Store files in private quarantine. Owner downloads require a fresh clean scan; files cannot be previewed or used by the agent."
+      : "Store files in private quarantine. Files cannot be downloaded, previewed or used by the agent until scanning and release are available."}</p>
     {!connected ? <form className="space-y-3" onSubmit={event => { event.preventDefault(); void load(); }}>
       <label className="block">Access token<input className="mt-1 w-full rounded border bg-background p-2" type="password" autoComplete="off" value={token} onChange={event => setToken(event.target.value)} minLength={32} required /></label>
       <p className="text-sm text-muted-foreground">Use a credential with upload access. It stays in this tab’s memory.</p>
@@ -186,8 +220,9 @@ export function UploadQuarantine({ settings, userId }: Props) {
         <h2 id="stored-heading" className="text-lg font-medium">Stored files</h2>
         <p className="text-sm text-muted-foreground">{page.usage.files} of {DEFAULT_UPLOAD_QUOTA.maxFiles} files · {(page.usage.bytes / 1024 / 1024).toFixed(2)} of {DEFAULT_UPLOAD_QUOTA.maxBytes / 1024 / 1024} MiB reserved</p>
         {!page.items.length ? <p>No uploads yet.</p> : <ul className="divide-y">{page.items.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 py-4">
-          <div className="min-w-0"><h3 className="break-words font-medium">{item.name}</h3><p className="text-sm text-muted-foreground">{item.state === "quarantined" ? "Quarantined · unavailable for download or agent use" : item.state === "deleting" ? "Deletion pending · retry deletion" : "Storage pending · unavailable for use"} · {(item.size / 1024).toFixed(1)} KiB · {new Date(item.createdAt).toLocaleString()}</p></div>
-          <button className={buttonClass} disabled={uploading || acting !== null} onClick={() => void remove(item)}>{item.state === "deleting" ? "Retry deletion" : "Delete"}</button>
+          <div className="min-w-0"><h3 className="break-words font-medium">{item.name}</h3><p className="text-sm text-muted-foreground">{item.state === "quarantined" ? downloadEnabled ? "Quarantined · scan required for each owner download" : "Quarantined · unavailable for download or agent use" : item.state === "deleting" ? "Deletion pending · retry deletion" : "Storage pending · unavailable for use"} · {(item.size / 1024).toFixed(1)} KiB · {new Date(item.createdAt).toLocaleString()}</p></div>
+          <div className="flex gap-2">{downloadEnabled && item.state === "quarantined" && <button className={buttonClass} disabled={uploading || acting !== null} onClick={() => void download(item)}>Download after scan</button>}
+            <button className={buttonClass} disabled={uploading || acting !== null} onClick={() => void remove(item)}>{item.state === "deleting" ? "Retry deletion" : "Delete"}</button></div>
         </li>)}</ul>}
       </section>}
     </>}

@@ -26,7 +26,7 @@ export default defineConfig({
       UPLOAD_STORAGE_PROVIDER: "local",
       UPLOAD_LOCAL_ROOT: resolve(".data/e2e-uploads"),
       APP_API_KEYS: JSON.stringify([
-        { sha256: createHash("sha256").update(token).digest("hex"), tenant: "e2e", subject: "browser", scopes: ["records:read", "records:write", "uploads:read", "uploads:write"] },
+        { sha256: createHash("sha256").update(token).digest("hex"), tenant: "e2e", subject: "browser", scopes: ["records:read", "records:write", "uploads:read", "uploads:write", "uploads:download"] },
         { sha256: createHash("sha256").update(otherToken).digest("hex"), tenant: "e2e", subject: "other-browser", scopes: ["uploads:read", "uploads:write"] },
       ]),
     },

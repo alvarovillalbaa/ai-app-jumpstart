@@ -9,7 +9,7 @@ import { localUploadObjects } from "../../lib/uploads/local";
 import { STALE_PENDING_UPLOAD_MS } from "../../lib/uploads/intake";
 
 const root = "http://localhost:3000/api/v1/uploads";
-const alice = "upload-alice-token-".repeat(3),bob = "upload-bob-token-".repeat(3),records = "records-only-token-".repeat(3);
+const alice = "upload-alice-token-".repeat(3),bob = "upload-bob-token-".repeat(3),records = "records-only-token-".repeat(3),metadata = "upload-metadata-token-".repeat(3);
 const key = (token: string,subject: string,scopes: string[]) => ({ sha256: createHash("sha256").update(token).digest("hex"),
   tenant: "test",subject,scopes });
 const headers = (token: string,name = "private.txt") => ({ authorization: `Bearer ${token}`,
@@ -112,4 +112,55 @@ it("keeps metadata readable while a configured scanner rejects or is unavailable
     expect(objects.put).not.toHaveBeenCalled();
     expect(objects.delete).not.toHaveBeenCalled();
   } finally { await catalog.close(); }
+});
+
+it("releases owner bytes only after an enabled fresh scan and stored-byte integrity check",async () => {
+  vi.stubEnv("AUTH_PROVIDER","api-key");
+  vi.stubEnv("APP_API_KEYS",JSON.stringify([key(alice,"alice",["uploads:read","uploads:write","uploads:download"]),
+    key(bob,"bob",["uploads:download"]),key(records,"alice",["records:read"]),key(metadata,"alice",["uploads:read"])]));
+  const directory = await mkdtemp(join(tmpdir(),"jumpstart-upload-download-"));
+  const catalog = sqliteUploadCatalog(":memory:"),local = localUploadObjects(directory);
+  let tampered = false;
+  const objects = { ...local,get: async (...args: Parameters<typeof local.get>) => tampered
+    ? new TextEncoder().encode("altered") : local.get(...args) };
+  const scan = vi.fn(async (bytes: Uint8Array): Promise<"clean" | "infected"> => { expect(bytes.length).toBeGreaterThan(0);return "clean"; });
+  const intake = uploadHandlers(async () => catalog,async () => objects);
+  const api = uploadHandlers(async () => catalog,async () => objects,async () => ({ scan }));
+  try {
+    const payload = "private download payload";
+    const created = await intake.create(new Request(root,{ method: "POST",body: Buffer.from(payload),headers: headers(alice,"owner's note.txt") }));
+    const row = await created.json(),url = `${root}/${row.id}/download`;
+    expect((await api.download(request(url,alice),row.id)).status).toBe(503);
+    expect(scan).not.toHaveBeenCalled();
+    vi.stubEnv("UPLOAD_DOWNLOAD_POLICY","scan-on-read");
+    vi.stubEnv("VERCEL","1");
+    expect((await api.download(request(url,alice),row.id)).status).toBe(503);
+    vi.stubEnv("VERCEL","");
+    expect((await api.download(request(url,bob),row.id)).status).toBe(404);
+    expect((await api.download(request(url,records),row.id)).status).toBe(403);
+    expect((await api.download(request(url,metadata),row.id)).status).toBe(403);
+    expect((await api.download(request(url,alice),randomUUID())).status).toBe(404);
+    const noScanner = uploadHandlers(async () => catalog,async () => objects,async () => null);
+    expect((await noScanner.download(request(url,alice),row.id)).status).toBe(503);
+    tampered = true;
+    const corrupt = await api.download(request(url,alice),row.id);
+    expect(corrupt.status).toBe(503);
+    expect((await corrupt.json()).error.code).toBe("upload_integrity_failed");
+    expect(scan).not.toHaveBeenCalled();
+    tampered = false;
+    scan.mockResolvedValueOnce("infected");
+    const infected = await api.download(request(url,alice),row.id);
+    expect(infected.status).toBe(422);
+    expect((await infected.json()).error.code).toBe("upload_rejected");
+    const clean = await api.download(request(url,alice),row.id);
+    expect(clean.status).toBe(200);
+    expect(clean.headers.get("content-type")).toBe("application/octet-stream");
+    expect(clean.headers.get("content-disposition")).toContain("attachment;");
+    expect(clean.headers.get("content-disposition")).toContain("owner%27s%20note.txt");
+    expect(clean.headers.get("cache-control")).toBe("no-store");
+    expect(clean.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await clean.text()).toBe(payload);
+    expect(scan).toHaveBeenCalledTimes(2);
+    expect((await api.get(request(`${root}/${row.id}`,alice),row.id)).status).toBe(200);
+  } finally { await catalog.close();await rm(directory,{ recursive: true,force: true }); }
 });

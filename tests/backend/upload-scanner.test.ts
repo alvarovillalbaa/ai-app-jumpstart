@@ -1,5 +1,6 @@
 import { createServer, type Server } from "node:net";
-import { mkdtemp, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
@@ -8,12 +9,47 @@ import { afterEach, expect, it, vi } from "vitest";
 import { sqliteUploadCatalog } from "../../lib/uploads/catalog-sqlite";
 import { UploadIntake } from "../../lib/uploads/intake";
 import { createUploadScanner, scanWithClamd } from "../../lib/uploads/scanner";
+import { uploadHandlers } from "../../lib/http/uploads";
+import { localUploadObjects } from "../../lib/uploads/local";
+import { run } from "../../scripts/app-cli";
 
 const roots: string[] = [];
 const servers: Server[] = [];
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => server.close(() => resolve()))));
   await Promise.all(roots.splice(0).map(root => rm(root,{ recursive: true,force: true })));
+});
+
+it("uses a fresh socket verdict for each owner download through HTTP and CLI",async () => {
+  const token = "upload-download-scanner-token-".repeat(3);
+  vi.stubEnv("AUTH_PROVIDER","api-key");
+  vi.stubEnv("APP_API_KEYS",JSON.stringify([{ sha256: createHash("sha256").update(token).digest("hex"),
+    tenant: "test",subject: "alice",scopes: ["uploads:read","uploads:write","uploads:download"] }]));
+  vi.stubEnv("UPLOAD_DOWNLOAD_POLICY","scan-on-read");
+  let scans = 0;
+  vi.stubEnv("UPLOAD_SCANNER_PROVIDER","clamd");
+  vi.stubEnv("UPLOAD_CLAMD_SOCKET",await daemon(() => ++scans === 2 ? "stream: Eicar-Test-Signature FOUND" : "stream: OK"));
+  const directory = await mkdtemp(join(tmpdir(),"jumpstart-download-integration-"));roots.push(directory);
+  const catalog = sqliteUploadCatalog(":memory:"),objects = localUploadObjects(directory);
+  const api = uploadHandlers(async () => catalog,async () => objects);
+  try {
+    const payload = "owner private text";
+    const response = await api.create(new Request("http://localhost:3000/api/v1/uploads",{ method: "POST",body: payload,
+      headers: { authorization: `Bearer ${token}`,"content-type": "application/octet-stream",
+        "x-upload-name": "note.txt","x-upload-media-type": "text/plain" } }));
+    expect(response.status).toBe(201);
+    const row = await response.json(),url = `http://localhost:3000/api/v1/uploads/${row.id}/download`;
+    const denied = await api.download(new Request(url,{ headers: { authorization: `Bearer ${token}` } }),row.id);
+    expect(denied.status).toBe(422);
+    expect((await denied.json()).error.code).toBe("upload_rejected");
+    const output = join(directory,"owner.txt");
+    const request: typeof fetch = async (input,init) => api.download(new Request(input,init),row.id);
+    expect(await run(["uploads","download",row.id,output],{ APP_API_TOKEN: token },request))
+      .toMatchObject({ file: output,size: payload.length });
+    expect(await readFile(output,"utf8")).toBe(payload);
+    expect(scans).toBe(3);
+  } finally { await catalog.close(); }
 });
 
 async function daemon(reply: string | ((frame: Buffer) => string), observe: (frame: Buffer) => void = () => {}) {

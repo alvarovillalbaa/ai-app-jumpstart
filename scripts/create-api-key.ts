@@ -3,11 +3,14 @@ const [tenant, subject, access = "read"] = process.argv.slice(2);
 const scopeSets: Record<string,string[]> = {
   read: ["records:read"],write: ["records:read","records:write"],
   "uploads-read": ["uploads:read"],"uploads-write": ["uploads:read","uploads:write"],
+  "uploads-download": ["uploads:read","uploads:download"],
+  "uploads-full": ["uploads:read","uploads:write","uploads:download"],
   "all-read": ["records:read","uploads:read"],
   "all-write": ["records:read","records:write","uploads:read","uploads:write"],
+  "all-full": ["records:read","records:write","uploads:read","uploads:write","uploads:download"],
 };
 if (!tenant || !subject || !Object.hasOwn(scopeSets,access)) {
-  console.error("Usage: npm run auth:key -- TENANT SUBJECT [read|write|uploads-read|uploads-write|all-read|all-write]");
+  console.error("Usage: npm run auth:key -- TENANT SUBJECT [read|write|uploads-read|uploads-write|uploads-download|uploads-full|all-read|all-write|all-full]");
   process.exitCode = 1;
 } else {
   const token = randomBytes(32).toString("base64url");

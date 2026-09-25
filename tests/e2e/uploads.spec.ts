@@ -28,6 +28,7 @@ test("browser uploads stay quarantined, survive a reload, and can be deleted", a
   await expect(page.getByRole("status").filter({ hasText: "is quarantined" })).toBeVisible();
   const row = page.getByRole("listitem").filter({ hasText: name });
   await expect(row).toContainText("unavailable for download or agent use");
+  await expect(row.getByRole("button",{ name: "Download after scan" })).toHaveCount(0);
   await expect(row.getByRole("link")).toHaveCount(0);
   await auditAccessibility(page, "quarantined uploads");
 
@@ -38,7 +39,9 @@ test("browser uploads stay quarantined, survive a reload, and can be deleted", a
   expect((await request.get(`/api/v1/uploads/${id}`, { headers: { authorization: `Bearer ${token}` } })).status()).toBe(200);
   expect((await request.get(`/api/v1/uploads/${id}`, { headers: { authorization: `Bearer ${otherToken}` } })).status()).toBe(404);
   expect((await request.get("/api/v1/uploads", { headers: { authorization: `Bearer ${otherToken}` } })).ok()).toBeTruthy();
-  expect((await request.get(`/api/v1/uploads/${id}/download`, { headers: { authorization: `Bearer ${token}` } })).status()).toBe(404);
+  const disabledDownload = await request.get(`/api/v1/uploads/${id}/download`, { headers: { authorization: `Bearer ${token}` } });
+  expect(disabledDownload.status()).toBe(503);
+  expect((await disabledDownload.json()).error.code).toBe("upload_download_disabled");
 
   await page.reload();
   await expect(page.getByLabel("Access token")).toHaveValue("");

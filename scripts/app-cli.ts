@@ -9,6 +9,7 @@ import { artifactOptions } from "../lib/agent-access/artifact-contract";
 import { ledgerQueryOptions } from "../lib/budgets/contract";
 import { recordId, recordInput } from "../lib/data/contract";
 import { exportApplication } from "./export-application";
+import { saveUploadDownload } from "./download-upload";
 import { z } from "zod";
 import { MAX_API_UPLOAD_BYTES } from "../lib/uploads/validation";
 import { uploadId } from "../lib/uploads/schema";
@@ -25,21 +26,21 @@ export async function run(args: string[], env: Record<string, string | undefined
     seed: "npm run app -- seed [--allow-remote] (two idempotent, owner-scoped example records)",
     conversations: "npm run app -- conversations <list [--archived] [--limit N] [--cursor CURSOR] | get OPERATION_UUID | events OPERATION_UUID [AFTER_INGESTION_INDEX] | source-events OPERATION_UUID [START_SOURCE_INDEX] | reconcile OPERATION_UUID [START_SOURCE_INDEX] | update OPERATION_UUID JSON_FILE>",
     artifacts: "npm run app -- artifacts <list [--limit N] [--cursor CURSOR] | get ARTIFACT_UUID | delete ARTIFACT_UUID>",
-    uploads: "npm run app -- uploads <list | get UPLOAD_UUID | put FILE | delete UPLOAD_UUID> (private quarantine; no download)",
+    uploads: "npm run app -- uploads <list | get UPLOAD_UUID | put FILE | download UPLOAD_UUID OUTPUT_FILE | delete UPLOAD_UUID> (download requires an enabled scan-on-read policy)",
     account: "npm run app -- account profile (selected fields; current registered-user token required)",
     usage: "npm run app -- usage [reservations|corrections [--limit N] [--cursor CURSOR]] (verified user token required)",
     export: "npm run app -- export <records OUTPUT.ndjson | application OUTPUT.ndjson | source-events OPERATION_UUID OUTPUT.ndjson> (private, no-clobber; source events require an active owned Eve session)",
     environment: "APP_API_URL (default http://localhost:3000), APP_API_TOKEN (server-issued credential)",
-    note: "Record files contain title/content and, for update, revision. Conversation updates contain revision plus title and/or archived. Uploads require uploads:read/write scopes or a registered user and an explicitly configured private object backend; quarantined bytes cannot be downloaded. Output is JSON. Errors exit nonzero. Writes are never automatically retried.",
+    note: "Record files contain title/content and, for update, revision. Conversation updates contain revision plus title and/or archived. Upload metadata/writes use uploads:read/write; download separately requires uploads:download or a registered user plus an enabled private scanner. Output is JSON. Errors exit nonzero. Writes are never automatically retried.",
   };
   const origin = new URL(env.APP_API_URL ?? "http://localhost:3000");
   if (origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash || !["http:", "https:"].includes(origin.protocol)) throw new Error("APP_API_URL must be an HTTP(S) origin without credentials, path, query or fragment.");
   if (origin.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(origin.hostname)) throw new Error("Use HTTPS for remote servers.");
   if (!env.APP_API_TOKEN) throw new Error("Set APP_API_TOKEN.");
-  const call = async (path: string, method = "GET", body?: string | Buffer, extraHeaders: Record<string,string> = {}) => {
+  const send = async (path: string, method = "GET", body?: string | Buffer, extraHeaders: Record<string,string> = {}) => {
     const response = await request(new URL(path, origin), {
       method, body: typeof body === "string" ? body : body ? new Blob([Uint8Array.from(body)]) : undefined,
-      redirect: "error", signal: AbortSignal.timeout(path.endsWith("/reconcile") || body && typeof body !== "string" ? 30_000 : 15_000),
+      redirect: "error", signal: AbortSignal.timeout(path.endsWith("/download") ? 60_000 : path.endsWith("/reconcile") || body && typeof body !== "string" ? 30_000 : 15_000),
       headers: { authorization: `Bearer ${env.APP_API_TOKEN}`, "content-type": body && typeof body !== "string" ? "application/octet-stream" : "application/json",
         ...extraHeaders,
         ...(env.VERCEL_AUTOMATION_BYPASS_SECRET ? { "x-vercel-protection-bypass": env.VERCEL_AUTOMATION_BYPASS_SECRET } : {}) },
@@ -49,6 +50,10 @@ export async function run(args: string[], env: Record<string, string | undefined
       const result = await response.json().catch(() => null);
       throw new Error(`HTTP ${response.status}: ${result?.error?.code ?? "request_failed"}`);
     }
+    return response;
+  };
+  const call = async (path: string, method = "GET", body?: string | Buffer, extraHeaders: Record<string,string> = {}) => {
+    const response = await send(path,method,body,extraHeaders);
     return response.status === 204 ? { deleted: true } : response.json();
   };
   if (command === "seed" && (rest.length === 0 || (rest.length === 1 && rest[0] === "--allow-remote"))) {
@@ -106,6 +111,11 @@ export async function run(args: string[], env: Record<string, string | undefined
   if (command === "uploads") {
     const [action,...options] = rest;
     if (action === "list" && options.length === 0) return call("/api/v1/uploads");
+    if (action === "download" && options.length === 2) {
+      const checked = uploadId.safeParse(options[0]);
+      if (!checked.success) throw new Error("Provide an upload UUID.");
+      return saveUploadDownload(options[1],await send(`/api/v1/uploads/${checked.data}/download`));
+    }
     if ((action === "get" || action === "delete") && options.length === 1) {
       const checked = uploadId.safeParse(options[0]);
       if (!checked.success) throw new Error("Provide an upload UUID.");

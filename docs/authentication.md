@@ -46,7 +46,7 @@ Browser session events clear the old account's records and draft form by remount
 
 CLI and MCP can use a current Supabase access token or an administrator-issued API key. Supabase access tokens expire; those clients currently require the caller to supply a refreshed token. Do not put a database key or Supabase service credential into `APP_API_TOKEN`.
 
-Upload quarantine uses separate `uploads:read` and `uploads:write` API-key scopes. Generate them with `npm run auth:key -- TENANT SUBJECT uploads-read` or `uploads-write`; `all-read` and `all-write` include record scopes too. Registered Supabase users receive both upload scopes. The upload API stores bytes privately but does not offer a download or attachment path until scanning and release policy are implemented; see [uploads](uploads.md).
+Upload quarantine uses separate `uploads:read`, `uploads:write` and `uploads:download` API-key scopes. Generate a metadata key with `uploads-read`, a write key with `uploads-write`, or an owner download key with `uploads-download`; `uploads-full` combines all three. Existing `all-read` and `all-write` modes do not gain byte access; `all-full` includes download. Registered Supabase users receive all three upload scopes. The upload API stores bytes privately; an opt-in self-hosted scan-on-read path permits an owner attachment only after a fresh clean scan, while managed release and Eve attachment remain unimplemented; see [uploads](uploads.md).
 
 ## Account chat
 
