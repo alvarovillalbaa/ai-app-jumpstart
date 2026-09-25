@@ -59,6 +59,14 @@ async function eventually(check: () => Promise<boolean>, message: string, timeou
   throw new Error(message);
 }
 async function lines(path: string) { return (await readFile(path, "utf8").catch(() => "")).trim().split("\n").filter(Boolean).length; }
+async function within<T>(work: Promise<T>, label: string, timeout = 45_000): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([work,new Promise<T>((_resolve,reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeout} ms.`)),timeout);
+    })]);
+  } finally { if (timer) clearTimeout(timer); }
+}
 async function workflowRecovery(args: string[]) {
   const command = spawn(process.execPath,[join(root,"scripts/recover-workflow.mjs"),...args],{ cwd: directory, env, stdio: ["ignore","pipe","pipe"] });
   let output = "", errors = "";
@@ -182,11 +190,18 @@ try {
     assert.equal((await fetch(`${origin}/eve/v1/session/${recovered.sessionId}/stream`,{ headers: { authorization: `Bearer ${bobToken}` } })).status,401);
     console.log("Default Workflow: stopped local snapshot restored an owned Eve session, replay and isolation.");
   }
-  const followup = await (await session.send("Continue the owned conversation")).result();
+  let followup;
+  try {
+    followup = await within((async () => (await session.send("Continue the owned conversation")).result())(),"Owned follow-up");
+  } catch (error) {
+    const usage = await budgets.snapshot({ ...alice, now: Date.now() });
+    throw new Error(`Owned follow-up failed after restore (${error instanceof Error ? error.message : "unknown error"}): charged=${usage.chargedMicros}, active=${usage.active}, modelCalls=${await lines(receipts)}.`);
+  }
   assert.ok(followup.events.some(event => event.type === "message.completed"));
+  console.log("Eve runtime: owned follow-up completed.");
   assert.equal(await lines(receipts), 2);
   assert.equal((await budgets.snapshot({ ...alice, now: Date.now() })).chargedMicros,40);
-  await session.compact();
+  await within(session.compact(),"Manual compaction");
   await eventually(async () => (await budgets.snapshot({ ...alice, now: Date.now() })).chargedMicros === 60, "Manual compaction did not settle its independent budget.");
   assert.equal(await lines(receipts),3);
   const denied = await (await session.send("This follow-up exceeds the daily budget")).result();
