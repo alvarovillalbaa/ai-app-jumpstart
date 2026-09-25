@@ -125,7 +125,7 @@ try {
       AI_CREATION_SIGNING_JSON: env.AI_CREATION_SIGNING_JSON,
       AI_BUDGET_POLICY_JSON: env.AI_BUDGET_POLICY_JSON,
       AI_RUNTIME_ORIGIN: "http://127.0.0.1:4274", WORKFLOW_TARGET_WORLD: "local",
-      WORKFLOW_LOCAL_DATA_DIR: "/app/.eve/workflow", WORKFLOW_LOCAL_BASE_URL: "http://127.0.0.1:4274",
+      WORKFLOW_LOCAL_DATA_DIR: "/app/.eve/.workflow-data", WORKFLOW_LOCAL_BASE_URL: "http://127.0.0.1:4274",
       TEST_MODEL_RECEIPTS: "/app/.data/models.txt", TEST_FAILURE_RECEIPTS: "/app/.data/failures.txt",
       TEST_RECEIPT_GATE: "/app/.data/gate", EVE_TELEMETRY_DISABLED: "1",
     };

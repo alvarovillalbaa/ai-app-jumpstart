@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { cp, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -12,6 +12,7 @@ import { sqliteAccessStore } from "../lib/agent-access/sqlite";
 import { ConversationBroker, creationTransport } from "../lib/agent-access/broker";
 import { BudgetedCreation } from "../lib/budgets/creation";
 import { sqliteBudgetStore } from "../lib/budgets/sqlite";
+import { SqliteRepository } from "../lib/data/sqlite";
 import { workflowPostgresFixture } from "./helpers/workflow-postgres-fixture.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -19,7 +20,7 @@ const postgresWorkflows = process.argv.includes("--postgres-workflows");
 let workflowDatabase: Awaited<ReturnType<typeof workflowPostgresFixture>> | undefined;
 const sourceFixture = join(root, "tests/fixtures/eve-access");
 const directory = await mkdtemp(join(tmpdir(), "jumpstart-session-runtime-"));
-const fixture = join(directory,"app");
+let fixture = join(directory,"app");
 const socket = createServer(); socket.listen(0, "127.0.0.1"); await once(socket, "listening");
 const address = socket.address(); if (!address || typeof address === "string") throw new Error("No test port.");
 const port = address.port; await new Promise<void>(resolve => socket.close(() => resolve()));
@@ -32,7 +33,7 @@ const budgetSettings = { policy: { id: "fixture", dailyMicros: 60, maxActive: 2,
 const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: "production", EVE_DEV: "", EVE_TELEMETRY_DISABLED: "1", NITRO_PRESET: "node-server",
   HOST: "127.0.0.1", NITRO_HOST: "127.0.0.1", PORT: String(port), NITRO_PORT: String(port),
   APP_ORIGIN: origin,
-  WORKFLOW_TARGET_WORLD: "local", WORKFLOW_LOCAL_DATA_DIR: join(directory, "workflow"), WORKFLOW_LOCAL_BASE_URL: origin,
+  WORKFLOW_TARGET_WORLD: "local", WORKFLOW_LOCAL_DATA_DIR: join(fixture,".eve/.workflow-data"), WORKFLOW_LOCAL_BASE_URL: origin,
   DATA_PROVIDER: "sqlite", SQLITE_PATH: database, TEST_MODEL_RECEIPTS: receipts, TEST_FAILURE_RECEIPTS: failures, TEST_RECEIPT_GATE: gate, TEST_MODEL_GATE: modelGate,
   AI_BUDGET_POLICY_JSON: JSON.stringify(budgetSettings),
   EVE_WORKFLOW_PROVIDER: "default",
@@ -67,8 +68,18 @@ async function workflowRecovery(args: string[]) {
   assert.equal(code,0,`Workflow recovery command failed: ${errors}`);
   return JSON.parse(output);
 }
-const store = sqliteAccessStore(database), alice = { tenant: "fixture", subject: "alice" };
-const budgets = sqliteBudgetStore(database);
+async function localBackup(args: string[]) {
+  const command = spawn(process.execPath,[join(root,"scripts/backup-local.mjs"),...args],{ cwd: root, env, stdio: ["ignore","pipe","pipe"] });
+  let output = "", errors = "";
+  command.stdout?.on("data", chunk => { output += chunk.toString(); });
+  command.stderr?.on("data", chunk => { errors += chunk.toString(); });
+  const [code] = await once(command,"exit");
+  assert.equal(code,0,`Local snapshot command failed: ${errors}`);
+  return output;
+}
+let store = sqliteAccessStore(database), storesOpen = true;
+const alice = { tenant: "fixture", subject: "alice" };
+let budgets = sqliteBudgetStore(database);
 try {
   if (postgresWorkflows) {
     workflowDatabase = await workflowPostgresFixture();
@@ -121,12 +132,54 @@ try {
   const recovered = await creation.create(alice, input);
   assert.equal(recovered.status, "active"); assert.ok(recovered.sessionId); assert.equal(dispatches, 1);
   const client = new Client({ host: origin, auth: { bearer: aliceToken }, redirect: "error" });
-  const session = client.sessions.attach(recovered.sessionId);
+  let session = client.sessions.attach(recovered.sessionId);
   await eventually(async () => {
     const events = []; for await (const event of session.stream({ follow: false })) events.push(event.type);
     return events.includes("session.waiting");
   }, "The initial owned turn did not settle.");
   assert.equal(await lines(receipts), 1);
+  if (!postgresWorkflows) {
+    const records = new SqliteRepository(database);
+    const record = await records.create(alice,{ title: "Recovered private record",content: "Snapshot must retain application data." });
+    await records.close();
+    await eventually(async () => {
+      const usage = await budgets.snapshot({ ...alice, now: Date.now() });
+      return usage.chargedMicros === 20 && usage.active === 0;
+    }, "Initial local turn did not settle before the snapshot.");
+    const exited = once(child,"exit"); child.kill("SIGTERM"); await exited;
+    await store.close(); await budgets.close(); storesOpen = false;
+    const snapshot = join(directory,"snapshot"),restoredRoot = join(directory,"restored");
+    const builtFixture = fixture;
+    const workflowDir = join(builtFixture,".eve/.workflow-data");
+    assert.match(await localBackup(["--create","--app-db",database,"--workflow-dir",workflowDir,
+      "--no-uploads","--output",snapshot,"--stopped"]),/Verified local snapshot:/);
+    assert.match(await localBackup(["--verify",snapshot]),/Local snapshot verified:/);
+    assert.match(await localBackup(["--restore",snapshot,"--output",restoredRoot]),/Local snapshot restored to new directory:/);
+    env.SQLITE_PATH = join(restoredRoot,"app.sqlite");
+    fixture = join(directory,"restored-app");
+    await mkdir(join(fixture,".eve"),{ recursive: true });
+    await cp(join(builtFixture,".output"),join(fixture,".output"),{ recursive: true });
+    await cp(join(builtFixture,"package.json"),join(fixture,"package.json"));
+    await symlink(join(root,"node_modules"),join(fixture,"node_modules"),"dir");
+    await cp(join(restoredRoot,"workflow"),join(fixture,".eve/.workflow-data"),{ recursive: true });
+    env.WORKFLOW_LOCAL_DATA_DIR = join(fixture,".eve/.workflow-data");
+    const restoredRecords = new SqliteRepository(env.SQLITE_PATH);
+    assert.deepEqual(await restoredRecords.get(alice,record.id),record);
+    assert.equal(await restoredRecords.get({ ...alice,subject: "bob" },record.id),null);
+    await restoredRecords.close();
+    store = sqliteAccessStore(env.SQLITE_PATH); budgets = sqliteBudgetStore(env.SQLITE_PATH); storesOpen = true;
+    assert.equal((await store.getOperation(alice,input.operationId))?.sessionId,recovered.sessionId);
+    assert.equal(await store.getOperation({ ...alice, subject: "bob" },input.operationId),null);
+    assert.equal((await budgets.snapshot({ ...alice, now: Date.now() })).chargedMicros,20);
+    child = start(process.execPath,[join(fixture,".output/server/index.mjs")]);
+    await eventually(async () => (await fetch(`${origin}/eve/v1/health`,{ signal: AbortSignal.timeout(1000) }).catch(() => null))?.ok ?? false,"Restored local runtime did not start.");
+    session = new Client({ host: origin, auth: { bearer: aliceToken }, redirect: "error" }).sessions.attach(recovered.sessionId);
+    const replay = []; for await (const event of session.stream({ follow: false })) replay.push(event.type);
+    assert.ok(replay.includes("message.completed"),"Restored Eve session did not replay its completed turn.");
+    assert.equal(await lines(receipts),1,"Restoring a completed turn must not call the model again.");
+    assert.equal((await fetch(`${origin}/eve/v1/session/${recovered.sessionId}/stream`,{ headers: { authorization: `Bearer ${bobToken}` } })).status,401);
+    console.log("Default Workflow: stopped local snapshot restored an owned Eve session, replay and isolation.");
+  }
   const followup = await (await session.send("Continue the owned conversation")).result();
   assert.ok(followup.events.some(event => event.type === "message.completed"));
   assert.equal(await lines(receipts), 2);
@@ -253,7 +306,8 @@ try {
     const exited = once(child, "exit"); child.kill("SIGTERM");
     const timer = setTimeout(() => child?.kill("SIGKILL"), 5000); await exited; clearTimeout(timer);
   }
-  await store.close(); await budgets.close(); await rm(directory, { recursive: true, force: true });
+  if (storesOpen) { await store.close(); await budgets.close(); }
+  await rm(directory, { recursive: true, force: true });
   await workflowDatabase?.stop();
 }
 // The embedded database's subprocess cleanup can change process.exitCode.

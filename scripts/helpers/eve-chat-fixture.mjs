@@ -35,7 +35,7 @@ export async function startChatFixture(root, directory, applicationEnv, { buildO
   const gate = join(directory, "gate"); await writeFile(gate, "ready");
   const env = { ...applicationEnv, EVE_DEV: "", EVE_TELEMETRY_DISABLED: "1", EVE_WORKFLOW_PROVIDER: "default", NITRO_PRESET: "node-server",
     HOST: "127.0.0.1", NITRO_HOST: "127.0.0.1", PORT: String(port), NITRO_PORT: String(port),
-    WORKFLOW_TARGET_WORLD: "local", WORKFLOW_LOCAL_DATA_DIR: join(directory, "workflow"), WORKFLOW_LOCAL_BASE_URL: origin,
+    WORKFLOW_TARGET_WORLD: "local", WORKFLOW_LOCAL_DATA_DIR: join(fixture, ".eve/.workflow-data"), WORKFLOW_LOCAL_BASE_URL: origin,
     TEST_MODEL_RECEIPTS: join(directory, "models.txt"), TEST_FAILURE_RECEIPTS: join(directory, "failures.txt"), TEST_RECEIPT_GATE: gate,
     AI_RUNTIME_ORIGIN: origin,
   };
