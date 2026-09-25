@@ -83,6 +83,21 @@ export function uploadCatalogContract(name: string, factory: () => Promise<Uploa
       await expect(catalog.claimStalePending(owner,fresh.id,-1)).rejects.toBeDefined();
     });
 
+    it("lists a bounded operator cleanup batch without quarantined or recent uploads", async () => {
+      const old = input(1),deleting = input(1),recent = input(1),quarantined = input(1);
+      old.createdAt = 1_000;deleting.createdAt = 2_000;recent.createdAt = 3_000;quarantined.createdAt = 500;
+      for (const row of [old,deleting,recent,quarantined])
+        expect(await catalog.reserve(owner,row,{ maxBytes: 10,maxFiles: 4 })).toBe("reserved");
+      expect(await catalog.beginDelete(owner,deleting.id)).toBe(true);
+      expect(await catalog.markStored(owner,quarantined.id)).toBe(true);
+      expect(await catalog.listCleanupCandidates(2_500,1)).toEqual([{ ...owner,id: old.id,state: "pending",createdAt: 1_000 }]);
+      expect(await catalog.listCleanupCandidates(2_500,10)).toEqual([
+        { ...owner,id: old.id,state: "pending",createdAt: 1_000 },
+        { ...owner,id: deleting.id,state: "deleting",createdAt: 2_000 },
+      ]);
+      await expect(catalog.listCleanupCandidates(2_500,101)).rejects.toBeDefined();
+    });
+
     it("rejects invalid metadata and quota values before writing", async () => {
       await expect(catalog.reserve(owner,{ ...input(),name: "../escape.txt" },quota)).rejects.toBeDefined();
       await expect(catalog.reserve(owner,input(),{ maxBytes: 0,maxFiles: 1 })).rejects.toBeDefined();

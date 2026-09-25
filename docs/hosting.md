@@ -53,6 +53,8 @@ With the intended managed runtime settings in the operator shell or private `.en
 
 Account chat is disabled by default. When enabled, signed creation and verified browser ownership form the exclusive policy, with no local-development or OIDC fallback. See [agent session access](agent-session-access.md).
 
+If private upload quarantine is enabled, configure the [scheduled cleanup trigger](uploads.md) in Production: set a strong server-only `CRON_SECRET` and add the documented daily `vercel.json` cron entry before deploying. Preview deployments do not run Vercel Cron. Monitor failed batches and `more` responses; the managed configuration preflight does not verify that a production schedule exists.
+
 ## Post-deployment data smoke
 
 The same read/write smoke works against Vercel, a self-hosted Node service, or any of the cloud container targets. From a source checkout with `npm ci` installed, provision two temporary `APP_API_KEYS` credentials with `records:read` and `records:write` scopes for different subjects in the same tenant. Export their raw tokens as `APP_API_TOKEN` and `APP_API_OTHER_TOKEN`, and set `APP_API_URL` to the exact HTTPS deployment origin. Keep tokens in your secret manager or shell environment, not command arguments or committed files. Then run:

@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery, type QueryCtx } from "./_generated/server";
 import { accessOwner, type AccessOwner } from "../lib/agent-access/contract";
-import { uploadEntry, uploadList, uploadQuota, uploadReservation, uploadUsage, staleUploadCutoff } from "../lib/uploads/catalog-contract";
+import { uploadCleanupCandidates, uploadCleanupLimit, uploadEntry, uploadList, uploadQuota, uploadReservation, uploadUsage, staleUploadCutoff } from "../lib/uploads/catalog-contract";
 import { uploadId } from "../lib/uploads/schema";
 
 const ownerFields = { tenant: v.string(),subject: v.string() };
@@ -53,6 +53,17 @@ export const list = internalQuery({
     const owner = accessOwner.parse(args);
     const rows = await activeRows(ctx,owner);
     return uploadList.parse(rows.sort((a,b) => b.createdAt-a.createdAt || b.id.localeCompare(a.id)).map(publicEntry));
+  },
+});
+export const listCleanupCandidates = internalQuery({
+  args: { cutoff: v.number(),limit: v.number() },
+  handler: async (ctx,args) => {
+    const cutoff = staleUploadCutoff.parse(args.cutoff),limit = uploadCleanupLimit.parse(args.limit);
+    const groups = await Promise.all((["pending","deleting"] as const).map(state => ctx.db.query("uploads")
+      .withIndex("by_cleanup",q => q.eq("state",state).lte("createdAt",cutoff)).take(limit)));
+    return uploadCleanupCandidates.parse(groups.flat()
+      .sort((a,b) => a.createdAt-b.createdAt || a.id.localeCompare(b.id)).slice(0,limit)
+      .map(row => ({ tenant: row.tenant,subject: row.subject,id: row.id,state: row.state,createdAt: row.createdAt })));
   },
 });
 export const beginDelete = internalMutation({

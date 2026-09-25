@@ -4,11 +4,12 @@ import { z } from "zod";
 import { ConvexBackend } from "../data/convex-client";
 import type { Database } from "../data/supabase.generated";
 import { accessOwner } from "../agent-access/contract";
-import { uploadEntry, uploadList, uploadQuota, uploadReservation, uploadReserveResult, uploadUsage, staleUploadCutoff, type UploadCatalog } from "./catalog-contract";
+import { uploadCleanupCandidates, uploadCleanupLimit, uploadEntry, uploadList, uploadQuota, uploadReservation, uploadReserveResult, uploadUsage, staleUploadCutoff, type UploadCatalog } from "./catalog-contract";
 import { uploadId } from "./schema";
 
 function adapter(call: (command: string, input: object) => Promise<unknown>, list: (owner: object) => Promise<unknown>,
-  claimStalePending: UploadCatalog["claimStalePending"],close: () => Promise<void>): UploadCatalog {
+  claimStalePending: UploadCatalog["claimStalePending"],listCleanupCandidates: UploadCatalog["listCleanupCandidates"],
+  close: () => Promise<void>): UploadCatalog {
   const owned = (owner: Parameters<UploadCatalog["get"]>[0]) => accessOwner.parse(owner);
   return {
     async reserve(owner, input, quota) {
@@ -19,6 +20,7 @@ function adapter(call: (command: string, input: object) => Promise<unknown>, lis
     async list(owner) { return uploadList.parse(await list(owned(owner))); },
     async beginDelete(owner,id) { return z.boolean().parse(await call("beginDelete",{ ...owned(owner),id: uploadId.parse(id) })); },
     claimStalePending,
+    listCleanupCandidates,
     async finishDelete(owner,id) { return z.boolean().parse(await call("finishDelete",{ ...owned(owner),id: uploadId.parse(id) })); },
     async usage(owner) { return uploadUsage.parse(await call("usage",owned(owner))); },
     close,
@@ -36,6 +38,12 @@ export function postgresUploadCatalog(connectionString: string): UploadCatalog {
         WHERE tenant=$1 AND subject=$2 AND id=$3 AND state='pending' AND created_at<=$4 RETURNING id`,
       [checked.tenant,checked.subject,id,cutoff]);
       return result.rowCount === 1;
+    },
+    async (rawCutoff,rawLimit) => {
+      const cutoff = staleUploadCutoff.parse(rawCutoff),limit = uploadCleanupLimit.parse(rawLimit);
+      const result = await pool.query(`SELECT tenant,subject,id,state,created_at AS "createdAt" FROM public.app_uploads
+        WHERE state IN ('pending','deleting') AND created_at<=$1 ORDER BY created_at,id LIMIT $2`,[cutoff,limit]);
+      return uploadCleanupCandidates.parse(result.rows.map(row => ({ ...row,createdAt: Number(row.createdAt) })));
     },
     () => pool.end());
 }
@@ -59,6 +67,13 @@ export function supabaseUploadCatalog(url: string, secret: string): UploadCatalo
       .eq("state","pending").lte("created_at",cutoff).select("id");
     if (error) throw error;
     return data?.length === 1;
+  },async (rawCutoff,rawLimit) => {
+    const cutoff = staleUploadCutoff.parse(rawCutoff),limit = uploadCleanupLimit.parse(rawLimit);
+    const { data,error } = await client.from("app_uploads").select("tenant,subject,id,state,created_at")
+      .in("state",["pending","deleting"]).lte("created_at",cutoff).order("created_at").order("id").limit(limit);
+    if (error) throw error;
+    return uploadCleanupCandidates.parse(data?.map(row => ({ tenant: row.tenant,subject: row.subject,
+      id: row.id,state: row.state,createdAt: row.created_at })));
   },async () => {});
 }
 
@@ -67,5 +82,7 @@ export function convexUploadCatalog(url: string, secret: string): UploadCatalog 
   return adapter((command,input) => backend.call(`upload.${command}`,input,z.unknown()),
     owner => backend.call("upload.list",owner,z.unknown()),
     async (owner,id,cutoff) => z.boolean().parse(await backend.call("upload.claimStalePending",{ ...accessOwner.parse(owner),id: uploadId.parse(id),cutoff: staleUploadCutoff.parse(cutoff) },z.unknown())),
+    async (cutoff,limit) => uploadCleanupCandidates.parse(await backend.call("upload.listCleanupCandidates",{
+      cutoff: staleUploadCutoff.parse(cutoff),limit: uploadCleanupLimit.parse(limit) },z.unknown())),
     async () => {});
 }

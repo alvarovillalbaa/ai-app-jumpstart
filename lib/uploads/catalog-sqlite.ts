@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { accessOwner } from "../agent-access/contract";
-import { uploadEntry, uploadList, uploadQuota, uploadReservation, uploadUsage, staleUploadCutoff, type UploadCatalog } from "./catalog-contract";
+import { uploadCleanupCandidates, uploadCleanupLimit, uploadEntry, uploadList, uploadQuota, uploadReservation, uploadUsage, staleUploadCutoff, type UploadCatalog } from "./catalog-contract";
 import { uploadId } from "./schema";
 
 type Row = { id: string;tenant: string;subject: string;name: string;media_type: string;size: number;sha256: string;created_at: number;state: string };
@@ -18,7 +18,8 @@ export function sqliteUploadCatalog(path: string): UploadCatalog {
       name TEXT NOT NULL, media_type TEXT NOT NULL, size INTEGER NOT NULL CHECK(size BETWEEN 1 AND 5242880),
       sha256 TEXT NOT NULL, created_at INTEGER NOT NULL,
       state TEXT NOT NULL CHECK(state IN ('pending','quarantined','deleting','deleted')));
-    CREATE INDEX IF NOT EXISTS app_uploads_owner_state ON app_uploads(tenant,subject,state,created_at,id);`);
+    CREATE INDEX IF NOT EXISTS app_uploads_owner_state ON app_uploads(tenant,subject,state,created_at,id);
+    CREATE INDEX IF NOT EXISTS app_uploads_cleanup ON app_uploads(state,created_at,id);`);
   const byId = db.prepare("SELECT * FROM app_uploads WHERE id=?");
   const owned = db.prepare("SELECT * FROM app_uploads WHERE tenant=? AND subject=? AND id=?");
   const usage = db.prepare("SELECT COUNT(*) AS files,COALESCE(SUM(size),0) AS bytes FROM app_uploads WHERE tenant=? AND subject=? AND state!='deleted'");
@@ -66,6 +67,12 @@ export function sqliteUploadCatalog(path: string): UploadCatalog {
       const checked = accessOwner.parse(owner),id = uploadId.parse(rawId),cutoff = staleUploadCutoff.parse(rawCutoff);
       return db.prepare("UPDATE app_uploads SET state='deleting' WHERE tenant=? AND subject=? AND id=? AND state='pending' AND created_at<=?")
         .run(checked.tenant,checked.subject,id,cutoff).changes === 1;
+    },
+    async listCleanupCandidates(rawCutoff,rawLimit) {
+      const cutoff = staleUploadCutoff.parse(rawCutoff),limit = uploadCleanupLimit.parse(rawLimit);
+      const rows = db.prepare("SELECT tenant,subject,id,state,created_at AS createdAt FROM app_uploads WHERE state IN ('pending','deleting') AND created_at<=? ORDER BY created_at,id LIMIT ?")
+        .all(cutoff,limit);
+      return uploadCleanupCandidates.parse(rows);
     },
     async finishDelete(owner,id) { return transition(owner,id,["deleting"],"deleted"); },
     async usage(owner) { const checked = accessOwner.parse(owner);return uploadUsage.parse(usage.get(checked.tenant,checked.subject)); },

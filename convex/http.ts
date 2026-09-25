@@ -65,6 +65,7 @@ http.route({ path: "/app/records", method: "POST", handler: httpAction(async (ct
       case "upload.claimStalePending": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.uploads.claimStalePending,input)); }
       case "upload.finishDelete": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.uploads.finishDelete,input)); }
       case "upload.usage": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.uploads.usage,input)); }
+      case "upload.listCleanupCandidates": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.uploads.listCleanupCandidates,input)); }
       case "budget.claimAttempt": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.budgets.claimAttempt, { input })); }
       case "budget.attemptCount": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.budgets.attemptCount, { input })); }
       case "budget.getReservation": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.budgets.getReservation, { input })); }

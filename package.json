@@ -37,6 +37,7 @@
     "db:types:check:ci": "node scripts/generate-supabase-types.mjs --check --local-db-url",
     "workflow:migrate": "node scripts/migrate-workflow.mjs",
     "workflow:recover": "node --env-file-if-exists=.env.local scripts/recover-workflow.mjs",
+    "uploads:cleanup": "tsx --env-file-if-exists=.env.local scripts/cleanup-uploads.ts",
     "starts:inspect": "tsx --env-file-if-exists=.env.local scripts/inspect-starts.ts",
     "budgets:reconcile": "tsx --env-file-if-exists=.env.local scripts/reconcile-budget.ts",
     "check": "npm run typecheck && npm run lint && npm test",
