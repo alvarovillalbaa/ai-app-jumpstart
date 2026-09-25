@@ -1,5 +1,5 @@
 import EmbeddedPostgres from "embedded-postgres";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
@@ -12,9 +12,11 @@ import { SignJWT } from "jose";
 import { Client } from "pg";
 import assert from "node:assert/strict";
 import { installPostgrest } from "./testing/postgrest.mjs";
+import { backupPostgresApplication } from "./backup-postgres.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const withSupabase = process.argv.includes("--supabase");
+const backupOnly = process.argv.includes("--backup-only");
 const directory = await mkdtemp(join(tmpdir(), "jumpstart-postgres-"));
 const listener = createServer();
 listener.listen(0, "127.0.0.1");
@@ -116,6 +118,59 @@ async function rehearseUpgrade() {
   } catch (error) { await probe.query("ROLLBACK").catch(() => {}); throw error; }
   finally { await probe.end(); }
 }
+async function rehearseBackup() {
+  const recordId = randomUUID();
+  const source = new Client({ connectionString: env.DATABASE_URL });
+  await source.connect();
+  try {
+    await source.query("INSERT INTO app_records(id,tenant,subject,title,content) VALUES($1,$2,$3,$4,$5)",
+      [recordId, "backup-tenant", "backup-owner", "Restored record", "private backup fixture"]);
+  } finally { await source.end(); }
+  await database.createDatabase("app_backup_restore_test");
+  const restoreUrl = env.DATABASE_URL.replace(/\/app_test$/, "/app_backup_restore_test");
+  const output = join(directory, "application.dump");
+  const result = await backupPostgresApplication(env.DATABASE_URL, output, restoreUrl);
+  assert.equal(result.restoreVerified, true);
+  assert.ok(result.bytes > 0);
+  assert.equal((await stat(output)).mode & 0o077, 0, "Published archive must be private");
+  const restored = new Client({ connectionString: restoreUrl });
+  await restored.connect();
+  try {
+    assert.deepEqual((await restored.query("SELECT tenant,subject,title,content,revision FROM app_records WHERE id=$1", [recordId])).rows[0],
+      { tenant: "backup-tenant", subject: "backup-owner", title: "Restored record", content: "private backup fixture", revision: 1 });
+    assert.equal((await restored.query("SELECT count(*)::int AS count FROM app_migrations")).rows[0].count,
+      (await readdir(join(root, "migrations"))).filter(name => /^\d+_[a-z0-9_]+\.sql$/.test(name)).length);
+  } finally { await restored.end(); }
+  await assert.rejects(backupPostgresApplication(env.DATABASE_URL, output), /already exists/);
+  await assert.rejects(backupPostgresApplication(env.DATABASE_URL, join(directory, "invalid.dump"), env.DATABASE_URL), /must differ/);
+  const archiveOnly = await backupPostgresApplication(env.DATABASE_URL, join(directory, "archive-only.dump"));
+  assert.equal(archiveOnly.restoreVerified, false);
+  const cliOutput = join(directory, "cli.dump");
+  await run(["scripts/backup-postgres.mjs", "--output", cliOutput]);
+  assert.equal((await stat(cliOutput)).mode & 0o077, 0);
+  await database.createDatabase("app_cli_restore_test");
+  const cliRestoreUrl = env.DATABASE_URL.replace(/\/app_test$/, "/app_cli_restore_test");
+  await run(["scripts/backup-postgres.mjs", "--output", join(directory, "cli-restored.dump"), "--verify-restore"],
+    0, { ...env, BACKUP_VERIFY_DATABASE_URL: cliRestoreUrl });
+  const cliRestored = new Client({ connectionString: cliRestoreUrl });
+  await cliRestored.connect();
+  try {
+    assert.equal((await cliRestored.query("SELECT content FROM app_records WHERE id=$1", [recordId])).rows[0].content,
+      "private backup fixture");
+  } finally { await cliRestored.end(); }
+  const runner = process.env.PG_CLIENT_RUNNER;
+  const failedOutput = join(directory, "failed.dump");
+  process.env.PG_CLIENT_RUNNER = join(directory, "missing-pg-client");
+  try { await assert.rejects(backupPostgresApplication(env.DATABASE_URL, failedOutput), /could not start/); }
+  finally {
+    if (runner === undefined) delete process.env.PG_CLIENT_RUNNER;
+    else process.env.PG_CLIENT_RUNNER = runner;
+  }
+  assert.equal(await stat(failedOutput).then(() => true, () => false), false, "Failed dump must not publish a partial file");
+  assert.equal((await readdir(directory)).some(name => name.startsWith(".postgres-backup-")), false,
+    "Failed dump must remove its temporary archive");
+  console.log("Private PostgreSQL archive, local restore, data preservation and no-clobber checks passed.");
+}
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => {
   stopping = true; child?.kill(signal);
 });
@@ -159,6 +214,7 @@ try {
     await driftProbe.query("DELETE FROM app_migrations WHERE name=$1", ["99999999_unknown.sql"]);
   } finally { await driftProbe.end(); }
   await rehearseUpgrade();
+  if (backupOnly) await rehearseBackup();
   if (withSupabase) {
     const executable = await installPostgrest(join(directory, "postgrest"));
     const reservation = createServer();
@@ -202,8 +258,10 @@ try {
     env.TEST_SUPABASE_ANON_TOKEN = await token("anon");
     env.TEST_SUPABASE_USER_TOKEN = await token("authenticated");
   }
-  await run(["node_modules/vitest/vitest.mjs", "run", "--config", "vitest.integration.config.ts"]);
-  console.log(withSupabase ? "Supabase adapter: real PostgreSQL/PostgREST contract and direct-access checks passed." : "Disposable PostgreSQL: migrations and repository contract passed.");
+  if (!backupOnly) await run(["node_modules/vitest/vitest.mjs", "run", "--config", "vitest.integration.config.ts"]);
+  console.log(backupOnly ? "Disposable PostgreSQL: backup and restore contract passed."
+    : withSupabase ? "Supabase adapter: real PostgreSQL/PostgREST contract and direct-access checks passed."
+    : "Disposable PostgreSQL: migrations and repository contract passed.");
 } catch (error) {
   validationFailed = true;
   console.error(error instanceof Error ? error.message : "Database validation failed.");
