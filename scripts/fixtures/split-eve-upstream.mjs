@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 createServer(async (request, response) => {
   const url = new URL(request.url, "http://localhost");
   if (url.pathname === "/eve/v1/health") {
-    response.writeHead(200, { "content-type": "application/json" });
+    response.writeHead(200, { "content-type": "application/json", "cache-control": "public, max-age=60" });
     response.end(JSON.stringify({ status: "ready", query: url.searchParams.get("probe") }));
     return;
   }

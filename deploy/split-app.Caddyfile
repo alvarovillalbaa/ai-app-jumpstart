@@ -1,6 +1,16 @@
 # This is the only public origin. Keep the Next and Eve upstreams private.
 # Both services must use the same browser-facing APP_ORIGIN.
 :8080 {
+  # Cover Eve and Workflow responses as well as Next, without replacing an
+  # upstream's stricter policy or Next's per-request nonce CSP.
+  header ?X-Content-Type-Options nosniff
+  header ?Referrer-Policy no-referrer
+  header ?X-Frame-Options DENY
+  header ?Permissions-Policy "camera=(), geolocation=(), microphone=()"
+  header ?Content-Security-Policy "base-uri 'self'; object-src 'none'; frame-ancestors 'none'"
+  header /eve/* >Cache-Control no-store
+  header /.well-known/workflow/* >Cache-Control no-store
+
   handle /eve/* {
     reverse_proxy {$EVE_UPSTREAM}
   }
