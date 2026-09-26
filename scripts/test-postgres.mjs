@@ -1,5 +1,5 @@
 import EmbeddedPostgres from "embedded-postgres";
-import { appendFile, mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { appendFile, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
@@ -13,7 +13,8 @@ import { Client } from "pg";
 import assert from "node:assert/strict";
 import { installPostgrest } from "./testing/postgrest.mjs";
 import { backupPostgresApplication, backupPostgresWorkflow } from "./backup-postgres.mjs";
-import { createPostgresDatabaseSet, verifyPostgresDatabaseSet } from "./backup-postgres-databases.mjs";
+import { createPostgresDatabaseSet, restorePostgresUploadSnapshot, verifyPostgresDatabaseSet } from "./backup-postgres-databases.mjs";
+import { checkSnapshotUploadCatalog, describeUploadSnapshot } from "./private-upload-snapshot.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const withSupabase = process.argv.includes("--supabase");
@@ -198,12 +199,30 @@ async function rehearseBackup() {
   const appPairRestoreUrl = env.DATABASE_URL.replace(/\/app_test$/, "/app_pair_restore_test");
   const workflowPairRestoreUrl = env.DATABASE_URL.replace(/\/app_test$/, "/workflow_pair_restore_test");
   const pairOutput = join(directory, "database-set");
+  const uploadRoot = join(directory, "private-uploads"), uploadFixture = join(directory, "upload-fixture.json");
+  await run(["--import", "tsx", "scripts/testing/restored-upload-contract.ts", "--seed"], 0,
+    { ...env, RESTORED_UPLOAD_ROOT: uploadRoot, RESTORED_UPLOAD_FIXTURE: uploadFixture });
   const pairEnv = { ...env, WORKFLOW_POSTGRES_URL: workflowUrl,
+    UPLOAD_STORAGE_PROVIDER: "local", UPLOAD_LOCAL_ROOT: uploadRoot,
     BACKUP_VERIFY_APP_DATABASE_URL: appPairRestoreUrl,
     BACKUP_VERIFY_WORKFLOW_DATABASE_URL: workflowPairRestoreUrl };
   await run(["scripts/backup-postgres-databases.mjs", "--create", "--output", pairOutput,
-    "--stopped", "--verify-restore"], 0, pairEnv);
-  assert.equal((await verifyPostgresDatabaseSet(pairOutput)).restoreVerified, true);
+    "--stopped", "--verify-restore", "--uploads-dir", uploadRoot], 0, pairEnv);
+  assert.deepEqual(await verifyPostgresDatabaseSet(pairOutput), {
+    files: 7, bytes: (await verifyPostgresDatabaseSet(pairOutput)).bytes,
+    restoreVerified: true, uploads: "included", uploadFiles: 5,
+  });
+  const restoredUploads = join(directory, "restored-uploads");
+  await run(["scripts/backup-postgres-databases.mjs", "--restore-uploads", pairOutput, "--output", restoredUploads], 0,
+    { ...env, DATABASE_URL: "", WORKFLOW_POSTGRES_URL: "" });
+  const capturedObjects = await describeUploadSnapshot(restoredUploads);
+  assert.deepEqual(await checkSnapshotUploadCatalog(appPairRestoreUrl, capturedObjects), { rows: 509, objects: 5, integrityRejected: 1 });
+  await run(["--import", "tsx", "scripts/testing/restored-upload-contract.ts", "--verify"], 0,
+    { ...env, DATABASE_URL: appPairRestoreUrl, RESTORED_UPLOAD_ROOT: restoredUploads, RESTORED_UPLOAD_FIXTURE: uploadFixture });
+  await assert.rejects(restorePostgresUploadSnapshot(pairOutput, restoredUploads), /EEXIST/);
+  // The restoration contract deleted one restored upload. Detect the mismatched
+  // catalog instead of calling the unchanged captured bytes a valid fresh set.
+  await assert.rejects(checkSnapshotUploadCatalog(appPairRestoreUrl, capturedObjects), /deleted catalog entry still has bytes/);
   await run(["scripts/backup-postgres-databases.mjs", "--verify", pairOutput], 0,
     { ...env, DATABASE_URL: "", WORKFLOW_POSTGRES_URL: "" });
   assert.equal((await stat(pairOutput)).mode & 0o077, 0);
@@ -220,6 +239,20 @@ async function rehearseBackup() {
   } finally { await workflowRestored.end(); }
   await assert.rejects(createPostgresDatabaseSet({ applicationUrl: env.DATABASE_URL,
     workflowUrl, output: pairOutput, stopped: true }), /destination already exists/);
+  // A wrong/missing source object cannot publish an apparently complete pair.
+  const fixture = JSON.parse(await readFile(uploadFixture, "utf8"));
+  const cleanObject = capturedObjects.find(row => row.name.endsWith(`/${fixture.clean}`));
+  const cleanPath = join(uploadRoot, cleanObject.name.slice("uploads/".length));
+  await writeFile(cleanPath, "altered source bytes");
+  const mismatchedPair = join(directory, "mismatched-database-set");
+  await assert.rejects(createPostgresDatabaseSet({ applicationUrl: env.DATABASE_URL, workflowUrl, output: mismatchedPair,
+    uploadsDir: uploadRoot, stopped: true, env: {} }), /do not match their catalog entry/);
+  assert.equal(await stat(mismatchedPair).then(() => true, () => false), false);
+  await rm(cleanPath);
+  const missingObjectPair = join(directory, "missing-object-set");
+  await assert.rejects(createPostgresDatabaseSet({ applicationUrl: env.DATABASE_URL, workflowUrl, output: missingObjectPair,
+    uploadsDir: uploadRoot, stopped: true, env: {} }), /missing its object bytes/);
+  assert.equal(await stat(missingObjectPair).then(() => true, () => false), false);
   await database.createDatabase("workflow_pair_missing_test");
   const missingWorkflowUrl = env.DATABASE_URL.replace(/\/app_test$/, "/workflow_pair_missing_test");
   const incompletePair = join(directory, "incomplete-database-set");
@@ -229,7 +262,7 @@ async function rehearseBackup() {
     "A failed paired backup must not publish a partial directory");
   await appendFile(join(pairOutput, "application.dump"), "tampered");
   await assert.rejects(verifyPostgresDatabaseSet(pairOutput), /hashes or sizes differ/);
-  console.log("Private PostgreSQL application and paired Workflow archives, restores and integrity checks passed.");
+  console.log("Private PostgreSQL application/Workflow archives and local upload catalog/object restores passed.");
 }
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => {
   stopping = true; child?.kill(signal);

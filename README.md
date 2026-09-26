@@ -61,7 +61,7 @@ The CLI can also create a private, paged [export of visible application data](do
 | AWS ECS / Azure Container Apps / GCP Cloud Run | [Container definitions and recipes](docs/cloud-containers.md) with an offline filled-manifest preflight; PostgreSQL workflow restart and dual-database Compose proofs passed locally; cloud acceptance pending |
 | AWS Amplify | Documented Next.js version/streaming incompatibility with the current app; compatibility gate remains open |
 
-Run `npm run db:migrate -- --dry-run` with the target `DATABASE_URL` to review pending SQL, then run `npm run db:migrate` after backup review and before PostgreSQL/Supabase use. Remote migrations never run per request. SQLite is not for ephemeral serverless or shared network filesystems. Application data and Eve workflow storage are separate; self-hosted PostgreSQL deployments can create a [stopped two-database recovery set](docs/postgres-recovery.md) and rehearse both restores.
+Run `npm run db:migrate -- --dry-run` with the target `DATABASE_URL` to review pending SQL, then run `npm run db:migrate` after backup review and before PostgreSQL/Supabase use. Remote migrations never run per request. SQLite is not for ephemeral serverless or shared network filesystems. Application data and Eve workflow storage are separate; self-hosted PostgreSQL deployments can create a [stopped recovery set](docs/postgres-recovery.md) containing both database archives and their local private upload files, then rehearse restoration.
 
 Read [database setup](docs/databases.md), [hosting](docs/hosting.md), [operations](docs/operations.md), and [testing](docs/testing.md).
 
