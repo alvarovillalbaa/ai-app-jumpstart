@@ -1,0 +1,13 @@
+{$SCANNER_DOMAIN} {
+  header X-Content-Type-Options nosniff
+  header Cache-Control no-store
+  request_body {
+    max_size 5242880
+  }
+  handle /v1/scan {
+    reverse_proxy gateway:8081
+  }
+  handle {
+    respond 404
+  }
+}

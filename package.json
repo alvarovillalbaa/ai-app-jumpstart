@@ -74,7 +74,8 @@
     "test:chat": "node scripts/test-auth.mjs --chat",
     "test:chat:container": "node scripts/test-auth.mjs --chat --container",
     "convex:dev": "convex dev",
-    "convex:codegen": "convex codegen --typecheck enable"
+    "convex:codegen": "convex codegen --typecheck enable",
+    "test:upload-scanner:compose": "tsx scripts/test-upload-scanner-compose.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
