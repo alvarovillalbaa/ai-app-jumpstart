@@ -1,5 +1,7 @@
 import { expect,test } from "@playwright/test";
-import { readFile,writeFile } from "node:fs/promises";
+import { mkdtemp,readFile,writeFile,rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { auditAccessibility } from "../helpers/accessibility";
@@ -38,8 +40,26 @@ test("browser, REST, CLI and MCP agree on durable clean and rejected upload deci
     const scanned = await client.callTool({ name: "uploads_scan",arguments: { id } });
     expect(scanned.isError).not.toBe(true);
     expect(JSON.stringify(scanned.content)).not.toContain(payload);
+    const linkResult = await client.callTool({ name: "uploads_download_link",arguments: { id } });
+    expect(linkResult.isError).not.toBe(true);
+    const link = JSON.parse((linkResult.content as { text: string }[])[0].text) as { url: string;expiresAt: number };
+    expect(link.url).toMatch(new RegExp(`^${url}/download\\?grant=`));
+    expect(link.expiresAt-Date.now()).toBeGreaterThan(0);expect(link.expiresAt-Date.now()).toBeLessThanOrEqual(60_000);
+    expect((await request.get(link.url)).status()).toBe(401);
+    expect((await request.get(link.url,{ headers: { authorization: `Bearer ${token("other")}` } })).status()).toBe(403);
+    expect((await request.get(link.url,{ headers: { authorization: `Bearer ${token("metadata")}` } })).status()).toBe(403);
+    const directory = await mkdtemp(join(tmpdir(),"jumpstart-linked-cli-"));
+    try {
+      const issued = await run(["uploads","link",id],environment);
+      const file = join(directory,"link.json"),output = join(directory,"download.txt");
+      await writeFile(file,JSON.stringify(issued),{ mode: 0o600 });
+      expect(await run(["uploads","download-link",file,output],environment)).toMatchObject({ size: payload.length });
+      expect(await readFile(output,"utf8")).toBe(payload);
+    } finally { await rm(directory,{ recursive: true,force: true }); }
     const downloadPromise = page.waitForEvent("download");
+    const downloadRequest = page.waitForRequest(request => request.url().includes(`${url}/download?grant=`));
     await row.getByRole("button",{ name: "Download after scan" }).click();
+    expect((await downloadRequest).headers().authorization).toBe(headers.authorization);
     const download = await downloadPromise;
     expect(download.suggestedFilename()).toBe(name);
     expect(await readFile((await download.path())!,"utf8")).toBe(payload);
@@ -53,6 +73,7 @@ test("browser, REST, CLI and MCP agree on durable clean and rejected upload deci
     await auditAccessibility(page,"rejected upload scan");
     await writeFile(control,"clean");
     expect((await request.get(`${url}/download`,{ headers })).status()).toBe(422);
+    expect((await request.get(link.url,{ headers })).status()).toBe(422);
     expect((await client.callTool({ name: "uploads_scan",arguments: { id } })).isError).toBe(true);
     expect(await run(["uploads","get",id],environment)).toMatchObject({ state: "rejected",scan: { status: "rejected",reason: "malware" } });
   } finally { await client.close(); }

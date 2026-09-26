@@ -235,3 +235,62 @@ it("persists explicit owner scans without accepting caller verdicts or caching s
     expect((await call(alice)).status).toBe(422);expect(scan).toHaveBeenCalledTimes(3);
   } finally { await catalog.close();await rm(directory,{ recursive: true,force: true }); }
 });
+
+it("requires a current owner credential and fresh scan for short-lived digest-bound links",async () => {
+  vi.stubEnv("AUTH_PROVIDER","api-key");vi.stubEnv("UPLOAD_DOWNLOAD_POLICY","scan-on-read");
+  const keys = [key(alice,"alice",["uploads:read","uploads:write","uploads:download"]),key(bob,"bob",["uploads:download"]),key(metadata,"alice",["uploads:read"])];
+  vi.stubEnv("APP_API_KEYS",JSON.stringify(keys));
+  vi.stubEnv("UPLOAD_DOWNLOAD_SIGNING_JSON",JSON.stringify({ audience: "test:uploads",activeKey: "v1",keys: { v1: "a".repeat(64) } }));
+  const directory = await mkdtemp(join(tmpdir(),"jumpstart-upload-link-http-"));
+  const catalog = sqliteUploadCatalog(":memory:"),objects = localUploadObjects(directory);
+  const scan = vi.fn(async (): Promise<"clean" | "infected"> => "clean"),reads = vi.fn(async () => objects);
+  const intake = uploadHandlers(async () => catalog,async () => objects),api = uploadHandlers(async () => catalog,reads,async () => ({ scan }));
+  let now = Date.now();const clock = vi.spyOn(Date,"now").mockImplementation(() => now);
+  try {
+    const row = await (await intake.create(request(root,alice,"POST",Buffer.from("private link payload")))).json();
+    const linkRequest = (token: string,body: object = {}) => new Request(`${root}/${row.id}/download-link`,{
+      method: "POST",headers: { authorization: `Bearer ${token}`,"content-type": "application/json" },body: JSON.stringify(body),
+    });
+    expect((await api.downloadLink(linkRequest(bob),row.id)).status).toBe(404);
+    expect((await api.downloadLink(linkRequest(metadata),row.id)).status).toBe(403);
+    expect((await api.downloadLink(linkRequest(alice,{ expiresAt: now+1_000_000 }),row.id)).status).toBe(400);
+    const issued = await api.downloadLink(linkRequest(alice),row.id);
+    expect(issued.status).toBe(200);expect(issued.headers.get("cache-control")).toBe("no-store");
+    const link = await issued.json(),url = new URL(link.url,root).href;
+    expect(link.expiresAt).toBe(now+60_000);expect(reads).not.toHaveBeenCalled();expect(scan).not.toHaveBeenCalled();
+    expect((await api.download(new Request(url),row.id)).status).toBe(401);
+    expect((await api.download(request(url,bob),row.id)).status).toBe(403);
+    expect((await api.download(request(url,metadata),row.id)).status).toBe(403);
+    expect((await api.download(request(url.replace(/grant=./,"grant=x"),alice),row.id)).status).toBe(403);
+    expect((await api.download(request(`${root}/${row.id}/download?grant=`,alice),row.id)).status).toBe(403);
+    expect((await api.download(request(url.replace("?grant=","?Grant="),alice),row.id)).status).toBe(400);
+    expect((await api.download(request(url+"&grant=other",alice),row.id)).status).toBe(400);
+    expect(reads).not.toHaveBeenCalled();
+    const downloaded = await api.download(request(url,alice),row.id);
+    expect(downloaded.status).toBe(200);expect(await downloaded.text()).toBe("private link payload");
+    expect(scan).toHaveBeenCalledOnce();
+    vi.stubEnv("APP_API_KEYS",JSON.stringify(keys.filter(item => item.subject !== "alice")));
+    expect((await api.download(request(url,alice),row.id)).status).toBe(401);
+    vi.stubEnv("APP_API_KEYS",JSON.stringify(keys.map(item => item.subject === "alice" ? { ...item,scopes: ["uploads:read"] } : item)));
+    expect((await api.download(request(url,alice),row.id)).status).toBe(403);
+    expect(scan).toHaveBeenCalledOnce();
+    vi.stubEnv("APP_API_KEYS",JSON.stringify(keys));
+    const changed = uploadHandlers(async () => ({ ...catalog,get: async (owner,id) => {
+      const found = await catalog.get(owner,id);return found && { ...found,sha256: "b".repeat(64) };
+    } }),reads,async () => ({ scan }));
+    expect((await changed.download(request(url,alice),row.id)).status).toBe(403);
+    expect(reads).toHaveBeenCalledOnce();
+    now = link.expiresAt;
+    expect((await api.download(request(url,alice),row.id)).status).toBe(410);expect(scan).toHaveBeenCalledOnce();
+    const fresh = await (await api.downloadLink(linkRequest(alice),row.id)).json(),freshUrl = new URL(fresh.url,root).href;
+    // Expiry while the daemon is working still withholds all bytes.
+    scan.mockImplementationOnce(async () => { now = fresh.expiresAt;return "clean"; });
+    expect((await api.download(request(freshUrl,alice),row.id)).status).toBe(410);
+    const rejectionLink = await (await api.downloadLink(linkRequest(alice),row.id)).json();
+    scan.mockResolvedValueOnce("infected");
+    expect((await api.download(request(new URL(rejectionLink.url,root).href,alice),row.id)).status).toBe(422);
+    expect((await api.downloadLink(linkRequest(alice),row.id)).status).toBe(422);
+    expect((await api.delete(request(`${root}/${row.id}`,alice,"DELETE"),row.id)).status).toBe(204);
+    expect((await api.download(request(new URL(rejectionLink.url,root).href,alice),row.id)).status).toBe(404);
+  } finally { clock.mockRestore();await catalog.close();await rm(directory,{ recursive: true,force: true }); }
+});

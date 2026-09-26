@@ -32,6 +32,7 @@ it("shows owner download only where the server admits its scanner transport",() 
 it("uses the authenticated binary HTTP path from CLI for put, list, get and delete",async () => {
   vi.stubEnv("AUTH_PROVIDER","api-key");
   vi.stubEnv("UPLOAD_DOWNLOAD_POLICY","scan-on-read");
+  vi.stubEnv("UPLOAD_DOWNLOAD_SIGNING_JSON",JSON.stringify({ audience: "test:cli",activeKey: "v1",keys: { v1: "a".repeat(64) } }));
   vi.stubEnv("APP_API_KEYS",JSON.stringify([{ sha256: createHash("sha256").update(token).digest("hex"),
     tenant: "test",subject: "alice",scopes: ["uploads:read","uploads:write","uploads:download"] }]));
   const directory = await mkdtemp(join(tmpdir(),"jumpstart-upload-cli-")),file = join(directory,"note.txt");
@@ -41,6 +42,7 @@ it("uses the authenticated binary HTTP path from CLI for put, list, get and dele
   const request: typeof fetch = (url,init) => {
     const req = new Request(url,init),id = new URL(req.url).pathname.split("/")[4];
     if (new URL(req.url).pathname.endsWith("/scan")) return api.scan(req,id);
+    if (new URL(req.url).pathname.endsWith("/download-link")) return api.downloadLink(req,id);
     if (req.method === "POST") return api.create(req);
     if (req.method === "DELETE") return api.delete(req,id);
     if (new URL(req.url).pathname.endsWith("/download")) return api.download(req,id);
@@ -57,6 +59,14 @@ it("uses the authenticated binary HTTP path from CLI for put, list, get and dele
     expect(await run(["uploads","download",row.id,output],env,request)).toMatchObject({ file: output,size: 16 });
     expect(await readFile(output,"utf8")).toBe("cli secret bytes");
     expect((await stat(output)).mode & 0o077).toBe(0);
+    const link = await run(["uploads","link",row.id],env,request);
+    const linkFile = join(directory,"link.json"),linkedOutput = join(directory,"linked-download.txt");
+    await writeFile(linkFile,JSON.stringify(link),{ mode: 0o600 });
+    expect(await run(["uploads","download-link",linkFile,linkedOutput],env,request)).toMatchObject({ file: linkedOutput,size: 16 });
+    expect(await readFile(linkedOutput,"utf8")).toBe("cli secret bytes");
+    expect((await stat(linkedOutput)).mode & 0o077).toBe(0);
+    await writeFile(linkFile,JSON.stringify({ url: "https://evil.example/download",expiresAt: Date.now()+60_000 }));
+    await expect(run(["uploads","download-link",linkFile,join(directory,"unsafe.txt")],env,request)).rejects.toThrow();
     await expect(run(["uploads","download",row.id,output],env,request)).rejects.toThrow("already exists");
     expect(await run(["uploads","delete",row.id],env,request)).toEqual({ deleted: true });
     expect(await run(["uploads","list"],env,request)).toEqual({ items: [],usage: { files: 0,bytes: 0 } });

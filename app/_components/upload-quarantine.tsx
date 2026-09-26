@@ -6,8 +6,9 @@ import { browserAuth } from "@/lib/auth/browser";
 import type { PublicAuthSettings } from "@/lib/auth/settings";
 import { DEFAULT_UPLOAD_QUOTA, uploadEntry, uploadPage, type UploadEntry } from "@/lib/uploads/catalog-contract";
 import { MAX_API_UPLOAD_BYTES, uploadName, type UploadMediaType } from "@/lib/uploads/schema";
+import { uploadDownloadLink } from "@/lib/uploads/download-link-contract";
 
-type Props = { settings?: PublicAuthSettings; userId?: string; downloadEnabled?: boolean };
+type Props = { settings?: PublicAuthSettings; userId?: string; downloadEnabled?: boolean;downloadLinksEnabled?: boolean };
 type Page = ReturnType<typeof uploadPage.parse>;
 const extensions: Record<string, UploadMediaType> = {
   txt: "text/plain", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", pdf: "application/pdf",
@@ -30,7 +31,7 @@ function checkedFile(file: File): { name: string; mediaType: UploadMediaType } {
   return { name, mediaType };
 }
 
-export function UploadQuarantine({ settings, userId, downloadEnabled = false }: Props) {
+export function UploadQuarantine({ settings, userId, downloadEnabled = false,downloadLinksEnabled = false }: Props) {
   const client = settings ? browserAuth(settings) : null;
   const identity = useRef(userId ?? "");
   const generation = useRef(0);
@@ -172,8 +173,22 @@ export function UploadQuarantine({ settings, userId, downloadEnabled = false }: 
     try {
       const accessToken = await credential();
       if (current !== generation.current || controller.signal.aborted) return;
-      const response = await fetch(`/api/v1/uploads/${item.id}/download`,{
-        cache: "no-store",signal: AbortSignal.any([controller.signal,AbortSignal.timeout(60_000)]),
+      let path = `/api/v1/uploads/${item.id}/download`;
+      const signal = AbortSignal.any([controller.signal,AbortSignal.timeout(60_000)]);
+      if (downloadLinksEnabled) {
+        const issued = await fetch(`/api/v1/uploads/${item.id}/download-link`,{
+          method: "POST",body: "{}",cache: "no-store",redirect: "error",signal,
+          headers: { authorization: `Bearer ${accessToken}`,"content-type": "application/json" },
+        });
+        const body: unknown = await issued.json().catch(() => null);
+        if (!issued.ok) throw new Error(messageFrom(body,`Download link failed (${issued.status}).`));
+        const link = uploadDownloadLink.parse(body);
+        if (!link.url.startsWith(`${path}?grant=`) || link.expiresAt <= Date.now()) throw new Error("Download link is invalid or expired. Retry the download.");
+        if (current !== generation.current || controller.signal.aborted) return;
+        path = link.url;
+      }
+      const response = await fetch(path,{
+        cache: "no-store",redirect: "error",signal,
         headers: { authorization: `Bearer ${accessToken}` },
       });
       if (!response.ok) {

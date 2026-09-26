@@ -143,3 +143,60 @@ it("cancels an in-flight download when the account changes",async () => {
   await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Your account changed"));
   expect(click).not.toHaveBeenCalled();
 });
+
+it("uses only a validated relative expiring link and keeps credentials in request headers",async () => {
+  const raw = `v1.fixture.${Date.now()}.${item.sha256}.${"a".repeat(43)}`;
+  const path = `/api/v1/uploads/${item.id}/download?grant=${raw}`;
+  const click = vi.spyOn(HTMLAnchorElement.prototype,"click").mockImplementation(() => {});
+  vi.stubGlobal("URL",class extends URL { static createObjectURL = () => "blob:private-linked-upload";static revokeObjectURL = () => {}; });
+  const fetcher = vi.fn<typeof fetch>(async (input,init) => {
+    expect(String(input)).not.toContain("fresh-token");
+    if (String(input).endsWith("/download-link")) {
+      expect(init?.method).toBe("POST");expect(init?.body).toBe("{}");
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer fresh-token");
+      return Response.json({ url: path,expiresAt: Date.now()+60_000 });
+    }
+    if (String(input) === path) {
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer fresh-token");
+      expect(init?.redirect).toBe("error");
+      return new Response("owner text",{ headers: { "content-type": "application/octet-stream" } });
+    }
+    return Response.json({ items: [item],usage: { files: 1,bytes: item.size } });
+  });
+  vi.stubGlobal("fetch",fetcher);
+  render(<UploadQuarantine settings={settings} userId="alice" downloadEnabled downloadLinksEnabled />);
+  fireEvent.click(await screen.findByRole("button",{ name: "Download after scan" }));
+  await waitFor(() => expect(click).toHaveBeenCalledOnce());
+  expect(fetcher.mock.calls.some(([path]) => String(path).includes("?grant="))).toBe(true);
+});
+
+it("refuses a foreign download URL before sending the owner's credential",async () => {
+  const fetcher = vi.fn<typeof fetch>(async input => String(input).endsWith("/download-link")
+    ? Response.json({ url: "https://evil.example/download",expiresAt: Date.now()+60_000 })
+    : Response.json({ items: [item],usage: { files: 1,bytes: item.size } }));
+  vi.stubGlobal("fetch",fetcher);
+  render(<UploadQuarantine settings={settings} userId="alice" downloadEnabled downloadLinksEnabled />);
+  fireEvent.click(await screen.findByRole("button",{ name: "Download after scan" }));
+  await screen.findByRole("alert");
+  expect(fetcher.mock.calls.every(([url]) => String(url).startsWith("/api/v1/uploads"))).toBe(true);
+});
+
+it("aborts link issuance and ignores the returned URL after an account change",async () => {
+  let resolveLink: ((response: Response) => void) | undefined;
+  let signal: AbortSignal | undefined;
+  const fetcher = vi.fn<typeof fetch>(async (input,init) => {
+    if (String(input).endsWith("/download-link")) {
+      signal = init?.signal ?? undefined;
+      return new Promise<Response>(resolve => { resolveLink = resolve; });
+    }
+    return Response.json({ items: [item],usage: { files: 1,bytes: item.size } });
+  });
+  vi.stubGlobal("fetch",fetcher);
+  render(<UploadQuarantine settings={settings} userId="alice" downloadEnabled downloadLinksEnabled />);
+  fireEvent.click(await screen.findByRole("button",{ name: "Download after scan" }));
+  await waitFor(() => expect(signal).toBeDefined());
+  act(() => auth.listener("SIGNED_OUT",null));expect(signal?.aborted).toBe(true);
+  await act(async () => resolveLink?.(Response.json({ url: `/api/v1/uploads/${item.id}/download?grant=v1.fixture.${Date.now()}.${item.sha256}.${"a".repeat(43)}`,expiresAt: Date.now()+60_000 })));
+  expect(fetcher.mock.calls.some(([path]) => String(path).includes("?grant="))).toBe(false);
+  expect(screen.queryByText(item.name)).not.toBeInTheDocument();
+});

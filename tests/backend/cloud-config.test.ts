@@ -54,6 +54,20 @@ it("accepts PostgreSQL and Convex application data with unchanged Supabase ident
   }
 });
 
+it("requires a managed secret reference for the optional upload download keyring",() => {
+  for (const provider of providers) {
+    const manifest = filled(provider),application = app(provider,manifest);
+    const values = provider === "aws" ? application.secrets : application.env;
+    const reference = values.find(row => row.name === "AI_CREATION_SIGNING_JSON")!;
+    values.push({ ...reference,name: "UPLOAD_DOWNLOAD_SIGNING_JSON" });
+    expect(validateCloudManifest(provider,manifest)).toMatchObject({ secretReferences: 9 });
+    const row = values.find(item => item.name === "UPLOAD_DOWNLOAD_SIGNING_JSON")!;
+    delete row.secretRef;delete row.valueFrom;row.value = "private-upload-keyring-value";
+    try { validateCloudManifest(provider,manifest);throw new Error("Expected rejection."); }
+    catch (error) { expect(String(error)).toContain("plaintext");expect(String(error)).not.toContain("private-upload-keyring-value"); }
+  }
+});
+
 it("rejects unresolved markers, mutable image tags and missing combined readiness",() => {
   for (const provider of providers) {
     expect(() => validateCloudManifest(provider,templates[provider])).toThrow("unresolved REPLACE_");

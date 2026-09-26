@@ -5,6 +5,7 @@ import { authSettings } from "../lib/auth/settings";
 import { chatSettings } from "../lib/agent-access/settings";
 import { trustedHttpOrigin } from "../lib/security/origin";
 import { remoteScannerSettings } from "../lib/uploads/scanner";
+import { uploadLinkSettings } from "../lib/uploads/download-links";
 
 function httpsOrigin(value: string | undefined, name: string) {
   const origin = trustedHttpOrigin(value);
@@ -42,6 +43,10 @@ export function checkManagedConfig(env: NodeJS.ProcessEnv, requireChat = false) 
   }
   if (env.UPLOAD_DOWNLOAD_POLICY && (env.UPLOAD_DOWNLOAD_POLICY !== "scan-on-read" || !scannerConfigured)) {
     throw new Error("Vercel upload downloads require scan-on-read and an authenticated remote scanner.");
+  }
+  if (env.UPLOAD_DOWNLOAD_SIGNING_JSON) {
+    uploadLinkSettings(env);
+    if (env.UPLOAD_DOWNLOAD_POLICY !== "scan-on-read") throw new Error("Upload download links require scan-on-read and its configured scanner.");
   }
   if (env.SUPABASE_SECRET_KEY === env.SUPABASE_PUBLISHABLE_KEY || env.SUPABASE_SECRET_KEY?.startsWith("sb_publishable_")) {
     throw new Error("SUPABASE_SECRET_KEY must be a backend credential distinct from SUPABASE_PUBLISHABLE_KEY.");

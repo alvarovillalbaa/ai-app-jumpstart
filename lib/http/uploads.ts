@@ -67,8 +67,17 @@ export function uploadHandlers(catalog: () => Promise<UploadCatalog> = getUpload
       z.object({}).strict().parse(await readJson(request));
       return Response.json(await s.scan(id));
     }),
+    downloadLink: (request: Request,id: string) => handle(request,async () => {
+      const s = await service(request);
+      z.object({}).strict().parse(await readJson(request));
+      return Response.json(await s.downloadLink(id));
+    }),
     download: (request: Request,id: string) => handle(request,async () => {
-      const { row,bytes } = await (await service(request)).download(id);
+      const query = new URL(request.url).searchParams,grants = query.getAll("grant");
+      if (grants.length > 1 || [...query.keys()].some(key => key !== "grant")) {
+        throw new AppError(400,"invalid_input","Use exactly one download grant or no query parameters.");
+      }
+      const { row,bytes } = await (await service(request)).download(id,grants[0]);
       return new Response(Buffer.from(bytes),{ headers: {
         "content-type": "application/octet-stream",
         "content-length": String(bytes.length),

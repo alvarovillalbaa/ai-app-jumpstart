@@ -165,7 +165,8 @@ export function validateCloudManifest(provider: CloudProvider,raw: unknown,templ
   const required = ["WORKFLOW_POSTGRES_URL","SUPABASE_AUTH_URL","SUPABASE_PUBLISHABLE_KEY",
     "AI_CREATION_SIGNING_JSON","AI_BUDGET_POLICY_JSON","AI_GATEWAY_API_KEY",
     ...(dataProvider === "supabase" ? ["SUPABASE_URL","SUPABASE_SECRET_KEY"] :
-      dataProvider === "postgres" ? ["DATABASE_URL"] : ["CONVEX_SITE_URL","CONVEX_BACKEND_SECRET"])];
+      dataProvider === "postgres" ? ["DATABASE_URL"] : ["CONVEX_SITE_URL","CONVEX_BACKEND_SECRET"]),
+    ...(appEnv.has("UPLOAD_DOWNLOAD_SIGNING_JSON") ? ["UPLOAD_DOWNLOAD_SIGNING_JSON"] : [])];
   for (const name of ["WORKFLOW_POSTGRES_URL","SUPABASE_AUTH_URL","SUPABASE_PUBLISHABLE_KEY",
     "AI_CREATION_SIGNING_JSON","AI_BUDGET_POLICY_JSON","AI_GATEWAY_API_KEY",
     "SUPABASE_SECRET_KEY","DATABASE_URL","CONVEX_BACKEND_SECRET"]) {

@@ -163,6 +163,10 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
       description: "Scan one owned stored upload with the configured private scanner and persist its decision. Requires uploads:download and an enabled scan-on-read policy. Returns metadata only. Rejection blocks this upload ID until deletion; no bytes or storage URL are returned.",
       inputSchema: z.object({ id: z.uuid() }).strict(),annotations: { readOnlyHint: false,destructiveHint: false,idempotentHint: false,openWorldHint: false },
     },({ id }) => result(() => uploads.scan(id)));
+    server.registerTool("uploads_download_link",{
+      description: "Issue a 60-second owner-authenticated download link for one owned upload. Requires uploads:download, scan-on-read and server signing configuration. Using the link still requires the current owner's bearer credential and a fresh clean scan. Returns no bytes or storage URL and does not allow public sharing.",
+      inputSchema: z.object({ id: z.uuid() }).strict(),annotations: { readOnlyHint: true,destructiveHint: false,openWorldHint: false },
+    },({ id }) => result(() => uploads.downloadLink(id)));
     server.registerTool("uploads_delete",{
       description: "Delete one owned private upload and its object, including clean or rejected uploads. Does not erase backups.",
       inputSchema: { id: z.uuid() },annotations: { destructiveHint: true,idempotentHint: false,openWorldHint: false },

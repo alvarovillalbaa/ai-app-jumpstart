@@ -55,6 +55,7 @@ try {
     DATA_PROVIDER: "sqlite",SQLITE_PATH: join(directory,"catalog.sqlite"),UPLOAD_STORAGE_PROVIDER: "local",
     UPLOAD_LOCAL_ROOT: join(directory,"objects"),UPLOAD_DOWNLOAD_POLICY: "scan-on-read",UPLOAD_SCANNER_PROVIDER: "clamd",
     UPLOAD_CLAMD_SOCKET: socketPath,UPLOAD_SCANNER_URL: "",UPLOAD_SCANNER_TOKEN: "",VERCEL: "",AWS_LAMBDA_FUNCTION_NAME: "",
+    UPLOAD_DOWNLOAD_SIGNING_JSON: JSON.stringify({ audience: "isolated-upload-browser",activeKey: "fixture",keys: { fixture: "a".repeat(64) } }),
     APP_API_KEYS: JSON.stringify([
       ["owner","owner",["uploads:read","uploads:write","uploads:download"]],
       ["other","other",["uploads:read","uploads:write","uploads:download"]],

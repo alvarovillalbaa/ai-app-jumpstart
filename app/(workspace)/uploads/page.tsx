@@ -15,8 +15,9 @@ export default async function UploadsPage() {
   }
   const settings = authSettings();
   const downloadEnabled = uploadDownloadConfigured(process.env);
-  if (!settings) return <UploadQuarantine downloadEnabled={downloadEnabled} />;
+  const downloadLinksEnabled = Boolean(process.env.UPLOAD_DOWNLOAD_SIGNING_JSON);
+  if (!settings) return <UploadQuarantine downloadEnabled={downloadEnabled} downloadLinksEnabled={downloadLinksEnabled} />;
   const user = await currentUser();
   if (!user) redirect("/login?next=/uploads");
-  return <UploadQuarantine key={user.id} settings={settings} userId={user.id} downloadEnabled={downloadEnabled} />;
+  return <UploadQuarantine key={user.id} settings={settings} userId={user.id} downloadEnabled={downloadEnabled} downloadLinksEnabled={downloadLinksEnabled} />;
 }
