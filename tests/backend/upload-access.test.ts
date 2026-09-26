@@ -40,6 +40,7 @@ it("uses the authenticated binary HTTP path from CLI for put, list, get and dele
     async () => localUploadObjects(join(directory,"objects")),async () => ({ scan: async () => "clean" }));
   const request: typeof fetch = (url,init) => {
     const req = new Request(url,init),id = new URL(req.url).pathname.split("/")[4];
+    if (new URL(req.url).pathname.endsWith("/scan")) return api.scan(req,id);
     if (req.method === "POST") return api.create(req);
     if (req.method === "DELETE") return api.delete(req,id);
     if (new URL(req.url).pathname.endsWith("/download")) return api.download(req,id);
@@ -51,6 +52,7 @@ it("uses the authenticated binary HTTP path from CLI for put, list, get and dele
     expect(row.state).toBe("quarantined");
     expect(await run(["uploads","list"],env,request)).toMatchObject({ items: [{ id: row.id }],usage: { files: 1 } });
     expect(await run(["uploads","get",row.id],env,request)).toMatchObject({ id: row.id,state: "quarantined" });
+    expect(await run(["uploads","scan",row.id],env,request)).toMatchObject({ id: row.id,state: "clean",scan: { policyVersion: 1,status: "clean" } });
     const output = join(directory,"download.txt");
     expect(await run(["uploads","download",row.id,output],env,request)).toMatchObject({ file: output,size: 16 });
     expect(await readFile(output,"utf8")).toBe("cli secret bytes");
@@ -83,9 +85,45 @@ it("exposes only owned quarantine metadata through MCP tools and resources",asyn
     const resource = await client.readResource({ uri: `uploads:///${row.id}` });
     expect(JSON.stringify(resource.contents)).toContain(row.id);
     expect(JSON.stringify(resource.contents)).not.toContain("secret bytes");
+    const scanDenied = await client.callTool({ name: "uploads_scan",arguments: { id: row.id } });
+    expect(scanDenied.isError).toBe(true);
+    expect((await catalog.get(owner,row.id))?.state).toBe("quarantined");
     const deleted = await client.callTool({ name: "uploads_delete",arguments: { id: row.id } });
     expect(deleted.isError).not.toBe(true);
     expect(await catalog.list(owner)).toEqual([]);
+  } finally { await client.close();await server.close();await repo.close();await catalog.close();await rm(directory,{ recursive: true,force: true }); }
+});
+
+it("MCP scans persist owner-only decisions without returning private bytes",async () => {
+  vi.stubEnv("UPLOAD_SCANNER_PROVIDER","clamd");
+  vi.stubEnv("VERCEL","");
+  const directory = await mkdtemp(join(tmpdir(),"jumpstart-upload-mcp-scan-"));
+  const catalog = sqliteUploadCatalog(":memory:"),objects = localUploadObjects(directory),repo = new SqliteRepository(":memory:");
+  const owner = { tenant: "test",subject: "alice" },principal = { ...owner,scopes: ["uploads:read","uploads:download"] };
+  const row = await new UploadIntake(catalog,objects).accept(owner,"note.txt","text/plain",new TextEncoder().encode("private scan bytes"));
+  let infected = false;
+  const scanner = vi.fn(async () => infected ? "infected" as const : "clean" as const);
+  const uploads = new UploadService(catalog,async () => objects,principal,async () => ({ scan: scanner }),"scan-on-read");
+  const server = createMcpServer(new RecordService(repo,principal),undefined,undefined,undefined,uploads);
+  const client = new Client({ name: "upload-scan-contract",version: "1" });
+  const [local,remote] = InMemoryTransport.createLinkedPair();
+  await server.connect(remote);await client.connect(local);
+  try {
+    const clean = await client.callTool({ name: "uploads_scan",arguments: { id: row.id } });
+    expect(clean.isError).not.toBe(true);
+    const content = clean.content as { type: string;text?: string }[];
+    expect(JSON.parse(content.find(block => block.type === "text")!.text!)).toMatchObject({ id: row.id,state: "clean" });
+    expect(JSON.stringify(clean.content)).not.toContain("private scan bytes");
+    expect((await catalog.get(owner,row.id))?.scan).toMatchObject({ sha256: row.sha256,status: "clean",policyVersion: 1 });
+    infected = true;
+    expect((await client.callTool({ name: "uploads_scan",arguments: { id: row.id } })).isError).toBe(true);
+    expect((await catalog.get(owner,row.id))?.state).toBe("rejected");
+    infected = false;
+    expect((await client.callTool({ name: "uploads_scan",arguments: { id: row.id } })).isError).toBe(true);
+    expect(scanner).toHaveBeenCalledTimes(2);
+    const resource = await client.readResource({ uri: `uploads:///${row.id}` });
+    expect(JSON.parse((resource.contents[0] as { text: string }).text)).toMatchObject({ id: row.id,state: "rejected" });
+    expect(JSON.stringify(resource.contents)).not.toContain("private scan bytes");
   } finally { await client.close();await server.close();await repo.close();await catalog.close();await rm(directory,{ recursive: true,force: true }); }
 });
 

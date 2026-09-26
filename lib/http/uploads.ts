@@ -1,6 +1,7 @@
 import { authenticate } from "./auth";
 import { AppError } from "./errors";
-import { handle } from "./handler";
+import { handle,readJson } from "./handler";
+import { z } from "zod";
 import { getUploadCatalog } from "../uploads/catalog-store";
 import { createUploadObjects } from "../uploads/objects-store";
 import { UploadService } from "../uploads/service";
@@ -61,6 +62,11 @@ export function uploadHandlers(catalog: () => Promise<UploadCatalog> = getUpload
       return Response.json(row,{ status: 201,headers: { location: `/api/v1/uploads/${row.id}` } });
     }),
     get: (request: Request,id: string) => handle(request,async () => Response.json(await (await service(request)).get(id))),
+    scan: (request: Request,id: string) => handle(request,async () => {
+      const s = await service(request);
+      z.object({}).strict().parse(await readJson(request));
+      return Response.json(await s.scan(id));
+    }),
     download: (request: Request,id: string) => handle(request,async () => {
       const { row,bytes } = await (await service(request)).download(id);
       return new Response(Buffer.from(bytes),{ headers: {

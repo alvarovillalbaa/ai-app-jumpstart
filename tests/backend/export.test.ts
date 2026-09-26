@@ -71,7 +71,8 @@ it("exports visible account data, including archived conversations and paged pro
       sourceSessionId: "session-1", sourceCallId: "call-1", title: "Note", content: "artifact text",
       mediaType: "text/plain", createdAt: 1 }], nextCursor: null });
     if (path.pathname === "/api/v1/uploads") return Response.json({ items: [{ id: upload, name: "private.txt",
-      mediaType: "text/plain", size: 4, sha256: "a".repeat(64), createdAt: 1, state: "quarantined" }], usage: { files: 1, bytes: 4 } });
+      mediaType: "text/plain", size: 4, sha256: "a".repeat(64), createdAt: 1, state: "rejected",
+      scan: { sha256: "a".repeat(64),status: "rejected",reason: "malware",checkedAt: 2,policyVersion: 1 } }], usage: { files: 1, bytes: 4 } });
     if (path.pathname === "/api/v1/usage/reservations") return Response.json(path.searchParams.has("cursor")
       ? { items: [{ operationId: archivedOperation,createdAt: 2,day: 0,policyId: "policy-1",
         estimateMicros: 10,status: "reserved",actualMicros: null }],nextCursor: null }
@@ -94,7 +95,8 @@ it("exports visible account data, including archived conversations and paged pro
     expect(exported.find(line => line.type === "account_profile")?.value).toMatchObject({ email: "alice@example.test", userMetadata: { displayName: "Alice" } });
     expect(exported[0].value.exclusions).toEqual(expect.arrayContaining([expect.stringContaining("Eve session/model history")]));
     expect(exported.find(line => line.type === "artifact")?.value.content).toBe("artifact text");
-    expect(exported.find(line => line.type === "upload")?.value).toMatchObject({ id: upload, state: "quarantined" });
+    expect(exported.find(line => line.type === "upload")?.value).toMatchObject({ id: upload,state: "rejected",
+      scan: { status: "rejected",reason: "malware",checkedAt: 2,policyVersion: 1 } });
     expect(exported.find(line => line.type === "upload_usage")?.value).toEqual({ files: 1, bytes: 4 });
     expect(exported.find(line => line.type === "budget_reservation")?.value).toMatchObject({ operationId: operation,actualMicros: 5 });
     expect(await run(["export", "verify", output], {})).toMatchObject({ mode: "application", counts: { reservations: 2, corrections: 2 } });

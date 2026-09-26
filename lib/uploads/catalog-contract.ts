@@ -9,8 +9,27 @@ export const uploadReservation = z.object({
   size: z.number().int().min(1).max(5 * 1024 * 1024), sha256: z.string().regex(/^[a-f0-9]{64}$/),
   createdAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
 }).strict();
-export const uploadState = z.enum(["pending", "quarantined", "deleting", "deleted"]);
-export const uploadEntry = uploadReservation.extend({ state: uploadState }).strict();
+export const uploadState = z.enum(["pending", "quarantined", "clean", "rejected", "deleting", "deleted"]);
+const scanFields = { sha256: z.string().regex(/^[a-f0-9]{64}$/),checkedAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),policyVersion: z.literal(1) };
+export const uploadScanDecision = z.discriminatedUnion("status",[
+  z.object({ ...scanFields,status: z.literal("clean") }).strict(),
+  z.object({ ...scanFields,status: z.literal("rejected"),reason: z.enum(["malware","integrity"]) }).strict(),
+]);
+export type UploadScanDecision = z.infer<typeof uploadScanDecision>;
+const storedUploadEntry = uploadReservation.extend({ state: uploadState }).strict();
+export const uploadEntry = storedUploadEntry.extend({ scan: uploadScanDecision.optional() }).strict().superRefine((row,ctx) => {
+  if (row.scan && row.scan.sha256 !== row.sha256 ||
+      (row.state === "clean" || row.state === "rejected") && row.scan?.status !== row.state) {
+    ctx.addIssue({ code: "custom",message: "Upload decision does not match its stored content/state." });
+  }
+});
+/** Storage completion/deletion and scan decisions have distinct durable owners. */
+export function withUploadScan(row: unknown,rawScan?: unknown) {
+  const stored = storedUploadEntry.parse(row);
+  if (rawScan === undefined) return uploadEntry.parse(stored);
+  const scan = uploadScanDecision.parse(rawScan);
+  return uploadEntry.parse({ ...stored,scan,state: stored.state === "quarantined" ? scan.status : stored.state });
+}
 export const uploadUsage = z.object({ files: z.number().int().nonnegative(), bytes: z.number().int().nonnegative() }).strict();
 export const uploadList = z.array(uploadEntry).max(1000);
 export const uploadPage = z.object({ items: uploadList, usage: uploadUsage }).strict();
@@ -28,6 +47,7 @@ export type UploadQuota = z.infer<typeof uploadQuota>;
 export interface UploadCatalog {
   reserve(owner: AccessOwner, input: UploadReservation, quota: UploadQuota): Promise<z.infer<typeof uploadReserveResult>>;
   markStored(owner: AccessOwner, id: string): Promise<boolean>;
+  recordScan(owner: AccessOwner,id: string,decision: UploadScanDecision): Promise<boolean>;
   get(owner: AccessOwner, id: string): Promise<UploadEntry | null>;
   list(owner: AccessOwner): Promise<UploadEntry[]>;
   beginDelete(owner: AccessOwner, id: string): Promise<boolean>;
@@ -41,6 +61,7 @@ export interface UploadCatalog {
 export const uploadCatalogCommand = z.discriminatedUnion("operation", [
   accessOwner.extend({ operation: z.literal("upload.reserve"), input: uploadReservation, quota: uploadQuota }).strict(),
   accessOwner.extend({ operation: z.literal("upload.markStored"), id: uploadId }).strict(),
+  accessOwner.extend({ operation: z.literal("upload.recordScan"),id: uploadId,decision: uploadScanDecision }).strict(),
   accessOwner.extend({ operation: z.literal("upload.get"), id: uploadId }).strict(),
   accessOwner.extend({ operation: z.literal("upload.list") }).strict(),
   accessOwner.extend({ operation: z.literal("upload.beginDelete"), id: uploadId }).strict(),

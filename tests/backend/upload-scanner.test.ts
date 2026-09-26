@@ -57,10 +57,16 @@ it("uses an authenticated HTTPS scanner for managed scan-on-read without releasi
     const infected = await api.download(new Request(url,{ headers: { authorization: `Bearer ${token}` } }),row.id);
     expect(infected.status).toBe(422);
     expect((await infected.json()).error.code).toBe("upload_rejected");
-    const clean = await api.download(new Request(url,{ headers: { authorization: `Bearer ${token}` } }),row.id);
+    expect((await api.download(new Request(url,{ headers: { authorization: `Bearer ${token}` } }),row.id)).status).toBe(422);
+    expect(scans).toHaveLength(2);
+    const replacement = await api.create(new Request("http://localhost/api/v1/uploads",{ method: "POST",body: payload,
+      headers: { authorization: `Bearer ${token}`,"content-type": "application/octet-stream",
+        "x-upload-name": "note.txt","x-upload-media-type": "text/plain" } }));
+    const fresh = await replacement.json();
+    const clean = await api.download(new Request(`http://localhost/api/v1/uploads/${fresh.id}/download`,{ headers: { authorization: `Bearer ${token}` } }),fresh.id);
     expect(clean.status).toBe(200);
     expect(await clean.text()).toBe(payload);
-    expect(scans).toHaveLength(3);
+    expect(scans).toHaveLength(4);
     expect(scans.every(bytes => Buffer.from(bytes).toString() === payload)).toBe(true);
   } finally { await catalog.close(); }
 });
@@ -118,12 +124,19 @@ it("uses a fresh socket verdict for each owner download through HTTP and CLI",as
     const denied = await api.download(new Request(url,{ headers: { authorization: `Bearer ${token}` } }),row.id);
     expect(denied.status).toBe(422);
     expect((await denied.json()).error.code).toBe("upload_rejected");
+    expect((await api.download(new Request(url,{ headers: { authorization: `Bearer ${token}` } }),row.id)).status).toBe(422);
+    expect(scans).toBe(2);
+    const replacement = await api.create(new Request("http://localhost:3000/api/v1/uploads",{ method: "POST",body: payload,
+      headers: { authorization: `Bearer ${token}`,"content-type": "application/octet-stream",
+        "x-upload-name": "replacement.txt","x-upload-media-type": "text/plain" } }));
+    expect(replacement.status).toBe(201);
+    const fresh = await replacement.json();
     const output = join(directory,"owner.txt");
-    const request: typeof fetch = async (input,init) => api.download(new Request(input,init),row.id);
-    expect(await run(["uploads","download",row.id,output],{ APP_API_TOKEN: token },request))
+    const request: typeof fetch = async (input,init) => api.download(new Request(input,init),fresh.id);
+    expect(await run(["uploads","download",fresh.id,output],{ APP_API_TOKEN: token },request))
       .toMatchObject({ file: output,size: payload.length });
     expect(await readFile(output,"utf8")).toBe(payload);
-    expect(scans).toBe(3);
+    expect(scans).toBe(4);
   } finally { await catalog.close(); }
 });
 

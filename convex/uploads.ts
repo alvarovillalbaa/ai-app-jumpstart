@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery, type QueryCtx } from "./_generated/server";
 import { accessOwner, type AccessOwner } from "../lib/agent-access/contract";
-import { uploadCleanupCandidates, uploadCleanupLimit, uploadEntry, uploadList, uploadQuota, uploadReservation, uploadUsage, staleUploadCutoff } from "../lib/uploads/catalog-contract";
+import { uploadCleanupCandidates, uploadCleanupLimit, withUploadScan, uploadScanDecision, uploadList, uploadQuota, uploadReservation, uploadUsage, staleUploadCutoff } from "../lib/uploads/catalog-contract";
 import { uploadId } from "../lib/uploads/schema";
 
 const ownerFields = { tenant: v.string(),subject: v.string() };
@@ -12,13 +12,13 @@ async function ownedRow(ctx: QueryCtx, rawOwner: AccessOwner, rawId: string) {
   return row && sameOwner(row,owner) ? row : null;
 }
 async function activeRows(ctx: QueryCtx, owner: AccessOwner) {
-  const states = ["pending","quarantined","deleting"] as const;
+  const states = ["pending","quarantined","clean","rejected","deleting"] as const;
   const groups = await Promise.all(states.map(state => ctx.db.query("uploads")
     .withIndex("by_owner_state",q => q.eq("tenant",owner.tenant).eq("subject",owner.subject).eq("state",state)).collect()));
   return groups.flat();
 }
-const publicEntry = (row: { id: string;name: string;mediaType: string;size: number;sha256: string;createdAt: number;state: string }) =>
-  uploadEntry.parse({ id: row.id,name: row.name,mediaType: row.mediaType,size: row.size,sha256: row.sha256,createdAt: row.createdAt,state: row.state });
+const publicEntry = (row: { id: string;name: string;mediaType: string;size: number;sha256: string;createdAt: number;state: string;scan?: unknown }) =>
+  withUploadScan({ id: row.id,name: row.name,mediaType: row.mediaType,size: row.size,sha256: row.sha256,createdAt: row.createdAt,state: row.state },row.scan);
 
 export const reserve = internalMutation({
   args: { ...ownerFields,input: v.any(),quota: v.any() },
@@ -40,12 +40,22 @@ export const markStored = internalMutation({
     const row = await ownedRow(ctx,args,args.id);
     if (!row) return false;
     if (row.state === "pending") { await ctx.db.patch(row._id,{ state: "quarantined" });return true; }
-    return row.state === "quarantined";
+    return row.state === "quarantined" || row.state === "clean" || row.state === "rejected";
   },
 });
 export const get = internalQuery({
   args: { ...ownerFields,id: v.string() },
   handler: async (ctx,args) => { const row = await ownedRow(ctx,args,args.id);return row ? publicEntry(row) : null; },
+});
+export const recordScan = internalMutation({
+  args: { ...ownerFields,id: v.string(),decision: v.any() },
+  handler: async (ctx,args) => {
+    const decision = uploadScanDecision.parse(args.decision),row = await ownedRow(ctx,args,args.id);
+    if (!row || row.state !== "quarantined" && row.state !== "clean" || row.sha256 !== decision.sha256 || row.scan?.status === "rejected" ||
+        decision.status === "clean" && row.scan && row.scan.checkedAt > decision.checkedAt) return false;
+    await ctx.db.patch(row._id,{ state: decision.status,scan: decision });
+    return true;
+  },
 });
 export const list = internalQuery({
   args: ownerFields,
@@ -71,7 +81,7 @@ export const beginDelete = internalMutation({
   handler: async (ctx,args) => {
     const row = await ownedRow(ctx,args,args.id);
     if (!row) return false;
-    if (row.state === "pending" || row.state === "quarantined") { await ctx.db.patch(row._id,{ state: "deleting" });return true; }
+    if (["pending","quarantined","clean","rejected"].includes(row.state)) { await ctx.db.patch(row._id,{ state: "deleting" });return true; }
     return row.state === "deleting";
   },
 });

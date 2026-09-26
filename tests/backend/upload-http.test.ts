@@ -148,11 +148,17 @@ it("releases owner bytes only after an enabled fresh scan and stored-byte integr
     expect((await corrupt.json()).error.code).toBe("upload_integrity_failed");
     expect(scan).not.toHaveBeenCalled();
     tampered = false;
+    expect((await api.download(request(url,alice),row.id)).status).toBe(422);
+    expect(await catalog.get({ tenant: "test",subject: "alice" },row.id)).toMatchObject({ state: "rejected",scan: { reason: "integrity" } });
+    const infectedRow = await (await intake.create(new Request(root,{ method: "POST",body: Buffer.from(payload),headers: headers(alice,"owner's note.txt") }))).json();
     scan.mockResolvedValueOnce("infected");
-    const infected = await api.download(request(url,alice),row.id);
+    const infected = await api.download(request(`${root}/${infectedRow.id}/download`,alice),infectedRow.id);
     expect(infected.status).toBe(422);
     expect((await infected.json()).error.code).toBe("upload_rejected");
-    const clean = await api.download(request(url,alice),row.id);
+    expect((await api.download(request(`${root}/${infectedRow.id}/download`,alice),infectedRow.id)).status).toBe(422);
+    expect(await catalog.get({ tenant: "test",subject: "alice" },infectedRow.id)).toMatchObject({ state: "rejected",scan: { reason: "malware" } });
+    const cleanRow = await (await intake.create(new Request(root,{ method: "POST",body: Buffer.from(payload),headers: headers(alice,"owner's note.txt") }))).json();
+    const clean = await api.download(request(`${root}/${cleanRow.id}/download`,alice),cleanRow.id);
     expect(clean.status).toBe(200);
     expect(clean.headers.get("content-type")).toBe("application/octet-stream");
     expect(clean.headers.get("content-disposition")).toContain("attachment;");
@@ -161,6 +167,7 @@ it("releases owner bytes only after an enabled fresh scan and stored-byte integr
     expect(clean.headers.get("x-content-type-options")).toBe("nosniff");
     expect(await clean.text()).toBe(payload);
     expect(scan).toHaveBeenCalledTimes(2);
+    expect(await catalog.get({ tenant: "test",subject: "alice" },cleanRow.id)).toMatchObject({ state: "clean",scan: { status: "clean",policyVersion: 1 } });
     expect((await api.get(request(`${root}/${row.id}`,alice),row.id)).status).toBe(200);
   } finally { await catalog.close();await rm(directory,{ recursive: true,force: true }); }
 });
@@ -203,4 +210,28 @@ it("bounds simultaneous download scans per owner and per process before reading 
     release();await Promise.allSettled(pending);
     await catalog.close();await rm(directory,{ recursive: true,force: true });
   }
+});
+
+it("persists explicit owner scans without accepting caller verdicts or caching success through an outage",async () => {
+  vi.stubEnv("AUTH_PROVIDER","api-key");vi.stubEnv("UPLOAD_DOWNLOAD_POLICY","scan-on-read");
+  vi.stubEnv("APP_API_KEYS",JSON.stringify([key(alice,"alice",["uploads:read","uploads:write","uploads:download"]),
+    key(bob,"bob",["uploads:download"]),key(metadata,"alice",["uploads:read","uploads:write"])]));
+  const directory = await mkdtemp(join(tmpdir(),"jumpstart-explicit-upload-scan-"));
+  const catalog = sqliteUploadCatalog(":memory:"),objects = localUploadObjects(directory),intake = uploadHandlers(async () => catalog,async () => objects);
+  const scan = vi.fn(async (): Promise<"clean" | "infected"> => "clean"),api = uploadHandlers(async () => catalog,async () => objects,async () => ({ scan }));
+  try {
+    const row = await (await intake.create(request(root,alice,"POST",Buffer.from("private")))).json();
+    const call = (token: string,body: object = {}) => api.scan(new Request(`${root}/${row.id}/scan`,{ method: "POST",body: JSON.stringify(body),headers: {
+      authorization: `Bearer ${token}`,"content-type": "application/json" } }),row.id);
+    expect((await call(metadata)).status).toBe(403);expect((await call(bob)).status).toBe(404);
+    expect((await call(alice,{ verdict: "clean" })).status).toBe(400);expect(scan).not.toHaveBeenCalled();
+    const clean = await call(alice);expect(clean.status).toBe(200);
+    expect(await clean.json()).toMatchObject({ id: row.id,state: "clean",scan: { status: "clean",sha256: row.sha256,policyVersion: 1 } });
+    scan.mockRejectedValueOnce(new Error("scanner URL secret"));
+    const outage = await call(alice);expect(outage.status).toBe(503);expect(await outage.text()).not.toContain("secret");
+    expect(await catalog.get({ tenant: "test",subject: "alice" },row.id)).toMatchObject({ state: "clean" });
+    scan.mockResolvedValueOnce("infected");expect((await call(alice)).status).toBe(422);
+    expect(await catalog.get({ tenant: "test",subject: "alice" },row.id)).toMatchObject({ state: "rejected",scan: { reason: "malware" } });
+    expect((await call(alice)).status).toBe(422);expect(scan).toHaveBeenCalledTimes(3);
+  } finally { await catalog.close();await rm(directory,{ recursive: true,force: true }); }
 });

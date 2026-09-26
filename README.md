@@ -43,7 +43,7 @@ For a local production process, run `npm run build:local` then `npm start`. The 
 
 All share validation, owner isolation, scopes, pagination and revision checks. With account chat enabled, verified user tokens also unlock conversation metadata through `/api/v1/conversations`, CLI `conversations` commands and MCP `conversations_*` tools/resources. See [data access](docs/data-access.md).
 
-Opt-in private upload quarantine uses `/uploads` in the browser, `/api/v1/uploads`, CLI `uploads` commands and MCP metadata tools. A self-hosted ClamAV socket or separately deployed authenticated HTTPS scanner can reject infected files before storage. Quarantined files remain unavailable to the agent; a separate opt-in scan-on-read policy permits owner downloads only after a fresh clean verdict. See [uploads](docs/uploads.md) and the optional [scanner Compose stack](docs/remote-upload-scanner.md#reproducible-scanner-stack).
+Opt-in private upload quarantine uses `/uploads` in the browser, `/api/v1/uploads`, CLI `uploads` commands and MCP metadata tools. A self-hosted ClamAV socket or separately deployed authenticated HTTPS scanner can reject infected files before storage. Quarantined files remain unavailable to the agent; a separate opt-in scan-on-read policy permits owner downloads only after a fresh clean verdict. Explicit scans are available through browser, REST, CLI and MCP, with durable clean/rejected decisions; rejected IDs cannot be released by a later clean scan. See [uploads](docs/uploads.md) and the optional [scanner Compose stack](docs/remote-upload-scanner.md#reproducible-scanner-stack).
 
 The CLI can also create a private, paged [export of visible application data](docs/data-access.md#export-visible-application-data) for an owner. Its manifest lists data held by Auth, Eve and other systems that the export does not include.
 
@@ -65,7 +65,7 @@ Run `npm run db:migrate -- --dry-run` with the target `DATABASE_URL` to review p
 
 Read [database setup](docs/databases.md), [hosting](docs/hosting.md), [operations](docs/operations.md), and [testing](docs/testing.md).
 
-The [extension recipes](docs/extending.md) show where to add a tool, model, connection, schema change or UI route. The [private upload guide](docs/uploads.md) describes the quarantine browser/API/CLI/MCP surface, opt-in scanned owner downloads including the [remote scanner contract](docs/remote-upload-scanner.md), and remaining durable release and agent-attachment work.
+The [extension recipes](docs/extending.md) show where to add a tool, model, connection, schema change or UI route. The [private upload guide](docs/uploads.md) describes the quarantine browser/API/CLI/MCP surface, opt-in scanned owner downloads including the [remote scanner contract](docs/remote-upload-scanner.md), and remaining release-policy and agent-attachment work.
 
 ## Validate
 

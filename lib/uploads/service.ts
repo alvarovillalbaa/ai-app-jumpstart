@@ -9,7 +9,7 @@ import { checkUpload } from "./validation";
 import { withDownloadScanSlot } from "./download-admission";
 import { uploadDownloadConfigured } from "./download-capability";
 
-/** Quarantined bytes leave storage only after an explicit, fresh scan-on-read policy. */
+/** Private bytes require a fresh verdict; durable rejection fences stale scans. */
 export class UploadService {
   constructor(private catalog: UploadCatalog,private objects: () => Promise<PrivateUploadObjects>,private principal: Principal,
     private scanner: () => Promise<UploadScanner | null> = async () => null,
@@ -32,11 +32,12 @@ export class UploadService {
     if (!row || row.state === "deleted") throw new AppError(404,"not_found","Upload not found.");
     return row;
   }
-  async download(rawId: string) {
+  private async scanned(rawId: string) {
     const owner = this.owner("uploads:download"),id = uploadId.parse(rawId);
     const row = await this.catalog.get(owner,id);
     if (!row || row.state === "deleted") throw new AppError(404,"not_found","Upload not found.");
-    if (row.state !== "quarantined") throw new AppError(409,"upload_busy","Upload is not ready for scanning.");
+    if (row.state === "rejected") throw new AppError(422,"upload_rejected","Upload was rejected. Delete it and upload a new file.");
+    if (row.state !== "quarantined" && row.state !== "clean") throw new AppError(409,"upload_busy","Upload is not ready for scanning.");
     if (!uploadDownloadConfigured(process.env,this.downloadPolicy)) {
       throw new AppError(503,"upload_download_disabled","Upload downloads are not enabled on this host.");
     }
@@ -47,22 +48,34 @@ export class UploadService {
       if (!bytes) throw new AppError(503,"upload_storage_unavailable","Upload bytes are unavailable.");
       let checked;
       try { checked = checkUpload(row.name,row.mediaType,bytes); }
-      catch { throw new AppError(503,"upload_integrity_failed","Stored upload failed validation."); }
+      catch {
+        await this.catalog.recordScan(owner,id,{ status: "rejected",reason: "integrity",sha256: row.sha256,checkedAt: Date.now(),policyVersion: 1 });
+        throw new AppError(503,"upload_integrity_failed","Stored upload failed validation.");
+      }
       if (checked.size !== row.size || checked.sha256 !== row.sha256) {
+        await this.catalog.recordScan(owner,id,{ status: "rejected",reason: "integrity",sha256: row.sha256,checkedAt: Date.now(),policyVersion: 1 });
         throw new AppError(503,"upload_integrity_failed","Stored upload does not match its private metadata.");
       }
       let verdict;
       try { verdict = await scanner.scan(checked.bytes); }
       catch { throw new AppError(503,"scanner_unavailable","Upload scanner is unavailable."); }
-      if (verdict === "infected") throw new AppError(422,"upload_rejected","Upload did not pass malware scanning.");
+      if (verdict === "infected") {
+        await this.catalog.recordScan(owner,id,{ status: "rejected",reason: "malware",sha256: row.sha256,checkedAt: Date.now(),policyVersion: 1 });
+        throw new AppError(422,"upload_rejected","Upload did not pass malware scanning.");
+      }
       if (verdict !== "clean") throw new AppError(503,"scanner_unavailable","Upload scanner is unavailable.");
+      if (!await this.catalog.recordScan(owner,id,{ status: "clean",sha256: row.sha256,checkedAt: Date.now(),policyVersion: 1 })) {
+        throw new AppError(409,"upload_busy","Upload changed during scanning. Refresh its status.");
+      }
       const current = await this.catalog.get(owner,id);
-      if (!current || current.state !== "quarantined" || current.sha256 !== row.sha256) {
+      if (!current || current.state !== "clean" || current.sha256 !== row.sha256) {
         throw new AppError(409,"upload_busy","Upload changed during scanning.");
       }
-      return { row,bytes: checked.bytes };
+      return { row: current,bytes: checked.bytes };
     });
   }
+  async download(rawId: string) { return this.scanned(rawId); }
+  async scan(rawId: string) { return (await this.scanned(rawId)).row; }
   async delete(rawId: string) {
     const owner = this.owner("uploads:write"),id = uploadId.parse(rawId);
     const row = await this.catalog.get(owner,id);

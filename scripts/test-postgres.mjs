@@ -58,6 +58,7 @@ async function rehearseUpgrade() {
   const recordId = randomUUID();
   const conversationId = randomUUID();
   const operationId = randomUUID();
+  const uploadId = randomUUID(),deletedUploadId = randomUUID();
   const eventId = `evt_${"0".repeat(26)}`;
   const event = JSON.stringify({
     schemaVersion: 1, eventId, at: "2026-09-24T00:00:00.000Z", turnId: "upgrade-turn", sequence: 0,
@@ -82,6 +83,9 @@ async function rehearseUpgrade() {
       VALUES($1,$2,$3,$4,$5,$6,'active',$7,$8)`,
       [conversationId, "upgrade-tenant", "upgrade-owner", operationId, "a".repeat(64), "upgrade-session", "Before upgrade", 1]);
     await probe.query("INSERT INTO app_conversation_events(operation_id,event_id,payload) VALUES($1,$2,$3)", [operationId, eventId, event]);
+    await probe.query(`INSERT INTO app_uploads(id,tenant,subject,name,media_type,size,sha256,created_at,state)
+      VALUES($1,'upgrade-tenant','upgrade-owner','before.txt','text/plain',10,$3,1,'quarantined'),
+      ($2,'upgrade-tenant','upgrade-owner','deleted.txt','text/plain',20,$3,2,'deleted')`,[uploadId,deletedUploadId,"a".repeat(64)]);
     await probe.query("COMMIT");
 
     const appliedBefore = await probe.query("SELECT count(*)::int AS count FROM app_migrations");
@@ -104,6 +108,19 @@ async function rehearseUpgrade() {
       { payload: event, source_index: null });
     if (withSupabase) await probe.query("SET ROLE service_role");
     try {
+      const owner = { tenant: "upgrade-tenant",subject: "upgrade-owner",id: uploadId };
+      const scan = async (status,checkedAt,reason) => (await probe.query("SELECT app_upload_scan_command('record',$1) AS result",[
+        { ...owner,decision: { status,sha256: "a".repeat(64),checkedAt,policyVersion: 1,...(reason ? { reason } : {}) } },
+      ])).rows[0].result;
+      assert.deepEqual((await probe.query("SELECT id,state FROM app_uploads WHERE id IN ($1,$2) ORDER BY created_at",[uploadId,deletedUploadId])).rows,
+        [{ id: uploadId,state: "quarantined" },{ id: deletedUploadId,state: "deleted" }]);
+      assert.equal(await scan("clean",10),true);
+      // An older binary reads the persisted new state and denies release.
+      assert.equal((await probe.query("SELECT app_upload_command('get',$1) AS result",[owner])).rows[0].result.state,"clean");
+      assert.equal(await scan("rejected",11,"malware"),true);
+      assert.equal(await scan("clean",12),false);
+      assert.equal((await probe.query("SELECT app_upload_scan_command('get',$1) AS result",[owner])).rows[0].result.state,"rejected");
+      assert.deepEqual((await probe.query("SELECT app_upload_command('usage',$1) AS result",[owner])).rows[0].result,{ files: 1,bytes: 10 });
       assert.equal((await probe.query("SELECT app_append_conversation_event($1,$2,$3,$4,$5,$6,$7) AS outcome",
         ["upgrade-tenant", "upgrade-owner", operationId, "upgrade-session", eventId, event, 7])).rows[0].outcome, "duplicate");
     } finally { if (withSupabase) await probe.query("RESET ROLE"); }

@@ -46,7 +46,7 @@ export function UploadQuarantine({ settings, userId, downloadEnabled = false }: 
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [acting, setActing] = useState<string | null>(null);
+  const [acting, setActing] = useState<{ id: string;kind: "scan" | "download" | "delete" } | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -144,9 +144,9 @@ export function UploadQuarantine({ settings, userId, downloadEnabled = false }: 
   }
 
   async function remove(item: UploadEntry) {
-    if (!window.confirm(`Delete “${item.name}” from quarantine? This cannot be undone.`)) return;
+    if (!window.confirm(`Delete “${item.name}” from private storage? This cannot be undone.`)) return;
     const current = generation.current;
-    setActing(item.id); setError(""); setNotice("");
+    setActing({ id: item.id,kind: "delete" }); setError(""); setNotice("");
     try {
       const accessToken = await credential();
       if (current !== generation.current) return;
@@ -168,7 +168,7 @@ export function UploadQuarantine({ settings, userId, downloadEnabled = false }: 
   async function download(item: UploadEntry) {
     const current = generation.current,controller = new AbortController();
     downloadController.current = controller;
-    setActing(item.id);setError("");setNotice("");
+    setActing({ id: item.id,kind: "download" });setError("");setNotice("");
     try {
       const accessToken = await credential();
       if (current !== generation.current || controller.signal.aborted) return;
@@ -188,8 +188,41 @@ export function UploadQuarantine({ settings, userId, downloadEnabled = false }: 
       document.body.append(anchor);anchor.click();anchor.remove();
       window.setTimeout(() => URL.revokeObjectURL(url),60_000);
       setNotice(`“${item.name}” passed a fresh scan and was downloaded.`);
+      await load();
     } catch (cause) {
-      if (current === generation.current && !controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Download failed.");
+      if (current === generation.current && !controller.signal.aborted) {
+        await load();
+        if (current === generation.current && !controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Download failed.");
+      }
+    } finally {
+      if (downloadController.current === controller) downloadController.current = null;
+      if (current === generation.current) setActing(null);
+    }
+  }
+
+  async function scan(item: UploadEntry) {
+    const current = generation.current,controller = new AbortController();
+    downloadController.current = controller;
+    setActing({ id: item.id,kind: "scan" });setError("");setNotice("");
+    try {
+      const accessToken = await credential();
+      if (current !== generation.current || controller.signal.aborted) return;
+      const response = await fetch(`/api/v1/uploads/${item.id}/scan`,{
+        method: "POST",body: "{}",cache: "no-store",signal: AbortSignal.any([controller.signal,AbortSignal.timeout(60_000)]),
+        headers: { authorization: `Bearer ${accessToken}`,"content-type": "application/json" },
+      });
+      const body: unknown = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(messageFrom(body,`Scan failed (${response.status}).`));
+      const row = uploadEntry.parse(body);
+      if (row.id !== item.id || row.state !== "clean") throw new Error("Scan response was invalid. Refresh its status.");
+      if (current !== generation.current || controller.signal.aborted) return;
+      setNotice(`“${item.name}” passed a malware scan. Each download is scanned again.`);
+      await load();
+    } catch (cause) {
+      if (current === generation.current && !controller.signal.aborted) {
+        await load();
+        if (current === generation.current && !controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Scan failed.");
+      }
     } finally {
       if (downloadController.current === controller) downloadController.current = null;
       if (current === generation.current) setActing(null);
@@ -220,13 +253,17 @@ export function UploadQuarantine({ settings, userId, downloadEnabled = false }: 
         <h2 id="stored-heading" className="text-lg font-medium">Stored files</h2>
         <p className="text-sm text-muted-foreground">{page.usage.files} of {DEFAULT_UPLOAD_QUOTA.maxFiles} files · {(page.usage.bytes / 1024 / 1024).toFixed(2)} of {DEFAULT_UPLOAD_QUOTA.maxBytes / 1024 / 1024} MiB reserved</p>
         {!page.items.length ? <p>No uploads yet.</p> : <ul className="divide-y">{page.items.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 py-4">
-          <div className="min-w-0"><h3 className="break-words font-medium">{item.name}</h3><p className="text-sm text-muted-foreground">{item.state === "quarantined" ? downloadEnabled ? "Quarantined · scan required for each owner download" : "Quarantined · unavailable for download or agent use" : item.state === "deleting" ? "Deletion pending · retry deletion" : "Storage pending · unavailable for use"} · {(item.size / 1024).toFixed(1)} KiB · {new Date(item.createdAt).toLocaleString()}</p></div>
-          <div className="flex gap-2">{downloadEnabled && item.state === "quarantined" && <button className={buttonClass} disabled={uploading || acting !== null} onClick={() => void download(item)}>Download after scan</button>}
+          <div className="min-w-0"><h3 className="break-words font-medium">{item.name}</h3><p className="text-sm text-muted-foreground">{item.state === "clean" ? downloadEnabled ? "Last scan passed · each download is scanned again" : "Last scan passed · downloads disabled on this host" : item.state === "rejected" ? item.scan?.status === "rejected" && item.scan.reason === "integrity" ? "Rejected · stored bytes failed validation" : "Rejected · malware scan failed" : item.state === "quarantined" ? downloadEnabled ? "Quarantined · scan required for each owner download" : "Quarantined · unavailable for download or agent use" : item.state === "deleting" ? "Deletion pending · retry deletion" : "Storage pending · unavailable for use"} · {(item.size / 1024).toFixed(1)} KiB · {new Date(item.createdAt).toLocaleString()}</p>
+            {item.scan && <p className="text-sm text-muted-foreground">Last checked {new Date(item.scan.checkedAt).toLocaleString()}</p>}</div>
+          <div className="flex flex-wrap gap-2">{downloadEnabled && (item.state === "quarantined" || item.state === "clean") && <>
+            <button className={buttonClass} disabled={uploading || acting !== null} onClick={() => void scan(item)}>{item.state === "clean" ? "Scan again" : "Scan file"}</button>
+            <button className={buttonClass} disabled={uploading || acting !== null} onClick={() => void download(item)}>Download after scan</button></>}
             <button className={buttonClass} disabled={uploading || acting !== null} onClick={() => void remove(item)}>{item.state === "deleting" ? "Retry deletion" : "Delete"}</button></div>
         </li>)}</ul>}
       </section>}
     </>}
     {notice && <p role="status">{notice}</p>}
+    {acting && <p role="status">{acting.kind === "scan" ? "Scanning file…" : acting.kind === "download" ? "Scanning file for download…" : "Deleting file…"}</p>}
     {busy && <p role="status">Loading uploads…</p>}
     {error && <p role="alert" className="text-destructive">{error}</p>}
   </main>;

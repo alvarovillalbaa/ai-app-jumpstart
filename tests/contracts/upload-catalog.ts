@@ -103,5 +103,58 @@ export function uploadCatalogContract(name: string, factory: () => Promise<Uploa
       await expect(catalog.reserve(owner,input(),{ maxBytes: 0,maxFiles: 1 })).rejects.toBeDefined();
       expect(await catalog.usage(owner)).toEqual({ files: 0,bytes: 0 });
     });
+    it("binds durable decisions to the stored digest and both owner fields",async () => {
+      const row = input(),decision = { status: "clean" as const,sha256: row.sha256,checkedAt: row.createdAt+1,policyVersion: 1 as const };
+      await catalog.reserve(owner,row,quota);
+      expect(await catalog.recordScan(owner,row.id,decision)).toBe(false);
+      await catalog.markStored(owner,row.id);
+      for (const stranger of [{ ...owner,subject: "bob" },{ tenant: randomUUID(),subject: owner.subject }]) {
+        expect(await catalog.recordScan(stranger,row.id,decision)).toBe(false);
+        expect(await catalog.get(stranger,row.id)).toBeNull();
+      }
+      expect(await catalog.recordScan(owner,row.id,{ ...decision,sha256: "b".repeat(64) })).toBe(false);
+      expect(await catalog.get(owner,row.id)).toEqual({ ...row,state: "quarantined" });
+      expect(await catalog.recordScan(owner,row.id,decision)).toBe(true);
+      expect(await catalog.get(owner,row.id)).toEqual({ ...row,state: "clean",scan: decision });
+      expect(await catalog.list(owner)).toEqual([{ ...row,state: "clean",scan: decision }]);
+      expect(await catalog.usage(owner)).toEqual({ files: 1,bytes: row.size });
+    });
+    it("retains the latest clean timestamp and makes rejection an absorbing decision",async () => {
+      const row = input(),clean = { status: "clean" as const,sha256: row.sha256,checkedAt: row.createdAt+10,policyVersion: 1 as const };
+      await catalog.reserve(owner,row,quota);await catalog.markStored(owner,row.id);
+      expect(await catalog.recordScan(owner,row.id,clean)).toBe(true);
+      expect(await catalog.recordScan(owner,row.id,{ ...clean,checkedAt: clean.checkedAt-1 })).toBe(false);
+      const rejected = { ...clean,status: "rejected" as const,reason: "malware" as const,checkedAt: clean.checkedAt-2 };
+      expect(await catalog.recordScan(owner,row.id,rejected)).toBe(true);
+      expect(await catalog.recordScan(owner,row.id,{ ...clean,checkedAt: clean.checkedAt+1 })).toBe(false);
+      expect(await catalog.get(owner,row.id)).toEqual({ ...row,state: "rejected",scan: rejected });
+      expect(await catalog.reserve(owner,input(),quota)).toBe("quota");
+      expect((await catalog.listCleanupCandidates(Date.now()+100,100)).some(candidate => candidate.id === row.id)).toBe(false);
+      await expect(catalog.recordScan(owner,row.id,{ ...clean,checkedAt: -1 })).rejects.toBeDefined();
+    });
+    it("never lets concurrent clean completions override a rejection",async () => {
+      const row = input(),clean = { status: "clean" as const,sha256: row.sha256,checkedAt: row.createdAt,policyVersion: 1 as const };
+      await catalog.reserve(owner,row,quota);await catalog.markStored(owner,row.id);
+      const results = await Promise.all([
+        catalog.recordScan(owner,row.id,clean),
+        catalog.recordScan(owner,row.id,{ ...clean,status: "rejected",reason: "integrity" }),
+        catalog.recordScan(owner,row.id,{ ...clean,checkedAt: row.createdAt+100 }),
+      ]);
+      expect(results[1]).toBe(true);
+      expect(await catalog.get(owner,row.id)).toMatchObject({ state: "rejected",scan: { reason: "integrity" } });
+    });
+    it("serializes scan completion with deletion without releasing quota early or resurrecting bytes",async () => {
+      const row = input(),decision = { status: "clean" as const,sha256: row.sha256,checkedAt: row.createdAt,policyVersion: 1 as const };
+      await catalog.reserve(owner,row,quota);await catalog.markStored(owner,row.id);
+      const results = await Promise.all([catalog.recordScan(owner,row.id,decision),catalog.beginDelete(owner,row.id)]);
+      expect(results[1]).toBe(true);
+      expect(await catalog.get(owner,row.id)).toMatchObject({ state: "deleting" });
+      expect(await catalog.recordScan(owner,row.id,decision)).toBe(false);
+      expect(await catalog.usage(owner)).toEqual({ files: 1,bytes: row.size });
+      await catalog.finishDelete(owner,row.id);
+      expect(await catalog.recordScan(owner,row.id,decision)).toBe(false);
+      expect(await catalog.get(owner,row.id)).toMatchObject({ state: "deleted" });
+      expect(await catalog.usage(owner)).toEqual({ files: 0,bytes: 0 });
+    });
   });
 }

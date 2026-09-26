@@ -20,6 +20,62 @@ const item = {
 };
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
+it("refreshes durable clean and rejected decisions after an authenticated scan",async () => {
+  let row = { ...item } as Record<string,unknown>;
+  let infected = false;
+  vi.stubGlobal("fetch",vi.fn<typeof fetch>(async (input,init) => {
+    if (String(input).endsWith("/scan")) {
+      expect(init?.method).toBe("POST");
+      expect(init?.body).toBe("{}");
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer fresh-token");
+      row = { ...item,state: infected ? "rejected" : "clean",scan: {
+        sha256: item.sha256,status: infected ? "rejected" : "clean",checkedAt: Date.now(),policyVersion: 1,
+        ...(infected ? { reason: "malware" } : {}),
+      } };
+      return infected ? Response.json({ error: { message: "Upload did not pass malware scanning." } },{ status: 422 }) : Response.json(row);
+    }
+    return Response.json({ items: [row],usage: { files: 1,bytes: item.size } });
+  }));
+  const view = render(<UploadQuarantine settings={settings} userId="alice" downloadEnabled />);
+  fireEvent.click(await screen.findByRole("button",{ name: "Scan file" }));
+  await screen.findByText(/Last scan passed/);
+  expect(screen.getByText(/Last checked/)).toBeVisible();
+  await waitFor(() => expect(screen.getByRole("button",{ name: "Scan again" })).toBeEnabled());
+  infected = true;
+  fireEvent.click(screen.getByRole("button",{ name: "Scan again" }));
+  await screen.findByText(/Rejected · malware scan failed/);
+  expect(screen.queryByRole("button",{ name: "Download after scan" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button",{ name: "Scan again" })).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.getByRole("button",{ name: "Delete" })).toBeEnabled());
+  expect(screen.getByRole("alert")).toHaveTextContent("did not pass malware");
+  view.unmount();
+  render(<UploadQuarantine settings={settings} userId="alice" downloadEnabled />);
+  await screen.findByText(/Rejected · malware scan failed/);
+});
+
+it("aborts a scan on account change and ignores its late verdict",async () => {
+  let resolveScan: ((response: Response) => void) | undefined;
+  let signal: AbortSignal | undefined;
+  vi.stubGlobal("fetch",vi.fn<typeof fetch>(async (input,init) => {
+    if (String(input).endsWith("/scan")) {
+      signal = init?.signal ?? undefined;
+      return new Promise<Response>(resolve => { resolveScan = resolve; });
+    }
+    return Response.json({ items: [item],usage: { files: 1,bytes: item.size } });
+  }));
+  render(<UploadQuarantine settings={settings} userId="alice" downloadEnabled />);
+  fireEvent.click(await screen.findByRole("button",{ name: "Scan file" }));
+  await waitFor(() => expect(signal).toBeDefined());
+  act(() => auth.listener("SIGNED_OUT",null));
+  expect(signal?.aborted).toBe(true);
+  await act(async () => resolveScan?.(Response.json({ ...item,state: "clean",scan: {
+    status: "clean",sha256: item.sha256,checkedAt: Date.now(),policyVersion: 1,
+  } })));
+  expect(screen.getByRole("alert")).toHaveTextContent("Your account changed");
+  expect(screen.queryByText(item.name)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Last scan passed/)).not.toBeInTheDocument();
+});
+
 it("aborts an in-flight upload and clears another account's filenames on sign-out", async () => {
   const abort = vi.fn();
   const send = vi.fn();

@@ -5,7 +5,8 @@ export default defineSchema({
   recordCreates: defineTable({ tenant: v.string(),subject: v.string(),key: v.string(),hash: v.string(),id: v.string(),createdAt: v.string() })
     .index("by_owner_key",["tenant","subject","key"]),
   uploads: defineTable({ id: v.string(),tenant: v.string(),subject: v.string(),name: v.string(),mediaType: v.string(),
-    size: v.number(),sha256: v.string(),createdAt: v.number(),state: v.union(v.literal("pending"),v.literal("quarantined"),v.literal("deleting"),v.literal("deleted")) })
+    size: v.number(),sha256: v.string(),createdAt: v.number(),state: v.union(v.literal("pending"),v.literal("quarantined"),v.literal("clean"),v.literal("rejected"),v.literal("deleting"),v.literal("deleted")),
+    scan: v.optional(v.object({ sha256: v.string(),status: v.union(v.literal("clean"),v.literal("rejected")),checkedAt: v.number(),policyVersion: v.literal(1),reason: v.optional(v.union(v.literal("malware"),v.literal("integrity"))) })) })
     .index("by_external_id",["id"]).index("by_owner_state",["tenant","subject","state"])
     .index("by_cleanup",["state","createdAt","id"]),
   artifacts: defineTable({ id: v.string(),tenant: v.string(),subject: v.string(),operationId: v.string(),sessionId: v.string(),callId: v.string(),inputHash: v.string(),title: v.string(),content: v.string(),createdAt: v.number(),deletedAt: v.optional(v.number()) })

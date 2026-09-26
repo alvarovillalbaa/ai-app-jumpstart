@@ -4,7 +4,7 @@ import { z } from "zod";
 import { ConvexBackend } from "../data/convex-client";
 import type { Database } from "../data/supabase.generated";
 import { accessOwner } from "../agent-access/contract";
-import { uploadCleanupCandidates, uploadCleanupLimit, uploadEntry, uploadList, uploadQuota, uploadReservation, uploadReserveResult, uploadUsage, staleUploadCutoff, type UploadCatalog } from "./catalog-contract";
+import { uploadCleanupCandidates, uploadCleanupLimit, uploadEntry, uploadScanDecision, uploadList, uploadQuota, uploadReservation, uploadReserveResult, uploadUsage, staleUploadCutoff, type UploadCatalog } from "./catalog-contract";
 import { uploadId } from "./schema";
 
 function adapter(call: (command: string, input: object) => Promise<unknown>, list: (owner: object) => Promise<unknown>,
@@ -16,6 +16,7 @@ function adapter(call: (command: string, input: object) => Promise<unknown>, lis
       return uploadReserveResult.parse(await call("reserve", { ...owned(owner),input: uploadReservation.parse(input),quota: uploadQuota.parse(quota) }));
     },
     async markStored(owner,id) { return z.boolean().parse(await call("markStored",{ ...owned(owner),id: uploadId.parse(id) })); },
+    async recordScan(owner,id,decision) { return z.boolean().parse(await call("recordScan",{ ...owned(owner),id: uploadId.parse(id),decision: uploadScanDecision.parse(decision) })); },
     async get(owner,id) { return uploadEntry.nullable().parse(await call("get",{ ...owned(owner),id: uploadId.parse(id) })); },
     async list(owner) { return uploadList.parse(await list(owned(owner))); },
     async beginDelete(owner,id) { return z.boolean().parse(await call("beginDelete",{ ...owned(owner),id: uploadId.parse(id) })); },
@@ -30,8 +31,10 @@ function adapter(call: (command: string, input: object) => Promise<unknown>, lis
 export function postgresUploadCatalog(connectionString: string): UploadCatalog {
   const pool = new Pool({ connectionString,max: 5,connectionTimeoutMillis: 5000,idleTimeoutMillis: 10_000,statement_timeout: 10_000 });
   pool.on("error", () => console.error(JSON.stringify({ event: "upload_catalog_pool_error" })));
-  return adapter(async (command,input) => (await pool.query("SELECT public.app_upload_command($1,$2::jsonb) AS result",[command,JSON.stringify(input)])).rows[0].result,
-    async owner => (await pool.query("SELECT public.app_upload_list($1::jsonb) AS result",[JSON.stringify(owner)])).rows[0].result,
+  return adapter(async (command,input) => {
+    const fn = ["get","recordScan","markStored","beginDelete"].includes(command) ? "app_upload_scan_command" : "app_upload_command";
+    return (await pool.query(`SELECT public.${fn}($1,$2::jsonb) AS result`,[command === "recordScan" ? "record" : command,JSON.stringify(input)])).rows[0].result;
+  },async owner => (await pool.query("SELECT public.app_upload_scan_command('list',$1::jsonb) AS result",[JSON.stringify(owner)])).rows[0].result,
     async (owner,rawId,rawCutoff) => {
       const checked = accessOwner.parse(owner),id = uploadId.parse(rawId),cutoff = staleUploadCutoff.parse(rawCutoff);
       const result = await pool.query(`UPDATE public.app_uploads SET state='deleting'
@@ -53,11 +56,12 @@ export function supabaseUploadCatalog(url: string, secret: string): UploadCatalo
     fetch: (input,init) => fetch(input,{ ...init,redirect: "error",signal: AbortSignal.timeout(10_000) }),
   } });
   return adapter(async (command,input) => {
-    const { data,error } = await client.rpc("app_upload_command",{ command,input: z.json().parse(input) });
+    const fn = ["get","recordScan","markStored","beginDelete"].includes(command) ? "app_upload_scan_command" : "app_upload_command";
+    const { data,error } = await client.rpc(fn,{ command: command === "recordScan" ? "record" : command,input: z.json().parse(input) });
     if (error) throw error;
     return data;
   },async owner => {
-    const { data,error } = await client.rpc("app_upload_list",{ input: z.json().parse(owner) });
+    const { data,error } = await client.rpc("app_upload_scan_command",{ command: "list",input: z.json().parse(owner) });
     if (error) throw error;
     return data;
   },async (owner,rawId,rawCutoff) => {

@@ -23,6 +23,7 @@ import { ledgerQueryOptions, type BudgetStore } from "./budgets/contract";
 import { UploadService } from "./uploads/service";
 import { getUploadCatalog } from "./uploads/catalog-store";
 import { createUploadObjects } from "./uploads/objects-store";
+import { createUploadScanner } from "./uploads/scanner";
 import type { UploadCatalog } from "./uploads/catalog-contract";
 import { authSettings } from "./auth/settings";
 import { verifySupabaseIdentity } from "./auth/identity";
@@ -147,7 +148,7 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
   }
   if (uploads) {
     server.registerTool("uploads_list",{
-      description: "List the caller's active private upload metadata. Files remain quarantined and cannot be downloaded or attached to the agent.",
+      description: "List owned private upload metadata and durable clean/rejected scan decisions. This tool returns no bytes; uploads cannot be attached to the agent.",
       inputSchema: z.object({}).strict(),annotations: { readOnlyHint: true,openWorldHint: false },
     },() => result(() => uploads.list()));
     server.registerTool("uploads_usage",{
@@ -155,11 +156,15 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
       inputSchema: z.object({}).strict(),annotations: { readOnlyHint: true,openWorldHint: false },
     },() => result(() => uploads.usage()));
     server.registerTool("uploads_get",{
-      description: "Read one owned upload's metadata and quarantine state; never returns file bytes.",
+      description: "Read one owned upload's metadata, storage state and last scan decision; never returns file bytes.",
       inputSchema: { id: z.uuid() },annotations: { readOnlyHint: true,openWorldHint: false },
     },({ id }) => result(() => uploads.get(id)));
+    server.registerTool("uploads_scan",{
+      description: "Scan one owned stored upload with the configured private scanner and persist its decision. Requires uploads:download and an enabled scan-on-read policy. Returns metadata only. Rejection blocks this upload ID until deletion; no bytes or storage URL are returned.",
+      inputSchema: z.object({ id: z.uuid() }).strict(),annotations: { readOnlyHint: false,destructiveHint: false,idempotentHint: false,openWorldHint: false },
+    },({ id }) => result(() => uploads.scan(id)));
     server.registerTool("uploads_delete",{
-      description: "Delete one owned quarantined upload and its private object. Does not erase backups.",
+      description: "Delete one owned private upload and its object, including clean or rejected uploads. Does not erase backups.",
       inputSchema: { id: z.uuid() },annotations: { destructiveHint: true,idempotentHint: false,openWorldHint: false },
     },({ id }) => result(async () => { await uploads.delete(id);return { deleted: true }; }));
     server.registerResource("upload",new ResourceTemplate("uploads:///{id}",{ list: undefined }),{
@@ -197,7 +202,7 @@ export function mcpHandler(repository: () => Promise<RecordRepository> = getRepo
     const history = ownedStore ? new ConversationHistoryService(ownedStore,owner) : undefined;
     const artifacts = ownedStore ? new ArtifactService(ownedStore,owner) : undefined;
     const usage = settings ? new UsageService(budgetStore,owner,settings.budget.policy.dailyMicros) : undefined;
-    const uploads = process.env.UPLOAD_STORAGE_PROVIDER ? new UploadService(await uploadCatalog(),createUploadObjects,principal) : undefined;
+    const uploads = process.env.UPLOAD_STORAGE_PROVIDER ? new UploadService(await uploadCatalog(),createUploadObjects,principal,createUploadScanner) : undefined;
     const profile = principal.credentialType === "user" ? async () => {
       const auth = authSettings();
       if (!auth) throw new AppError(503,"auth_unconfigured","Configure Supabase sign-in for account profiles.");

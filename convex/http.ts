@@ -61,6 +61,7 @@ http.route({ path: "/app/records", method: "POST", handler: httpAction(async (ct
     switch (parsed.data.operation) {
       case "upload.reserve": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.uploads.reserve,input)); }
       case "upload.markStored": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.uploads.markStored,input)); }
+      case "upload.recordScan": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.uploads.recordScan,input)); }
       case "upload.get": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.uploads.get,input)); }
       case "upload.list": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.uploads.list,input)); }
       case "upload.beginDelete": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.uploads.beginDelete,input)); }

@@ -101,7 +101,7 @@ export async function exportApplication(mode: Mode, output: string, call: Call, 
         "Budget model-attempt IDs, operator correction notes/evidence and historical daily aggregate rows; owner-visible reservation and correction histories are included",
         "Deleted artifact tombstones and database backups",
         "Conversation projections are selected events, not a canonical transcript",
-        "Private upload object bytes, deleted upload tombstones and derived data",
+        "Private upload object bytes, deleted upload tombstones and retained scan decisions, and derived data",
         "Record creation keys, request hashes and retained deletion fences",
       ] : ["Conversation, artifact, upload, usage, Auth, Eve and budget data","Record creation keys, request hashes and retained deletion fences"],
     });

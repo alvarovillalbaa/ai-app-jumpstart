@@ -353,6 +353,41 @@ export type Database = {
         }
         Relationships: []
       }
+      app_upload_scans: {
+        Row: {
+          checked_at: number
+          policy_version: number
+          reason: string | null
+          sha256: string
+          status: string
+          upload_id: string
+        }
+        Insert: {
+          checked_at: number
+          policy_version: number
+          reason?: string | null
+          sha256: string
+          status: string
+          upload_id: string
+        }
+        Update: {
+          checked_at?: number
+          policy_version?: number
+          reason?: string | null
+          sha256?: string
+          status?: string
+          upload_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "app_upload_scans_upload_id_fkey"
+            columns: ["upload_id"]
+            isOneToOne: true
+            referencedRelation: "app_uploads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       app_uploads: {
         Row: {
           created_at: number
@@ -456,6 +491,10 @@ export type Database = {
         Returns: Json
       }
       app_upload_list: { Args: { input: Json }; Returns: Json }
+      app_upload_scan_command: {
+        Args: { command: string; input: Json }
+        Returns: Json
+      }
     }
     Enums: {
       [_ in never]: never
