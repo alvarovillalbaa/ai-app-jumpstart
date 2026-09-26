@@ -13,6 +13,10 @@ const control = process.env.TEST_UPLOAD_SCAN_CONTROL!;
 test.beforeEach(async () => { await writeFile(control,"clean"); });
 
 test("browser, REST, CLI and MCP agree on durable clean and rejected upload decisions",async ({ page,request }) => {
+  await page.addInitScript(() => {
+    const actual = Date.now.bind(Date);
+    Date.now = () => actual()+300_000;
+  });
   const name = `scan-${crypto.randomUUID()}.txt`,payload = "Private browser scan fixture";
   await page.goto("/uploads");
   await page.getByLabel("Access token").fill(token("owner"));
@@ -53,7 +57,11 @@ test("browser, REST, CLI and MCP agree on durable clean and rejected upload deci
       const issued = await run(["uploads","link",id],environment);
       const file = join(directory,"link.json"),output = join(directory,"download.txt");
       await writeFile(file,JSON.stringify(issued),{ mode: 0o600 });
-      expect(await run(["uploads","download-link",file,output],environment)).toMatchObject({ size: payload.length });
+      const actual = Date.now;
+      try {
+        Date.now = () => actual()+300_000;
+        expect(await run(["uploads","download-link",file,output],environment)).toMatchObject({ size: payload.length });
+      } finally { Date.now = actual; }
       expect(await readFile(output,"utf8")).toBe(payload);
     } finally { await rm(directory,{ recursive: true,force: true }); }
     const downloadPromise = page.waitForEvent("download");

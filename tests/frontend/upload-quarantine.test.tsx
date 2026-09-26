@@ -144,7 +144,7 @@ it("cancels an in-flight download when the account changes",async () => {
   expect(click).not.toHaveBeenCalled();
 });
 
-it("uses only a validated relative expiring link and keeps credentials in request headers",async () => {
+it("uses a validated relative link with credentials in headers even when the device clock is ahead",async () => {
   const raw = `v1.fixture.${Date.now()}.${item.sha256}.${"a".repeat(43)}`;
   const path = `/api/v1/uploads/${item.id}/download?grant=${raw}`;
   const click = vi.spyOn(HTMLAnchorElement.prototype,"click").mockImplementation(() => {});
@@ -154,7 +154,9 @@ it("uses only a validated relative expiring link and keeps credentials in reques
     if (String(input).endsWith("/download-link")) {
       expect(init?.method).toBe("POST");expect(init?.body).toBe("{}");
       expect(new Headers(init?.headers).get("authorization")).toBe("Bearer fresh-token");
-      return Response.json({ url: path,expiresAt: Date.now()+60_000 });
+      // Server-issued expiry can look past to a device with an incorrect clock.
+      // The authenticated redemption response is the authoritative expiry check.
+      return Response.json({ url: path,expiresAt: Date.now()-240_000 });
     }
     if (String(input) === path) {
       expect(new Headers(init?.headers).get("authorization")).toBe("Bearer fresh-token");

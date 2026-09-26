@@ -183,7 +183,7 @@ export function UploadQuarantine({ settings, userId, downloadEnabled = false,dow
         const body: unknown = await issued.json().catch(() => null);
         if (!issued.ok) throw new Error(messageFrom(body,`Download link failed (${issued.status}).`));
         const link = uploadDownloadLink.parse(body);
-        if (!link.url.startsWith(`${path}?grant=`) || link.expiresAt <= Date.now()) throw new Error("Download link is invalid or expired. Retry the download.");
+        if (!link.url.startsWith(`${path}?grant=`)) throw new Error("Download link is invalid. Retry the download.");
         if (current !== generation.current || controller.signal.aborted) return;
         path = link.url;
       }

@@ -121,7 +121,6 @@ export async function run(args: string[], env: Record<string, string | undefined
       const info = await stat(options[0]);
       if (!info.isFile() || info.size > 4096) throw new Error("Use a download-link JSON file of at most 4 KiB.");
       const link = uploadDownloadLink.parse(JSON.parse(await readFile(options[0],"utf8")));
-      if (link.expiresAt <= Date.now()) throw new Error("Download link expired. Request a new link.");
       return saveUploadDownload(options[1],await send(link.url));
     }
     if (action === "download" && options.length === 2) {
