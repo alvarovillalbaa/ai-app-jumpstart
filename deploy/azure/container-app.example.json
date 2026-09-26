@@ -1,0 +1,70 @@
+{
+  "name": "jumpstart-staging",
+  "location": "REPLACE_WITH_LOCATION",
+  "identity": {
+    "type": "UserAssigned",
+    "userAssignedIdentities": { "REPLACE_WITH_MANAGED_IDENTITY_RESOURCE_ID": {} }
+  },
+  "properties": {
+    "environmentId": "REPLACE_WITH_CONTAINER_APPS_ENVIRONMENT_RESOURCE_ID",
+    "workloadProfileName": "REPLACE_WITH_DEDICATED_WORKLOAD_PROFILE_NAME",
+    "configuration": {
+      "activeRevisionsMode": "Single",
+      "ingress": { "external": true, "targetPort": 8080, "transport": "auto", "allowInsecure": false },
+      "secrets": [
+        { "name": "workflow-database", "keyVaultUrl": "https://REPLACE_VAULT.vault.azure.net/secrets/workflow-database/REPLACE_VERSION", "identity": "REPLACE_WITH_MANAGED_IDENTITY_RESOURCE_ID" },
+        { "name": "data-url", "keyVaultUrl": "https://REPLACE_VAULT.vault.azure.net/secrets/data-url/REPLACE_VERSION", "identity": "REPLACE_WITH_MANAGED_IDENTITY_RESOURCE_ID" },
+        { "name": "data-key", "keyVaultUrl": "https://REPLACE_VAULT.vault.azure.net/secrets/data-key/REPLACE_VERSION", "identity": "REPLACE_WITH_MANAGED_IDENTITY_RESOURCE_ID" },
+        { "name": "auth-url", "keyVaultUrl": "https://REPLACE_VAULT.vault.azure.net/secrets/auth-url/REPLACE_VERSION", "identity": "REPLACE_WITH_MANAGED_IDENTITY_RESOURCE_ID" },
+        { "name": "auth-public-key", "keyVaultUrl": "https://REPLACE_VAULT.vault.azure.net/secrets/auth-public-key/REPLACE_VERSION", "identity": "REPLACE_WITH_MANAGED_IDENTITY_RESOURCE_ID" },
+        { "name": "creation-signing", "keyVaultUrl": "https://REPLACE_VAULT.vault.azure.net/secrets/creation-signing/REPLACE_VERSION", "identity": "REPLACE_WITH_MANAGED_IDENTITY_RESOURCE_ID" },
+        { "name": "budget-policy", "keyVaultUrl": "https://REPLACE_VAULT.vault.azure.net/secrets/budget-policy/REPLACE_VERSION", "identity": "REPLACE_WITH_MANAGED_IDENTITY_RESOURCE_ID" },
+        { "name": "model-key", "keyVaultUrl": "https://REPLACE_VAULT.vault.azure.net/secrets/model-key/REPLACE_VERSION", "identity": "REPLACE_WITH_MANAGED_IDENTITY_RESOURCE_ID" }
+      ]
+    },
+    "template": {
+      "scale": { "minReplicas": 1, "maxReplicas": 1 },
+      "containers": [{
+        "name": "app",
+        "image": "REPLACE_WITH_POSTGRES_WORKFLOW_IMAGE_AT_SHA256_DIGEST",
+        "resources": { "cpu": 2, "memory": "4Gi" },
+        "probes": [
+          { "type": "Startup", "httpGet": { "path": "/api/health/live", "port": 3000 }, "periodSeconds": 10, "failureThreshold": 18, "timeoutSeconds": 2 },
+          { "type": "Liveness", "httpGet": { "path": "/api/health/live", "port": 3000 }, "periodSeconds": 30, "failureThreshold": 3, "timeoutSeconds": 2 },
+          { "type": "Readiness", "httpGet": { "path": "/api/health/ready", "port": 3000 }, "periodSeconds": 10, "failureThreshold": 3, "timeoutSeconds": 5 }
+        ],
+        "env": [
+          { "name": "APP_ORIGIN", "value": "https://REPLACE_WITH_APP_DOMAIN" },
+          { "name": "DATA_PROVIDER", "value": "supabase" },
+          { "name": "AUTH_PROVIDER", "value": "supabase" },
+          { "name": "AI_CHAT_ENABLED", "value": "true" },
+          { "name": "APP_AGENT_READINESS", "value": "local" },
+          { "name": "AI_RUNTIME_ORIGIN", "value": "http://127.0.0.1:4274" },
+          { "name": "WORKFLOW_EXPECTED_PROVIDER", "value": "postgres" },
+          { "name": "WORKFLOW_POSTGRES_JOB_PREFIX", "value": "jumpstart_staging" },
+          { "name": "WORKFLOW_POSTGRES_URL", "secretRef": "workflow-database" },
+          { "name": "SUPABASE_URL", "secretRef": "data-url" },
+          { "name": "SUPABASE_SECRET_KEY", "secretRef": "data-key" },
+          { "name": "SUPABASE_AUTH_URL", "secretRef": "auth-url" },
+          { "name": "SUPABASE_PUBLISHABLE_KEY", "secretRef": "auth-public-key" },
+          { "name": "AI_CREATION_SIGNING_JSON", "secretRef": "creation-signing" },
+          { "name": "AI_BUDGET_POLICY_JSON", "secretRef": "budget-policy" },
+          { "name": "AI_GATEWAY_API_KEY", "secretRef": "model-key" }
+        ]
+      }, {
+        "name": "ingress",
+        "image": "REPLACE_WITH_INGRESS_IMAGE_AT_SHA256_DIGEST",
+        "resources": { "cpu": 0.25, "memory": "0.5Gi" },
+        "probes": [
+          { "type": "Startup", "httpGet": { "path": "/api/health/ready", "port": 8080 }, "periodSeconds": 10, "failureThreshold": 18, "timeoutSeconds": 5 },
+          { "type": "Liveness", "httpGet": { "path": "/api/health/live", "port": 8080 }, "periodSeconds": 30, "failureThreshold": 3, "timeoutSeconds": 2 },
+          { "type": "Readiness", "httpGet": { "path": "/api/health/ready", "port": 8080 }, "periodSeconds": 10, "failureThreshold": 3, "timeoutSeconds": 5 }
+        ],
+        "env": [
+          { "name": "NEXT_UPSTREAM", "value": "127.0.0.1:3000" },
+          { "name": "EVE_UPSTREAM", "value": "127.0.0.1:4274" }
+        ]
+      }]
+    }
+  }
+}

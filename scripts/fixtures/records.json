@@ -1,0 +1,10 @@
+[
+  {
+    "title": "Jumpstart fixture: first record",
+    "content": "A private example record. Its owner is the credential used by the seed command."
+  },
+  {
+    "title": "Jumpstart fixture: second record",
+    "content": "A second example for pagination, editing, CLI and MCP exercises."
+  }
+]

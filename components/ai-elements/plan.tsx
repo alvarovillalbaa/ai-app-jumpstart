@@ -1,5 +1,7 @@
 "use client";
 
+// Modified for ai-app-jumpstart; original AI Elements component Copyright 2023 Vercel, Inc. (Apache-2.0).
+
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -128,5 +130,5 @@ export const PlanFooter = (props: PlanFooterProps) => (
 export type PlanTriggerProps = ComponentProps<typeof CollapsibleTrigger>;
 
 export const PlanTrigger = ({ className, ...props }: PlanTriggerProps) => (
-  <CollapsibleTrigger render={<Button className={cn("size-8", className)} data-slot="plan-trigger" size="icon" variant="ghost" {...props} />}><ChevronsUpDownIcon className="size-4" /><span className="sr-only">Toggle plan</span></CollapsibleTrigger>
+  <CollapsibleTrigger {...props} render={<Button className={cn("size-8", className)} data-slot="plan-trigger" size="icon" variant="ghost" />}><ChevronsUpDownIcon className="size-4" /><span className="sr-only">Toggle plan</span></CollapsibleTrigger>
 );

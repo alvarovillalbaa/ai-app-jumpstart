@@ -1,5 +1,7 @@
 "use client";
 
+// Modified for ai-app-jumpstart; original AI Elements component Copyright 2023 Vercel, Inc. (Apache-2.0).
+
 import { Badge } from "@/components/ui/badge";
 import type { CarouselApi } from "@/components/ui/carousel";
 import {
@@ -163,6 +165,8 @@ export const InlineCitationCarouselIndex = ({
       return;
     }
 
+    // Synchronize the newly available external Embla instance, then subscribe.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     syncState();
 
     api.on("select", syncState);

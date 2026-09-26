@@ -1,0 +1,38 @@
+# Combine with compose.yaml. Workflow state is separate from application data.
+# Set WORKFLOW_DB_PASSWORD to URL-safe random hex in Compose's .env file.
+services:
+  app:
+    build:
+      context: .
+      args:
+        EVE_WORKFLOW_PROVIDER: postgres
+    environment:
+      WORKFLOW_EXPECTED_PROVIDER: postgres
+      WORKFLOW_POSTGRES_URL: postgresql://workflow:${WORKFLOW_DB_PASSWORD:?Set WORKFLOW_DB_PASSWORD}@workflow-db:5432/workflow
+      WORKFLOW_POSTGRES_JOB_PREFIX: jumpstart_local
+    depends_on:
+      workflow-migrate:
+        condition: service_completed_successfully
+  workflow-migrate:
+    build: .
+    command: ["npm", "run", "workflow:migrate"]
+    environment:
+      WORKFLOW_POSTGRES_URL: postgresql://workflow:${WORKFLOW_DB_PASSWORD:?Set WORKFLOW_DB_PASSWORD}@workflow-db:5432/workflow
+      WORKFLOW_POSTGRES_JOB_PREFIX: jumpstart_local
+    depends_on:
+      workflow-db:
+        condition: service_healthy
+  workflow-db:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: workflow
+      POSTGRES_USER: workflow
+      POSTGRES_PASSWORD: ${WORKFLOW_DB_PASSWORD:?Set WORKFLOW_DB_PASSWORD}
+    volumes: ["workflow-postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U workflow -d workflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+volumes:
+  workflow-postgres-data:

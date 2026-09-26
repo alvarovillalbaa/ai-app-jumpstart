@@ -1,5 +1,7 @@
 "use client";
 
+// Modified for ai-app-jumpstart; original AI Elements component Copyright 2023 Vercel, Inc. (Apache-2.0).
+
 import { cn } from "@/lib/utils";
 import type { RiveParameters } from "@rive-app/react-webgl2";
 import {
@@ -280,15 +282,19 @@ export const Persona: FC<PersonaProps> = memo(
     // property assignment — this is the intended Rive API, not a React anti-pattern.
     useEffect(() => {
       if (listeningInput) {
+        // eslint-disable-next-line react-hooks/immutability -- Rive's imperative input API.
         listeningInput.value = state === "listening";
       }
       if (thinkingInput) {
+        // eslint-disable-next-line react-hooks/immutability -- Rive's imperative input API.
         thinkingInput.value = state === "thinking";
       }
       if (speakingInput) {
+        // eslint-disable-next-line react-hooks/immutability -- Rive's imperative input API.
         speakingInput.value = state === "speaking";
       }
       if (asleepInput) {
+        // eslint-disable-next-line react-hooks/immutability -- Rive's imperative input API.
         asleepInput.value = state === "asleep";
       }
     }, [state, listeningInput, thinkingInput, speakingInput, asleepInput]);

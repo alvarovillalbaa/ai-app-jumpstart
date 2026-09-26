@@ -1,5 +1,7 @@
 "use client";
 
+// Modified for ai-app-jumpstart; original AI Elements component Copyright 2023 Vercel, Inc. (Apache-2.0).
+
 import {
   Command,
   CommandEmpty,
@@ -421,7 +423,7 @@ export const PromptInputActionAddAttachments = ({
   const attachments = usePromptInputAttachments();
 
   const handleSelect = useCallback(
-    (e: Event) => {
+    (e: Parameters<NonNullable<ComponentProps<typeof DropdownMenuItem>["onSelect"]>>[0]) => {
       e.preventDefault();
       attachments.openFileDialog();
     },
@@ -449,7 +451,7 @@ export const PromptInputActionAddScreenshot = ({
   const attachments = usePromptInputAttachments();
 
   const handleSelect = useCallback(
-    async (event: Event) => {
+    async (event: Parameters<NonNullable<ComponentProps<typeof DropdownMenuItem>["onSelect"]>>[0]) => {
       onSelect?.(event);
       if (event.defaultPrevented) {
         return;
@@ -1232,7 +1234,7 @@ export const PromptInputSubmit = ({
   }
 
   const handleClick = useCallback(
-    (e: React.MouseEvent<HTMLButtonElement>) => {
+    (e: Parameters<NonNullable<ComponentProps<typeof InputGroupButton>["onClick"]>>[0]) => {
       if (isGenerating && onStop) {
         e.preventDefault();
         onStop();

@@ -1,0 +1,202 @@
+import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
+import { randomUUID } from "node:crypto";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { auditAccessibility } from "../helpers/accessibility";
+
+const auth = process.env.TEST_AUTH_ORIGIN!;
+const adminHeaders = { authorization: `Bearer ${process.env.TEST_AUTH_ADMIN_KEY!}`, apikey: process.env.SUPABASE_PUBLISHABLE_KEY! };
+const publicHeaders = { apikey: process.env.SUPABASE_PUBLISHABLE_KEY! };
+const password = "Fixture-only-password-42!";
+async function atPath(page: Page, path: string) {
+  // Report only paths on failure, never one-time tokens in email-link queries.
+  await expect.poll(() => new URL(page.url()).pathname).toBe(path);
+}
+async function confirmedUser(request: APIRequestContext, email: string) {
+  const response = await request.post(`${auth}/auth/v1/admin/users`, { headers: adminHeaders, data: { email, password, email_confirm: true } });
+  expect(response.status()).toBe(200);
+}
+async function tokenFor(request: APIRequestContext, email: string, pass = password) {
+  const response = await request.post(`${auth}/auth/v1/token?grant_type=password`, { headers: publicHeaders, data: { email, password: pass } });
+  expect(response.status()).toBe(200); return (await response.json()).access_token as string;
+}
+async function login(page: Page, email: string, pass = password) {
+  await page.goto("/login"); await page.getByLabel("Email", { exact: true }).fill(email);
+  await page.getByLabel("Password", { exact: true }).fill(pass);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await atPath(page, "/account");
+  await expect(page.getByText(email, { exact: true })).toBeVisible();
+}
+async function emailLink(request: APIRequestContext, email: string) {
+  let id = "";
+  await expect.poll(async () => {
+    const response = await request.get(`${process.env.TEST_MAIL_ORIGIN}/api/v1/messages`);
+    const data = await response.json();
+    const message = data.messages?.find((item: { To: { Address: string }[] }) => item.To.some(to => to.Address === email));
+    id = message?.ID ?? ""; return !!id;
+  }, { timeout: 15_000 }).toBe(true);
+  const response = await request.get(`${process.env.TEST_MAIL_ORIGIN}/api/v1/message/${id}`);
+  const message = await response.json();
+  const link = String(message.HTML).match(/href="([^"]+)"/)?.[1]?.replaceAll("&amp;", "&");
+  if (!link || new URL(link).origin !== auth) throw new Error("Local Auth did not send an expected verification link.");
+  return link;
+}
+
+test("signup email, PKCE callback, private records, cross-user API denial and logout", async ({ page, request }) => {
+  const email = `signup-${randomUUID()}@example.test`;
+  await page.goto("/signup");
+  await page.getByLabel("Email", { exact: true }).fill(email);
+  await page.getByLabel("Password", { exact: true }).fill(password);
+  await page.getByLabel("Confirm password").fill(password);
+  await page.getByRole("button", { name: "Create account", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("Check your email");
+  await page.goto(await emailLink(request, email));
+  await atPath(page, "/account");
+  await expect(page.getByText(email, { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Load records" }).click();
+  await page.getByLabel("Title", { exact: true }).fill("Private account record");
+  const created = page.waitForResponse(response => response.url().endsWith("/api/v1/records") && response.request().method() === "POST");
+  await page.getByRole("button", { name: "Create record" }).click();
+  const recordResponse = await created; expect(recordResponse.status()).toBe(201); const record = await recordResponse.json();
+  await page.reload(); await page.getByRole("button", { name: "Load records" }).click();
+  await expect(page.getByRole("heading", { name: record.title })).toBeVisible();
+  const other = `other-${randomUUID()}@example.test`;
+  await confirmedUser(request, other); const token = await tokenFor(request, other);
+  const denied = await request.get(`/api/v1/records/${record.id}`, { headers: { authorization: `Bearer ${token}` } });
+  expect(denied.status()).toBe(404);
+  const mcp = new Client({ name: "auth-isolation", version: "1" });
+  try {
+    await mcp.connect(new StreamableHTTPClientTransport(new URL("/api/mcp", process.env.APP_ORIGIN!), { requestInit: { headers: { authorization: `Bearer ${token}` } } }));
+    expect((await mcp.callTool({ name: "records_get", arguments: { id: record.id } })).isError).toBe(true);
+  } finally { await mcp.close(); }
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await atPath(page, "/login");
+  await page.goto("/account"); await atPath(page, "/login");
+  await login(page, other); await page.getByRole("button", { name: "Load records" }).click();
+  await expect(page.getByText("No records yet.", { exact: false })).toBeVisible();
+  await expect(page.getByText(record.title)).toHaveCount(0);
+});
+
+test("signed-in uploads remain private across account changes and can be deleted", async ({ page, request }) => {
+  const alice = `upload-alice-${randomUUID()}@example.test`;
+  const bob = `upload-bob-${randomUUID()}@example.test`;
+  const filename = `account-${randomUUID()}.txt`;
+  await confirmedUser(request, alice);
+  await confirmedUser(request, bob);
+
+  await page.goto("/uploads");
+  await atPath(page, "/login");
+  await page.getByLabel("Email", { exact: true }).fill(alice);
+  await page.getByLabel("Password", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await atPath(page, "/uploads");
+  await expect(page.getByRole("heading", { name: "Private uploads" })).toBeVisible();
+  await auditAccessibility(page, "signed-in uploads");
+  await page.locator('input[type="file"]').setInputFiles({ name: filename, mimeType: "text/plain", buffer: Buffer.from("Alice private bytes") });
+  const accepted = page.waitForResponse(response => response.url().endsWith("/api/v1/uploads") && response.request().method() === "POST");
+  await page.getByRole("button", { name: "Upload to quarantine" }).click();
+  const uploadResponse = await accepted;
+  expect(uploadResponse.status()).toBe(201);
+  const uploaded = await uploadResponse.json();
+  await expect(page.getByRole("listitem").filter({ hasText: filename })).toContainText("Quarantined · unavailable for download or agent use");
+  await auditAccessibility(page, "signed-in quarantined upload");
+
+  const bobToken = await tokenFor(request, bob);
+  const bobHeaders = { authorization: `Bearer ${bobToken}` };
+  expect((await request.get(`/api/v1/uploads/${uploaded.id}`, { headers: bobHeaders })).status()).toBe(404);
+  expect((await request.delete(`/api/v1/uploads/${uploaded.id}`, { headers: bobHeaders })).status()).toBe(404);
+  const bobList = await request.get("/api/v1/uploads", { headers: bobHeaders });
+  expect(bobList.status()).toBe(200);
+  expect((await bobList.json()).items).toEqual([]);
+  const bobMcp = new Client({ name: "upload-auth-isolation", version: "1" });
+  try {
+    await bobMcp.connect(new StreamableHTTPClientTransport(new URL("/api/mcp", process.env.APP_ORIGIN!), { requestInit: { headers: bobHeaders } }));
+    expect((await bobMcp.callTool({ name: "uploads_get", arguments: { id: uploaded.id } })).isError).toBe(true);
+    expect(JSON.stringify((await bobMcp.callTool({ name: "uploads_list", arguments: {} })).content)).not.toContain(uploaded.id);
+  } finally { await bobMcp.close(); }
+
+  await page.goto("/account");
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await atPath(page, "/login");
+  await login(page, bob);
+  await page.goto("/uploads");
+  await expect(page.getByText("No uploads yet.")).toBeVisible();
+  await expect(page.getByText(filename)).toHaveCount(0);
+
+  const aliceToken = await tokenFor(request, alice);
+  const aliceMcp = new Client({ name: "upload-auth-owner", version: "1" });
+  try {
+    await aliceMcp.connect(new StreamableHTTPClientTransport(new URL("/api/mcp", process.env.APP_ORIGIN!), { requestInit: { headers: { authorization: `Bearer ${aliceToken}` } } }));
+    const found = await aliceMcp.callTool({ name: "uploads_get", arguments: { id: uploaded.id } });
+    expect(found.isError).not.toBe(true);
+    expect(JSON.stringify(found.content)).toContain(uploaded.id);
+    expect(JSON.stringify(found.content)).not.toContain("Alice private bytes");
+  } finally { await aliceMcp.close(); }
+  expect((await request.delete(`/api/v1/uploads/${uploaded.id}`, { headers: { authorization: `Bearer ${aliceToken}` } })).status()).toBe(204);
+  expect((await request.get(`/api/v1/uploads/${uploaded.id}`, { headers: { authorization: `Bearer ${aliceToken}` } })).status()).toBe(404);
+});
+
+test("revoked sessions and forged access tokens cannot read the API", async ({ request }) => {
+  const email = `revoke-${randomUUID()}@example.test`; await confirmedUser(request, email);
+  const token = await tokenFor(request, email);
+  expect((await request.get("/api/v1/records", { headers: { authorization: `Bearer ${token}` } })).status()).toBe(200);
+  const logout = await request.post(`${auth}/auth/v1/logout?scope=local`, { headers: { ...publicHeaders, authorization: `Bearer ${token}` } });
+  expect(logout.status()).toBe(204);
+  expect((await request.get("/api/v1/records", { headers: { authorization: `Bearer ${token}` } })).status()).toBe(401);
+  const parts = token.split(".");
+  const claims = JSON.parse(Buffer.from(parts[1], "base64url").toString()); claims.sub = randomUUID();
+  parts[1] = Buffer.from(JSON.stringify(claims)).toString("base64url");
+  expect((await request.get("/api/v1/records", { headers: { authorization: `Bearer ${parts.join(".")}` } })).status()).toBe(401);
+});
+
+test("password recovery email and old-password rejection", async ({ page, request }) => {
+  const email = `recover-${randomUUID()}@example.test`; await confirmedUser(request, email);
+  await page.goto("/recover"); await page.getByLabel("Email", { exact: true }).fill(email);
+  await page.getByRole("button", { name: "Reset password", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("If this account exists");
+  await page.goto(await emailLink(request, email));
+  await atPath(page, "/account/password");
+  await expect(page.getByRole("heading", { name: "Update password" })).toBeVisible();
+  const replacement = "New-fixture-password-74!";
+  await page.getByLabel("Password", { exact: true }).fill(replacement); await page.getByLabel("Confirm password").fill(replacement);
+  await page.getByRole("button", { name: "Update password", exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText("Your password has been updated.");
+  await page.goto("/account"); await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await atPath(page, "/login");
+  await page.getByLabel("Email", { exact: true }).fill(email); await page.getByLabel("Password", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click(); await expect(page.getByRole("main").getByRole("alert")).toContainText("Sign-in failed");
+  await login(page, email, replacement);
+});
+
+test("confirmation requires a user action, rejects replay and clamps return paths", async ({ page, request }) => {
+  const email = `confirm-${randomUUID()}@example.test`;
+  const response = await request.post(`${auth}/auth/v1/admin/generate_link`, { headers: adminHeaders, data: { type: "signup", email, password } });
+  expect(response.status()).toBe(200); const link = await response.json();
+  const tokenHash = link.hashed_token ?? link.properties?.hashed_token;
+  expect(typeof tokenHash).toBe("string");
+  await page.goto(`/auth/confirm?token_hash=${encodeURIComponent(tokenHash)}&type=email&next=//evil.example`);
+  await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await atPath(page, "/account");
+  await expect(page.getByText(email, { exact: true })).toBeVisible();
+  const replay = await request.post("/auth/verify", { headers: { origin: process.env.APP_ORIGIN! }, data: { token_hash: tokenHash, type: "email" } });
+  expect(replay.status()).toBe(400);
+  const crossOrigin = await request.post("/auth/verify", { headers: { origin: "https://evil.example" }, data: { token_hash: tokenHash, type: "email" } });
+  expect(crossOrigin.status()).toBe(403);
+});
+
+test("account entry and authenticated workspace pass automated accessibility rules", async ({ page, request }) => {
+  for (const [path, heading] of [["/login", "Sign in"], ["/signup", "Create account"], ["/recover", "Reset password"]]) {
+    await page.goto(path);
+    await expect(page.getByRole("heading", { name: heading })).toBeVisible();
+    await auditAccessibility(page, path);
+  }
+
+  const email = `accessible-${randomUUID()}@example.test`;
+  await confirmedUser(request, email);
+  await login(page, email);
+  await auditAccessibility(page, "signed-in account");
+  await page.goto("/account/password");
+  await expect(page.getByRole("heading", { name: "Update password" })).toBeVisible();
+  await auditAccessibility(page, "password update");
+});

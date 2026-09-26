@@ -1,5 +1,7 @@
 "use client";
 
+// Modified for ai-app-jumpstart; original AI Elements component Copyright 2023 Vercel, Inc. (Apache-2.0).
+
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
@@ -108,9 +110,10 @@ export const SpeechInput = ({
   const onAudioRecordedRef =
     useRef<SpeechInputProps["onAudioRecorded"]>(onAudioRecorded);
 
-  // Keep refs in sync
-  onTranscriptionChangeRef.current = onTranscriptionChange;
-  onAudioRecordedRef.current = onAudioRecorded;
+  useEffect(() => {
+    onTranscriptionChangeRef.current = onTranscriptionChange;
+    onAudioRecordedRef.current = onAudioRecorded;
+  }, [onTranscriptionChange, onAudioRecorded]);
 
   // Initialize Speech Recognition when mode is speech-recognition
   useEffect(() => {
@@ -164,6 +167,8 @@ export const SpeechInput = ({
     speechRecognition.addEventListener("error", handleError);
 
     recognitionRef.current = speechRecognition;
+    // This reflects successful initialization of the browser's external recognizer.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsRecognitionReady(true);
 
     return () => {

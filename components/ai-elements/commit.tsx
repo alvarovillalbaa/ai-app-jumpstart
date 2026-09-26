@@ -1,5 +1,7 @@
 "use client";
 
+// Modified for ai-app-jumpstart; original AI Elements component Copyright 2023 Vercel, Inc. (Apache-2.0).
+
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -164,6 +166,8 @@ export const CommitTimestamp = ({
   }, [date]);
 
   useEffect(() => {
+    // The clock is external state; compute after hydration to avoid server/client date drift.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     updateFormatted();
   }, [updateFormatted]);
 

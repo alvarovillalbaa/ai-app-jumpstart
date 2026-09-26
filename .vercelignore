@@ -5,3 +5,13 @@ node_modules
 .output
 .nitro
 dist
+.data
+.convex
+**/.data
+**/.eve
+**/.output
+**/.env*
+my-agent
+playwright-report
+test-results
+**/node_modules/.cache

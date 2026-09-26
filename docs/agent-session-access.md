@@ -1,0 +1,39 @@
+# Agent session access
+
+The ownership foundation and creation coordinator are implemented in `lib/agent-access/`. Opt-in [account chat](account-chat.md) wires verified Supabase identities, public broker/status endpoints and the browser to this policy. Production routes are closed by default. Pending-only cancellation also fences a budget-only operation with a matching tombstone. Operator-wide visibility, disputed settlement reconciliation and reviewed cost envelopes remain incomplete. The production hook enforces [runtime usage reservations](usage-budgets.md). Uploads are disabled until the private attachment path exists.
+
+## Durable ownership
+
+`SessionAccessStore` supports SQLite, PostgreSQL, Supabase PostgREST and Convex using the configured `DATA_PROVIDER`. These application tables do not replace Eve/Workflow execution storage.
+
+The application reserves an immutable conversation ID, owner, operation ID and exact request-body hash before contacting Eve. Binding a returned session is a compare-and-set transition from `starting` to `active`. Operation IDs and session IDs are globally unique. Repeating the same active binding succeeds; changing it fails. Revocation retains a tombstone, including the unique session ID, so another owner cannot attach the revoked session. Pending reservations can also be revoked.
+
+SQL migrations enable RLS and deny browser roles access to conversations and nonce receipts. Supabase backend credentials remain private. Convex routes all commands through the authenticated backend HTTP action; its ownership functions are internal. Convex mutations use its [serializable transaction model](https://docs.convex.dev/database/advanced/occ) for uniqueness and concurrent binding. SQLite supports a single host; replicas require a shared remote provider.
+
+## Signed creation protocol
+
+`signCreation` and `verifyCreation` sign an exact JSON body containing only `message` and `operationId`. HMAC-SHA256 covers the body hash, owner, method, path, audience, operation ID, issuance time, nonce and key ID. The verifier requires a matching pending reservation and atomically consumes a shared database nonce. A retry needs a fresh signature/nonce for the same reserved body. Invalid signatures never grant access, and database outages propagate rather than falling back to another authenticator.
+
+Signing settings are server-only inputs loaded from `AI_CREATION_SIGNING_JSON`; the separate `AI_CHAT_ENABLED` flag controls account mode. Use a unique audience per environment and random 32-byte keys, encoded as 64 lowercase hex characters. The active key signs new requests; retained keys verify during rotation. Signatures last 60 seconds, allow at most 5 seconds of future clock skew and retain nonce receipts beyond the acceptance window. Hosts must have synchronized clocks. Never log signatures, credentials or creation bodies.
+
+## Channel policy and remaining integration
+
+`sessionAuthorizer` is wired into the enabled account channel and tested as an authorization function. It accepts creation only through signed pending reservations. Its identity verifier authenticates a registered user server-side; record API keys do not grant AI compute. It checks durable ownership for follow-ups, approval responses, streams, cancellation, history clearing, compaction and reset. Missing, foreign and revoked sessions are denied alike. Unknown routes, methods and subagent streams are denied. Do not append an OIDC or anonymous fallback.
+
+Eve's health endpoint is public by framework design. Connection callbacks, workflow webhooks, activity callbacks and task-input callbacks use separate framework capabilities; they do not pass through this auth function. Preserve and independently test those capabilities before enabling optional features. This implementation does not assert that an arbitrary callback is protected by the session authorizer.
+
+Eve operation deduplication is not a transaction with the application database. Concurrent starting calls can yield different candidate session IDs, and operation ownership expires after a session ceases to be resumable. Never enable chat by simply calling Eve and inserting its response afterward.
+
+## Creation and recovery
+
+`ConversationBroker` dispatches only when its insert wins the durable operation reservation. Concurrent or repeated requests read the existing state. A changed body conflicts; another owner cannot read the operation. The transport uses a fixed server-configured origin, a signed request, a bounded response and no redirects. HTTP acceptance alone never activates an application conversation or exposes a candidate session ID.
+
+The verified creation operation is carried in Eve's immutable initiator identity. The production `turn.started` receipt hook binds the winning runtime's ID. It checks the current owner as well, and fails the turn on a conflicting, revoked or unavailable binding before its model call. A later API poll can therefore recover the canonical mapping even when the original HTTP response was lost. Replayed receipts are idempotent. An `active` application record means ownership is durable, not that the model turn has completed.
+
+If a process dies after reservation but before sending, or the runtime cannot publish any receipt, the operation stays `starting`. Retrying does not issue another creation request. The owner can cancel an unbound start through an atomic `starting` to `revoked` transition. For a crash between budget admission and conversation reservation, cancellation looks up the owner-scoped ledger hash and first inserts a matching conversation reservation. A delayed broker then loses the insert race and cannot dispatch; if the broker inserted first, the same binding race applies. Since `turn.started` must bind before any model call, a cancellation that wins this race proves zero model attempts and can release the budget. If binding wins, cancellation returns `409` without refunding. A failed budget write after revocation leaves capacity reserved and returns a reconciliation error; retries are idempotent. Operator-wide visibility and disputed settlement repair remain incomplete, so the coordinator is not fully crash-recoverable or exactly-once execution. Reviewed budget configuration remains incomplete. Runtime/model retries also remain distinct from broker dispatch deduplication; durable attempt caps now bound model calls independently.
+
+## Verification
+
+The shared `sessionAccessContract` runs unchanged on SQLite and real isolated PostgreSQL, PostgREST and Convex backends. It covers concurrent reservation, immutable operations, owner isolation, pending-cancellation/binding races, revocation tombstones and replay arbitration. SQLite tests also reconnect to prove persistence. Signing tests cover tampering, replay, timestamps, owner/body mismatches, rotation and preservation of the original request stream. Route-policy tests cover every supported session operation and fail closed on storage errors.
+
+`npm run test:session-runtime` builds and runs a real isolated Eve server with the production authorizer, broker and receipt hook, plus a deterministic fixture model and fixture-only identity tokens. It drops a successful creation response, observes recovery with one dispatch, completes an owned follow-up, checks compaction settlement and daily/model-call limits, rejects cross-user controls/streams and unsigned creation, and proves that revocation between HTTP acceptance and the receipt prevents a model call. The account browser suite separately verifies pending cancellation through real Auth, Next and Eve, including zero budget settlement and no model call; it also seeds a budget-only operation and verifies the late-create fence. Each runtime run has a fresh app/queue namespace and temporary SQLite/Workflow files; its processes and files are cleaned up. This does not prove hosted identity, reviewed model prices or remote Workflow recovery.

@@ -1,5 +1,7 @@
 "use client";
 
+// Modified for ai-app-jumpstart; original AI Elements component Copyright 2023 Vercel, Inc. (Apache-2.0).
+
 import { cn } from "@/lib/utils";
 import { AlertCircle } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
@@ -23,6 +25,7 @@ interface JSXPreviewContextValue {
   error: Error | null;
   setError: (error: Error | null) => void;
   setLastGoodJsx: (jsx: string) => void;
+  lastGoodJsx: string;
   components: JsxParserProps["components"];
   bindings: JsxParserProps["bindings"];
   onErrorProp?: (error: Error) => void;
@@ -144,7 +147,7 @@ export const JSXPreview = memo(
   }: JSXPreviewProps) => {
     const [prevJsx, setPrevJsx] = useState(jsx);
     const [error, setError] = useState<Error | null>(null);
-    const [_lastGoodJsx, setLastGoodJsx] = useState("");
+    const [lastGoodJsx, setLastGoodJsx] = useState("");
 
     // Clear error when jsx changes (derived state pattern)
     if (jsx !== prevJsx) {
@@ -168,6 +171,7 @@ export const JSXPreview = memo(
         processedJsx,
         setError,
         setLastGoodJsx,
+        lastGoodJsx,
       }),
       [
         bindings,
@@ -178,6 +182,7 @@ export const JSXPreview = memo(
         onError,
         processedJsx,
         setError,
+        lastGoodJsx,
       ]
     );
 
@@ -204,16 +209,15 @@ export const JSXPreviewContent = memo(
       bindings,
       setError,
       setLastGoodJsx,
+      lastGoodJsx,
       onErrorProp,
     } = useJSXPreview();
     const errorReportedRef = useRef<string | null>(null);
-    const lastGoodJsxRef = useRef("");
-    const [hadError, setHadError] = useState(false);
+    const [errorJsx, setErrorJsx] = useState<string | null>(null);
 
     // Reset error tracking when jsx changes
     useEffect(() => {
       errorReportedRef.current = null;
-      setHadError(false);
     }, [processedJsx]);
 
     const handleError = useCallback(
@@ -226,7 +230,7 @@ export const JSXPreviewContent = memo(
 
         // During streaming, suppress errors and fall back to last good JSX
         if (isStreaming) {
-          setHadError(true);
+          setErrorJsx(processedJsx);
           return;
         }
 
@@ -239,14 +243,14 @@ export const JSXPreviewContent = memo(
     // Track the last JSX that rendered without error
     useEffect(() => {
       if (!errorReportedRef.current) {
-        lastGoodJsxRef.current = processedJsx;
+        // Synchronize the parser's successfully committed external rendering.
         setLastGoodJsx(processedJsx);
       }
     }, [processedJsx, setLastGoodJsx]);
 
     // During streaming, if the current JSX errored, re-render with last good version
     const displayJsx =
-      isStreaming && hadError ? lastGoodJsxRef.current : processedJsx;
+      isStreaming && errorJsx === processedJsx ? lastGoodJsx : processedJsx;
 
     return (
       <div className={cn("jsx-preview-content", className)} {...props}>

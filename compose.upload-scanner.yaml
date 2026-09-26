@@ -1,0 +1,78 @@
+# A separate scanner stack. Never attach its socket to the application containers.
+services:
+  clamav:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: deploy/upload-scanner-clamav.Dockerfile
+    restart: unless-stopped
+    mem_limit: 4g
+    pids_limit: 128
+    environment:
+      CLAMD_STARTUP_TIMEOUT: "180"
+      TZ: UTC
+      LC_ALL: C
+    volumes:
+      - signatures:/var/lib/clamav
+      - scanner-socket:/run/clamav
+    networks: [updates]
+  gateway:
+    build:
+      context: .
+      dockerfile: deploy/upload-scanner-gateway.Dockerfile
+    restart: unless-stopped
+    # ClamAV's pinned image uses gid 101; the Node process stays uid 1000.
+    group_add: ["101"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+    pids_limit: 32
+    environment:
+      SCANNER_GATEWAY_TOKEN: ${SCANNER_GATEWAY_TOKEN:?Set a unique server-only scanner token}
+      CLAMD_SOCKET: /run/clamav/clamd.sock
+      SCANNER_MAX_SIGNATURE_AGE_HOURS: ${SCANNER_MAX_SIGNATURE_AGE_HOURS:-72}
+    volumes:
+      - scanner-socket:/run/clamav:ro
+    networks: [scanner-private]
+    depends_on:
+      clamav:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8081/v1/scan',{headers:{authorization:'Bearer '+process.env.SCANNER_GATEWAY_TOKEN},signal:AbortSignal.timeout(1500)}).then(r=>process.exit(r.status===200?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+  edge:
+    build:
+      context: .
+      dockerfile: deploy/upload-scanner-edge.Dockerfile
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
+    mem_limit: 128m
+    pids_limit: 32
+    environment:
+      SCANNER_DOMAIN: ${SCANNER_DOMAIN:?Set the scanner HTTPS hostname}
+    ports:
+      - "${SCANNER_BIND_HOST:-127.0.0.1}:${SCANNER_HTTPS_PORT:-8443}:443"
+    volumes:
+      - scanner-tls-data:/data
+      - scanner-tls-config:/config
+    networks: [scanner-private,edge-public]
+    depends_on:
+      gateway:
+        condition: service_healthy
+networks:
+  scanner-private:
+    internal: true
+  updates: {}
+  edge-public: {}
+volumes:
+  signatures: {}
+  scanner-socket: {}
+  scanner-tls-data: {}
+  scanner-tls-config: {}
