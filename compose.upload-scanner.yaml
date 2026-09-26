@@ -10,6 +10,8 @@ services:
     pids_limit: 128
     environment:
       CLAMD_STARTUP_TIMEOUT: "180"
+      TZ: UTC
+      LC_ALL: C
     volumes:
       - signatures:/var/lib/clamav
       - scanner-socket:/run/clamav
@@ -29,6 +31,7 @@ services:
     environment:
       SCANNER_GATEWAY_TOKEN: ${SCANNER_GATEWAY_TOKEN:?Set a unique server-only scanner token}
       CLAMD_SOCKET: /run/clamav/clamd.sock
+      SCANNER_MAX_SIGNATURE_AGE_HOURS: ${SCANNER_MAX_SIGNATURE_AGE_HOURS:-72}
     volumes:
       - scanner-socket:/run/clamav:ro
     networks: [scanner-private]

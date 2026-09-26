@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { pingRemoteScanner,scanWithRemote } from "../lib/uploads/scanner";
+import { signaturePublishedAt } from "../deploy/upload-scanner-gateway.mjs";
 
 const root = fileURLToPath(new URL("../",import.meta.url));
 const script = fileURLToPath(import.meta.url);
@@ -29,10 +30,11 @@ function command(executable: string,args: string[],env = process.env,timeout = 3
 
 async function client() {
   const settings = { url: process.env.SCANNER_TEST_URL!,token };
-  if (process.argv.includes("--unavailable")) {
+  if (process.argv.includes("--unavailable") || process.argv.includes("--expired")) {
     assert.equal(await pingRemoteScanner(settings),false);
     await assert.rejects(scanWithRemote(settings,Buffer.from("outage control")));
-    console.log("Stopped ClamAV denies scans and readiness through trusted HTTPS.");
+    console.log(process.argv.includes("--expired") ? "Expired signatures deny scans and readiness through trusted HTTPS."
+      : "Stopped ClamAV denies scans and readiness through trusted HTTPS.");
     return;
   }
   assert.equal(await pingRemoteScanner(settings),true);
@@ -56,7 +58,7 @@ async function stackTest() {
   const project = `jumpstartscan${randomBytes(5).toString("hex")}`;
   const directory = await mkdtemp(join(tmpdir(),"jumpstart-scanner-compose-"));
   const fixtureVolume = `${project}-fixtures`,initializer = `${project}-initializer`;
-  const env = { ...process.env,SCANNER_GATEWAY_TOKEN: token,SCANNER_DOMAIN: "scanner.test" };
+  const env = { ...process.env,SCANNER_GATEWAY_TOKEN: token,SCANNER_DOMAIN: "scanner.test",SCANNER_MAX_SIGNATURE_AGE_HOURS: "72" };
   let compose: (args: string[]) => Promise<string>,started = false;
   const docker = (...args: string[]) => command("docker",args,env);
   const files = ["-p",project,"-f","compose.upload-scanner.yaml","-f",join(directory,"override.yaml")];
@@ -77,10 +79,20 @@ async function stackTest() {
     const caddy = (await readFile(join(root,"deploy/upload-scanner.Caddyfile"),"utf8"))
       .replace("{$SCANNER_DOMAIN}",":443").replace("  header X-Content-Type-Options","  tls /fixtures/cert.pem /fixtures/key.pem\n  header X-Content-Type-Options");
     await writeFile(join(directory,"Caddyfile"),caddy,{ mode: 0o600 });
+    // Clock injection exists only in this fixture launcher, never in the production CLI.
+    await writeFile(join(directory,"gateway-clock.mjs"),`import { readFileSync } from 'node:fs';
+import { createScannerGateway } from '/app/server.mjs';
+createScannerGateway({ token: process.env.SCANNER_GATEWAY_TOKEN,socketPath: process.env.CLAMD_SOCKET,
+  now: () => Number(readFileSync('/fixtures/clock.txt','utf8')) }).listen(8081,'0.0.0.0');
+`,{ mode: 0o600 });
     await writeFile(join(directory,"override.yaml"),`services:
   clamav:
     environment:
       CLAMAV_NO_FRESHCLAMD: "true"
+  gateway:
+    command: [node, /fixtures/gateway-clock.mjs]
+    volumes:
+      - test-fixtures:/fixtures:ro
   edge:
     ports: !override ["127.0.0.1:${port}:443"]
     command: [caddy, run, --config, /fixtures/Caddyfile, --adapter, caddyfile]
@@ -93,13 +105,19 @@ volumes:
 `,{ mode: 0o600 });
     console.log("Building isolated scanner, gateway and HTTPS edge images...");
     await stack("build");
+    started = true;
+    const versions = (await stack("run","--rm","--no-deps","--entrypoint","clamd","clamav","--version"))
+      .split(/\r?\n/u).filter(line => line.startsWith("ClamAV "));
+    assert.equal(versions.length,1,"The bundled database must have one unambiguous version timestamp");
+    const publishedAt = signaturePublishedAt(versions[0]);
+    const freshTime = publishedAt + 3_600_000;
+    await writeFile(join(directory,"clock.txt"),String(freshTime),{ mode: 0o644 });
     await docker("volume","create",fixtureVolume);
     await docker("create","--name",initializer,"--user","0:0","--mount",`source=${fixtureVolume},target=/fixtures`,
       "node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6",
-      "node","-e","for(const n of ['cert.pem','key.pem','Caddyfile'])require('fs').chownSync('/fixtures/'+n,1000,1000)");
-    for (const name of ["cert.pem","key.pem","Caddyfile"]) await docker("cp",join(directory,name),`${initializer}:/fixtures/${name}`);
+      "node","-e","for(const n of ['cert.pem','key.pem','Caddyfile','gateway-clock.mjs','clock.txt'])require('fs').chownSync('/fixtures/'+n,1000,1000)");
+    for (const name of ["cert.pem","key.pem","Caddyfile","gateway-clock.mjs","clock.txt"]) await docker("cp",join(directory,name),`${initializer}:/fixtures/${name}`);
     await docker("start","--attach",initializer);
-    started = true;
     await stack("up","--no-build","--wait","--wait-timeout","240","-d");
     const clientEnv = { ...process.env,SCANNER_TEST_TOKEN: token,SCANNER_TEST_URL: origin,NODE_EXTRA_CA_CERTS: join(directory,"cert.pem") };
     console.log(await command(process.execPath,["--import","tsx",script,"--client"],clientEnv,60_000));
@@ -113,9 +131,15 @@ volumes:
     }
     const gatewayId = await stack("ps","-q","gateway");
     assert.equal(await docker("inspect","--format","{{.Config.User}}",gatewayId),"node");
+    await writeFile(join(directory,"clock.txt"),String(publishedAt + 72 * 3_600_000 + 1));
+    await docker("cp",join(directory,"clock.txt"),`${initializer}:/fixtures/clock.txt`);
+    console.log(await command(process.execPath,["--import","tsx",script,"--client","--expired"],clientEnv,60_000));
+    await writeFile(join(directory,"clock.txt"),String(freshTime));
+    await docker("cp",join(directory,"clock.txt"),`${initializer}:/fixtures/clock.txt`);
+    console.log(await command(process.execPath,["--import","tsx",script,"--client"],clientEnv,60_000));
     await stack("stop","clamav");
     console.log(await command(process.execPath,["--import","tsx",script,"--client","--unavailable"],clientEnv,60_000));
-    console.log("Scanner Compose passed: private socket, non-root gateway, trusted TLS and fail-closed daemon outage.");
+    console.log("Scanner Compose passed: private socket, non-root gateway, trusted TLS, signature expiry/recovery and fail-closed daemon outage.");
   } catch (error) {
     if (started) console.error((await compose!([...files,"logs","--no-color","--tail","25"]).catch(() => "")).replaceAll(token,"[redacted]"));
     throw error;
