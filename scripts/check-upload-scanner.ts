@@ -11,6 +11,6 @@ try {
   }
   console.log("Upload scanner passed clean and EICAR controls.");
 } catch {
-  console.error("Upload scanner preflight failed. Check the private socket, daemon, limits and current signatures.");
+  console.error("Upload scanner preflight failed. Check the private scanner endpoint, authentication, limits and current signatures.");
   process.exitCode = 1;
 }

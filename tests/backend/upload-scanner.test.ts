@@ -8,7 +8,7 @@ import { spawn } from "node:child_process";
 import { afterEach, expect, it, vi } from "vitest";
 import { sqliteUploadCatalog } from "../../lib/uploads/catalog-sqlite";
 import { UploadIntake } from "../../lib/uploads/intake";
-import { createUploadScanner, pingClamd, scanWithClamd } from "../../lib/uploads/scanner";
+import { createUploadScanner, pingClamd, pingRemoteScanner, remoteScannerSettings, scanWithClamd, scanWithRemote } from "../../lib/uploads/scanner";
 import { GET as scannerHealth } from "../../app/api/health/upload-scanner/route";
 import { uploadHandlers } from "../../lib/http/uploads";
 import { localUploadObjects } from "../../lib/uploads/local";
@@ -18,8 +18,82 @@ const roots: string[] = [];
 const servers: Server[] = [];
 afterEach(async () => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => server.close(() => resolve()))));
   await Promise.all(roots.splice(0).map(root => rm(root,{ recursive: true,force: true })));
+});
+
+it("uses an authenticated HTTPS scanner for managed scan-on-read without releasing an unscanned byte",async () => {
+  const settings = { UPLOAD_SCANNER_PROVIDER: "remote",UPLOAD_SCANNER_URL: "https://scanner.example.test/v1/scan",
+    UPLOAD_SCANNER_TOKEN: "r".repeat(48) };
+  const token = "managed-upload-owner-token-".repeat(3);
+  vi.stubEnv("AUTH_PROVIDER","api-key");
+  vi.stubEnv("APP_API_KEYS",JSON.stringify([{ sha256: createHash("sha256").update(token).digest("hex"),
+    tenant: "test",subject: "alice",scopes: ["uploads:read","uploads:write","uploads:download"] }]));
+  for (const [key,value] of Object.entries(settings)) vi.stubEnv(key,value);
+  vi.stubEnv("UPLOAD_DOWNLOAD_POLICY","scan-on-read");
+  vi.stubEnv("VERCEL","1");
+  const scans: Uint8Array[] = [];
+  vi.stubGlobal("fetch",vi.fn(async (url: string,init: RequestInit) => {
+    expect(url).toBe(settings.UPLOAD_SCANNER_URL);
+    expect(init.redirect).toBe("error");
+    expect(new Headers(init.headers).get("authorization")).toBe(`Bearer ${settings.UPLOAD_SCANNER_TOKEN}`);
+    const bytes = new Uint8Array(init.body as Buffer);
+    expect(new Headers(init.headers).get("x-content-sha256")).toBe(createHash("sha256").update(bytes).digest("hex"));
+    scans.push(bytes);
+    return Response.json({ verdict: scans.length === 2 ? "infected" : "clean",
+      sha256: createHash("sha256").update(bytes).digest("hex") });
+  }));
+  const directory = await mkdtemp(join(tmpdir(),"jumpstart-managed-scanner-"));roots.push(directory);
+  const catalog = sqliteUploadCatalog(":memory:"),objects = localUploadObjects(directory);
+  const api = uploadHandlers(async () => catalog,async () => objects);
+  try {
+    const payload = "owner private text";
+    const created = await api.create(new Request("http://localhost/api/v1/uploads",{ method: "POST",body: payload,
+      headers: { authorization: `Bearer ${token}`,"content-type": "application/octet-stream",
+        "x-upload-name": "note.txt","x-upload-media-type": "text/plain" } }));
+    expect(created.status).toBe(201);
+    const row = await created.json(),url = `http://localhost/api/v1/uploads/${row.id}/download`;
+    const infected = await api.download(new Request(url,{ headers: { authorization: `Bearer ${token}` } }),row.id);
+    expect(infected.status).toBe(422);
+    expect((await infected.json()).error.code).toBe("upload_rejected");
+    const clean = await api.download(new Request(url,{ headers: { authorization: `Bearer ${token}` } }),row.id);
+    expect(clean.status).toBe(200);
+    expect(await clean.text()).toBe(payload);
+    expect(scans).toHaveLength(3);
+    expect(scans.every(bytes => Buffer.from(bytes).toString() === payload)).toBe(true);
+  } finally { await catalog.close(); }
+});
+
+it("rejects malformed remote scanner configuration and replies, and probes managed liveness",async () => {
+  const valid = { UPLOAD_SCANNER_PROVIDER: "remote",UPLOAD_SCANNER_URL: "https://scanner.example.test/v1/scan",
+    UPLOAD_SCANNER_TOKEN: "r".repeat(48) };
+  for (const invalid of [
+    { ...valid,UPLOAD_SCANNER_URL: "http://scanner.example.test/scan" },
+    { ...valid,UPLOAD_SCANNER_URL: "https://user:pass@scanner.example.test/scan" },
+    { ...valid,UPLOAD_SCANNER_URL: "https://scanner.example.test/scan?token=secret" },
+    { ...valid,UPLOAD_SCANNER_URL: "https://127.0.0.1/scan" },
+    { ...valid,UPLOAD_SCANNER_TOKEN: "short" },
+    { ...valid,UPLOAD_CLAMD_SOCKET: "/run/clamd.sock" },
+  ]) expect(() => remoteScannerSettings(invalid)).toThrow();
+  const settings = remoteScannerSettings(valid);
+  vi.stubGlobal("fetch",vi.fn(async (_url: string,init: RequestInit) => Response.json(init.method === "GET"
+    ? { status: "ready" } : { verdict: "unknown" })));
+  expect(await pingRemoteScanner(settings)).toBe(true);
+  await expect(scanWithRemote(settings,Buffer.from("test"))).rejects.toThrow();
+  vi.stubGlobal("fetch",vi.fn(async () => Response.json({ verdict: "clean",sha256: "0".repeat(64) })));
+  await expect(scanWithRemote(settings,Buffer.from("test"))).rejects.toThrow("did not match");
+  vi.stubGlobal("fetch",vi.fn(async () => Response.json({ verdict: "clean",
+    sha256: createHash("sha256").update("test").digest("hex") },{ status: 201 })));
+  await expect(scanWithRemote(settings,Buffer.from("test"))).rejects.toThrow("unavailable");
+  vi.stubGlobal("fetch",vi.fn(async () => new Response("x".repeat(257),{ headers: { "content-type": "application/json" } })));
+  await expect(scanWithRemote(settings,Buffer.from("test"))).rejects.toThrow("too large");
+  for (const [key,value] of Object.entries(valid)) vi.stubEnv(key,value);
+  vi.stubEnv("VERCEL","1");
+  vi.stubGlobal("fetch",vi.fn(async () => Response.json({ status: "ready" })));
+  const health = await scannerHealth();
+  expect(health.status).toBe(200);
+  expect(await health.json()).toMatchObject({ status: "ready" });
 });
 
 it("uses a fresh socket verdict for each owner download through HTTP and CLI",async () => {
@@ -102,6 +176,9 @@ it("reports scanner liveness separately from application readiness",async () => 
   expect(ready.headers.get("cache-control")).toBe("no-store");
   expect(await ready.json()).toEqual({ status: "ready",checks: { scanner: "ok" } });
   expect(command).toBe("zPING\0");
+  vi.stubEnv("UPLOAD_SCANNER_URL","https://scanner.example.test/v1/scan");
+  expect((await scannerHealth()).status).toBe(503);
+  vi.stubEnv("UPLOAD_SCANNER_URL","");
   vi.stubEnv("VERCEL","1");
   const denied = await scannerHealth();
   expect(denied.status).toBe(503);

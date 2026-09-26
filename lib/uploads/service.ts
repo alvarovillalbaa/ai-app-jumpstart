@@ -7,6 +7,7 @@ import type { PrivateUploadObjects } from "./contract";
 import type { UploadScanner } from "./scanner";
 import { checkUpload } from "./validation";
 import { withDownloadScanSlot } from "./download-admission";
+import { uploadDownloadConfigured } from "./download-capability";
 
 /** Quarantined bytes leave storage only after an explicit, fresh scan-on-read policy. */
 export class UploadService {
@@ -36,7 +37,7 @@ export class UploadService {
     const row = await this.catalog.get(owner,id);
     if (!row || row.state === "deleted") throw new AppError(404,"not_found","Upload not found.");
     if (row.state !== "quarantined") throw new AppError(409,"upload_busy","Upload is not ready for scanning.");
-    if (this.downloadPolicy !== "scan-on-read" || process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    if (!uploadDownloadConfigured(process.env,this.downloadPolicy)) {
       throw new AppError(503,"upload_download_disabled","Upload downloads are not enabled on this host.");
     }
     const scanner = await this.scanner();

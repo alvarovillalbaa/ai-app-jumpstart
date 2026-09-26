@@ -4,6 +4,7 @@ import { config } from "../lib/config";
 import { authSettings } from "../lib/auth/settings";
 import { chatSettings } from "../lib/agent-access/settings";
 import { trustedHttpOrigin } from "../lib/security/origin";
+import { remoteScannerSettings } from "../lib/uploads/scanner";
 
 function httpsOrigin(value: string | undefined, name: string) {
   const origin = trustedHttpOrigin(value);
@@ -33,8 +34,14 @@ export function checkManagedConfig(env: NodeJS.ProcessEnv, requireChat = false) 
   if (env.UPLOAD_STORAGE_PROVIDER && env.UPLOAD_STORAGE_PROVIDER !== "supabase") {
     throw new Error("Set UPLOAD_STORAGE_PROVIDER=supabase or leave uploads disabled on Vercel.");
   }
-  if (env.UPLOAD_DOWNLOAD_POLICY) {
-    throw new Error("UPLOAD_DOWNLOAD_POLICY=scan-on-read requires a self-hosted private scanner socket; leave downloads disabled on Vercel.");
+  const scannerConfigured = Boolean(env.UPLOAD_SCANNER_PROVIDER || env.UPLOAD_CLAMD_SOCKET || env.UPLOAD_SCANNER_URL || env.UPLOAD_SCANNER_TOKEN);
+  if (scannerConfigured) {
+    try { remoteScannerSettings(env); }
+    catch { throw new Error("Vercel upload scanning requires UPLOAD_SCANNER_PROVIDER=remote, a valid HTTPS UPLOAD_SCANNER_URL and a server-only UPLOAD_SCANNER_TOKEN."); }
+    if (env.UPLOAD_STORAGE_PROVIDER !== "supabase") throw new Error("Configure Supabase upload storage before enabling remote scanning.");
+  }
+  if (env.UPLOAD_DOWNLOAD_POLICY && (env.UPLOAD_DOWNLOAD_POLICY !== "scan-on-read" || !scannerConfigured)) {
+    throw new Error("Vercel upload downloads require scan-on-read and an authenticated remote scanner.");
   }
   if (env.SUPABASE_SECRET_KEY === env.SUPABASE_PUBLISHABLE_KEY || env.SUPABASE_SECRET_KEY?.startsWith("sb_publishable_")) {
     throw new Error("SUPABASE_SECRET_KEY must be a backend credential distinct from SUPABASE_PUBLISHABLE_KEY.");

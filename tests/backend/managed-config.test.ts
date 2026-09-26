@@ -36,7 +36,14 @@ it("rejects serverless-local storage, plaintext origins, wrong credentials and w
   expect(checkManagedConfig({ ...baseline, UPLOAD_STORAGE_PROVIDER: "supabase" })).toMatchObject({ target: "vercel-supabase" });
   expect(() => checkManagedConfig({ ...baseline, UPLOAD_STORAGE_PROVIDER: "local" })).toThrow("UPLOAD_STORAGE_PROVIDER=supabase");
   expect(() => checkManagedConfig({ ...baseline, UPLOAD_STORAGE_PROVIDER: "supabase",UPLOAD_DOWNLOAD_POLICY: "scan-on-read" }))
-    .toThrow("self-hosted private scanner socket");
+    .toThrow("authenticated remote scanner");
+  const managedDownloads = { ...baseline,UPLOAD_STORAGE_PROVIDER: "supabase",UPLOAD_DOWNLOAD_POLICY: "scan-on-read",
+    UPLOAD_SCANNER_PROVIDER: "remote",UPLOAD_SCANNER_URL: "https://scanner.example.test/v1/scan",
+    UPLOAD_SCANNER_TOKEN: "r".repeat(48) };
+  expect(checkManagedConfig(managedDownloads)).toMatchObject({ target: "vercel-supabase" });
+  expect(() => checkManagedConfig({ ...managedDownloads,UPLOAD_SCANNER_URL: "http://scanner.example.test/scan" })).toThrow("HTTPS");
+  expect(() => checkManagedConfig({ ...managedDownloads,UPLOAD_SCANNER_TOKEN: "short" })).toThrow("UPLOAD_SCANNER_TOKEN");
+  expect(() => checkManagedConfig({ ...managedDownloads,UPLOAD_SCANNER_PROVIDER: "clamd",UPLOAD_CLAMD_SOCKET: "/run/clamd.sock" })).toThrow("UPLOAD_SCANNER_PROVIDER=remote");
 });
 
 it("fails closed for incomplete or malformed enabled chat without echoing secret values", () => {

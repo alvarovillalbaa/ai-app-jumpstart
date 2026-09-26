@@ -15,9 +15,19 @@ import { UploadService } from "../../lib/uploads/service";
 import { SqliteRepository } from "../../lib/data/sqlite";
 import { RecordService } from "../../lib/data/service";
 import { UploadIntake } from "../../lib/uploads/intake";
+import { uploadDownloadConfigured } from "../../lib/uploads/download-capability";
 
 const token = "upload-cli-owner-token-".repeat(3);
 afterEach(() => vi.unstubAllEnvs());
+
+it("shows owner download only where the server admits its scanner transport",() => {
+  const policy = { UPLOAD_DOWNLOAD_POLICY: "scan-on-read" };
+  expect(uploadDownloadConfigured({ ...policy,UPLOAD_SCANNER_PROVIDER: "clamd" })).toBe(true);
+  expect(uploadDownloadConfigured({ ...policy,VERCEL: "1",UPLOAD_SCANNER_PROVIDER: "clamd" })).toBe(false);
+  expect(uploadDownloadConfigured({ ...policy,VERCEL: "1",UPLOAD_SCANNER_PROVIDER: "remote" })).toBe(true);
+  expect(uploadDownloadConfigured({ ...policy,AWS_LAMBDA_FUNCTION_NAME: "app",UPLOAD_SCANNER_PROVIDER: "remote" })).toBe(true);
+  expect(uploadDownloadConfigured({ VERCEL: "1",UPLOAD_SCANNER_PROVIDER: "remote" })).toBe(false);
+});
 
 it("uses the authenticated binary HTTP path from CLI for put, list, get and delete",async () => {
   vi.stubEnv("AUTH_PROVIDER","api-key");
