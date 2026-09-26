@@ -102,7 +102,8 @@ export async function exportApplication(mode: Mode, output: string, call: Call, 
         "Deleted artifact tombstones and database backups",
         "Conversation projections are selected events, not a canonical transcript",
         "Private upload object bytes, deleted upload tombstones and derived data",
-      ] : ["Conversation, artifact, upload, usage, Auth, Eve and budget data"],
+        "Record creation keys, request hashes and retained deletion fences",
+      ] : ["Conversation, artifact, upload, usage, Auth, Eve and budget data","Record creation keys, request hashes and retained deletion fences"],
     });
     if (profile) { await write("account_profile", profile); counts.profile = 1; }
     await walk(

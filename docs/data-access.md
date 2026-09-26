@@ -15,14 +15,23 @@ Send `Authorization: Bearer TOKEN` over HTTPS. When `AUTH_PROVIDER=supabase`, a 
 | List | `GET /api/v1/records?limit=25&after=UUID` | `{items,nextCursor}` |
 | Read | `GET /api/v1/records/UUID` | Record |
 | Create | `POST /api/v1/records` with `{title,content}` | 201 + Record + Location |
+| Creation status | `GET /api/v1/records/creation/KEY_UUID` | `{status:"created",record}` or `{status:"deleted",id}` |
 | Update | `PATCH /api/v1/records/UUID` with `{title,content,revision}` | Record with next revision |
 | Delete | `DELETE /api/v1/records/UUID?revision=1` | 204 |
 
 Records have `id`, `title`, `content`, `revision`, `createdAt`, `updatedAt`; owner fields never leave the repository. Lists sort by ID, with 1–100 items per page. Pagination is not a snapshot under concurrent writes. Titles are 1–200 characters, content at most 32,000 characters, and request bodies at most 128 KiB. Unknown fields fail validation.
 
-Responses are `no-store`. Errors are `{error:{code,message,requestId}}`, with an `X-Request-Id` header and correlated structured log. Missing reads return 404. Unavailable/stale/other-owner mutations share 409 to avoid disclosing ownership. Unexpected provider errors are redacted. Create is not idempotent: do not retry ambiguous failures automatically. Update/delete reject stale revisions.
+Responses are `no-store`. Errors are `{error:{code,message,requestId}}`, with an `X-Request-Id` header and correlated structured log. Missing reads return 404. Unavailable/stale/other-owner mutations share 409 to avoid disclosing ownership. Unexpected provider errors are redacted. Creation without a key is not idempotent: do not retry ambiguous failures automatically. Update/delete reject stale revisions.
 
-The structured editor can save reviewed fields as a normal private record. Its `content` is a versioned `structured-draft` JSON envelope with the source operation ID and typed values. REST, CLI and MCP record commands access the same row. The editor validates that envelope and the source owner's conversation on reopen; generic record writes can make a draft incompatible, in which case the editor shows an error. A lost create response may have committed, so inspect account records before retrying.
+### Keyed creation
+
+For safe creation retries, supply a caller-generated UUID in `Idempotency-Key` and reuse it with the same `{title,content}`. UUID casing is normalized and the validated, trimmed title participates in the input hash. The key is scoped to both authenticated owner fields. The first request returns 201; matching retries return 200 with the original creation record (revision 1), the same Location, and `Idempotency-Replayed: true`. Concurrent retries commit one record. Reusing a key with changed input returns 409 `creation_conflict`. Matching retries after deletion return 410 `record_deleted` rather than recreating the record. Requests without a key retain the previous behavior.
+
+The original response is reconstructed from the supplied matching input and a receipt; it never exposes later edits to a write-only credential. `GET /api/v1/records/creation/KEY_UUID` requires `records:read` and returns the **current** record or its deleted locator, with 404 for unknown/other-owner keys. Use that read to recover the current revision after a lost response; a replayed creation response is not a current-state read. Reads and subsequent edits are separate operations, so revision conflicts still apply.
+
+Apply the additive `20260926123000_record_creation_receipts.sql` migration before enabling keyed PostgreSQL/Supabase requests; SQLite initializes its receipt table and Convex needs the updated schema/functions. Receipts contain the owner, key, record ID, original timestamp and SHA-256 input hash, with no copied title/content. They remain after record deletion with no automatic expiry to fence delayed retries. The hash is still retained derived data; database backups include receipts, while the application-visible export excludes them. Full account deletion/retention remains an open coordinated-provider task.
+
+The structured editor can save reviewed fields as a normal private record. Its `content` is a versioned `structured-draft` JSON envelope with the source operation ID and typed values. REST, CLI and MCP record commands access the same row. The editor validates that envelope and the source owner's conversation on reopen; generic record writes can make a draft incompatible, in which case the editor shows an error. Its first save uses the source operation UUID as the creation key and recovers a lost response through creation status, preserving edited fields for review.
 
 Conversation metadata uses `GET /api/v1/conversations`, `GET /api/v1/conversations/OPERATION_UUID/metadata`, and `PATCH /api/v1/conversations/OPERATION_UUID`. The metadata read returns the same summary as listing, including title, archive flag and revision; it excludes session IDs, request hashes and owner fields. The existing GET without `/metadata` remains the creation-status lookup for the chat UI. See [history semantics and upgrade steps](account-chat.md#conversation-history).
 
@@ -33,6 +42,8 @@ Set `APP_API_TOKEN` and optionally `APP_API_URL` in `.env.local`, then:
 ```sh
 npm run app -- list
 npm run app -- create ./record.json
+npm run app -- create ./record.json --key CREATION_UUID
+npm run app -- creation CREATION_UUID
 npm run app -- get RECORD_UUID
 npm run app -- update RECORD_UUID ./replacement.json
 npm run app -- delete RECORD_UUID 2
@@ -71,11 +82,11 @@ The command reads existing authenticated REST pages and writes newline-delimited
 
 `export verify FILE.ndjson` reads a local export without a token or server, checks its manifest, section counts, source-index order when present, complete footer and exact content digest, and returns nonzero on truncation or changed bytes. It accepts exports produced with the digest-bearing footer; older v5/v1 files without one cannot pass this verification. The digest detects accidental corruption, not malicious replacement by someone who can rewrite both the data and footer. Verification does not establish that live paged reads captured a consistent or complete account snapshot.
 
-This is an **application-visible data export**, not a complete account export or backup. Quarantined upload bytes are never included or made downloadable by this command. It also omits deleted upload tombstones and derived data, the rest of the Supabase Auth user record, credentials, linked identity details, sessions and MFA factors, Eve's model history or workflow checkpoints, budget model-attempt IDs, operator correction notes/evidence and historical daily aggregates, deleted artifact tombstones, provider logs and database backups. Projections contain selected captured events, not a canonical transcript. The manifest lists these omissions so recipients do not mistake the file for complete erasure or a compliance-grade snapshot. Full export and deletion still require coordinated provider/runtime retention work.
+This is an **application-visible data export**, not a complete account export or backup. Quarantined upload bytes are never included or made downloadable by this command. It also omits record creation keys/hashes and deletion fences, deleted upload tombstones and derived data, the rest of the Supabase Auth user record, credentials, linked identity details, sessions and MFA factors, Eve's model history or workflow checkpoints, budget model-attempt IDs, operator correction notes/evidence and historical daily aggregates, deleted artifact tombstones, provider logs and database backups. Projections contain selected captured events, not a canonical transcript. The manifest lists these omissions so recipients do not mistake the file for complete erasure or a compliance-grade snapshot. Full export and deletion still require coordinated provider/runtime retention work.
 
 ## MCP
 
-Point an MCP client at `https://YOUR_HOST/api/mcp` with the bearer header. The official SDK implements stateless Streamable HTTP. GET streams and DELETE sessions return 405. Tools are `records_list`, `records_get`, `records_create`, `records_update`, `records_delete`. Resources use `records:///UUID`. Both share REST permissions. Mutation annotations inform client approval UI; they do not grant authorization. Interactive OAuth discovery/registration is not implemented.
+Point an MCP client at `https://YOUR_HOST/api/mcp` with the bearer header. The official SDK implements stateless Streamable HTTP. GET streams and DELETE sessions return 405. Tools are `records_list`, `records_get`, `records_create`, `records_creation_status`, `records_update`, `records_delete`. `records_create` accepts `{title,content,creationKey?}` with the same keyed semantics as REST, returning a record. `records_creation_status` accepts `{creationKey}` and requires read scope. Create's `idempotentHint` remains false because callers may omit the key. Resources use `records:///UUID`. Both share REST permissions. Mutation annotations inform client approval UI; they do not grant authorization. Interactive OAuth discovery/registration is not implemented.
 
 This server exposes application data, not administrative database tools. Outbound Eve MCP connections and an agent-as-MCP channel remain distinct future work.
 

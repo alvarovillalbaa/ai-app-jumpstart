@@ -15,6 +15,10 @@ const receipt = z.discriminatedUnion("status",[
 ]);
 type RecordValue = z.infer<typeof structuredRecord>;
 const savedRecord = z.object({ id: z.uuid(),revision: z.number().int().positive(),title: z.string(),content: z.string() });
+const creationStatus = z.discriminatedUnion("status",[
+  z.object({ status: z.literal("created"),record: savedRecord }),
+  z.object({ status: z.literal("deleted"),id: z.uuid() }),
+]);
 class HttpFailure extends Error { constructor(public status: number,message: string) { super(message); } }
 
 export function StructuredForm({ settings,userId,initialOperationId,initialDraftId }: {
@@ -48,9 +52,9 @@ export function StructuredForm({ settings,userId,initialOperationId,initialDraft
     return data.session.access_token;
   },[client,userId]);
 
-  const json = useCallback(async (url: string,signal: AbortSignal,body?: object,method?: "POST" | "PATCH",timeoutMs = 15_000) => {
+  const json = useCallback(async (url: string,signal: AbortSignal,body?: object,method?: "POST" | "PATCH",timeoutMs = 15_000,headers: Record<string,string> = {}) => {
     const token = await credential();
-    const response = await fetch(url,{ method: method ?? (body ? "POST" : "GET"),headers: { authorization: `Bearer ${token}`,...(body ? { "content-type": "application/json" } : {}) },
+    const response = await fetch(url,{ method: method ?? (body ? "POST" : "GET"),headers: { authorization: `Bearer ${token}`,...(body ? { "content-type": "application/json" } : {}),...headers },
       body: body ? JSON.stringify(body) : undefined,cache: "no-store",signal: AbortSignal.any([signal,AbortSignal.timeout(timeoutMs)]) });
     const data: unknown = await response.json();
     if (!response.ok) throw new HttpFailure(response.status,z.object({ error: z.object({ message: z.string() }) }).safeParse(data).data?.error.message ?? "The request could not be completed.");
@@ -165,16 +169,34 @@ export function StructuredForm({ settings,userId,initialOperationId,initialDraft
     if (!checked.success) { setSaveError("Review the fields before saving.");return; }
     const content = JSON.stringify(structuredDraft.parse({ kind: "structured-draft",schemaVersion: 1,sourceOperationId: operation,value: checked.data }));
     if (content === savedContent) return;
-    const abort = new AbortController();setSaving(true);setSaveError("");
+    const abort = new AbortController();controller.current = abort;setSaving(true);setSaveError("");
     try {
       const input = { title: value.title.trim() || "Untitled structured draft",content,...(draft ? { revision: draft.revision } : {}) };
-      const row = savedRecord.parse(await json(draft ? `/api/v1/records/${draft.id}` : "/api/v1/records",abort.signal,input,draft ? "PATCH" : "POST"));
+      const row = savedRecord.parse(await json(draft ? `/api/v1/records/${draft.id}` : "/api/v1/records",abort.signal,input,draft ? "PATCH" : "POST",15_000,
+        draft ? {} : { "idempotency-key": operation }));
       if (row.content !== content) throw new Error("The saved record did not match the edited fields.");
       if (activeUser.current !== userId) return;
       setDraft({ id: row.id,revision: row.revision });setSavedContent(content);
       History.prototype.replaceState.call(window.history,window.history.state,"",`/structured?draft=${row.id}`);
     } catch (cause) {
-      if (activeUser.current === userId) setSaveError(cause instanceof HttpFailure ? cause.message : "Save could not be confirmed. Check your records before trying again.");
+      if (abort.signal.aborted || activeUser.current !== userId) return;
+      // The stable source-operation key also works after a reload. Read the
+      // current revision on an uncertain first save, preserving local edits.
+      if (!draft && (!(cause instanceof HttpFailure) || cause.status === 409 || cause.status >= 500)) {
+        try {
+          const status = creationStatus.parse(await json(`/api/v1/records/creation/${operation}`,abort.signal));
+          if (abort.signal.aborted || activeUser.current !== userId) return;
+          if (status.status === "deleted") { setSaveError("This saved draft was deleted. Start a new result to create another draft.");return; }
+          const stored = storedStructuredDraft(status.record.content);
+          if (!stored || stored.sourceOperationId !== operation) throw new Error("Unexpected draft receipt.");
+          if (abort.signal.aborted || activeUser.current !== userId) return;
+          setDraft({ id: status.record.id,revision: status.record.revision });setSavedContent(JSON.stringify(stored));
+          History.prototype.replaceState.call(window.history,window.history.state,"",`/structured?draft=${status.record.id}`);
+          if (JSON.stringify(stored) !== content) setSaveError("Saved draft recovered. Review your unsaved edits before saving changes.");
+          return;
+        } catch { /* Keep the same key for a safe retry if recovery is unavailable. */ }
+      }
+      if (!abort.signal.aborted && activeUser.current === userId) setSaveError(cause instanceof HttpFailure ? cause.message : "Save could not be confirmed. Try Save draft again to check the same creation.");
     } finally { setSaving(false); }
   }
 

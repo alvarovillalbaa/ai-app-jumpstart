@@ -2,7 +2,7 @@ import { httpRouter } from "convex/server";
 import { z } from "zod";
 import { httpAction } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { listInput, recordId, recordInput, recordUpdate } from "../lib/data/contract";
+import { listInput, recordId, recordInput, recordUpdate,recordCreationKey } from "../lib/data/contract";
 import { accessCommand } from "../lib/agent-access/contract";
 import { budgetCommand } from "../lib/budgets/contract";
 import { uploadCatalogCommand } from "../lib/uploads/catalog-contract";
@@ -12,6 +12,8 @@ const command = z.discriminatedUnion("operation", [
   owner.extend({ operation: z.literal("list"), ...listInput.shape }).strict(),
   owner.extend({ operation: z.literal("get"), id: recordId }).strict(),
   owner.extend({ operation: z.literal("create"), id: recordId, ...recordInput.shape }).strict(),
+  owner.extend({ operation: z.literal("createOnce"),id: recordId,key: recordCreationKey,hash: z.string().regex(/^[a-f0-9]{64}$/u),...recordInput.shape }).strict(),
+  owner.extend({ operation: z.literal("creation"),key: recordCreationKey }).strict(),
   owner.extend({ operation: z.literal("update"), id: recordId, ...recordUpdate.shape }).strict(),
   owner.extend({ operation: z.literal("delete"), id: recordId, revision: z.number().int().positive() }).strict(),
   z.object({ operation: z.literal("health") }).strict(),
@@ -99,6 +101,8 @@ http.route({ path: "/app/records", method: "POST", handler: httpAction(async (ct
       case "list": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.records.list, input)); }
       case "get": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.records.get, input)); }
       case "create": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.records.create, input)); }
+      case "createOnce": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.records.createOnce,input)); }
+      case "creation": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.records.creation,input)); }
       case "update": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.records.update, input)); }
       case "delete": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.records.remove, input)); }
       case "health": return json(await ctx.runQuery(internal.records.health, {}));

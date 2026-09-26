@@ -17,9 +17,12 @@ export function recordHandlers(repository: () => Promise<RecordRepository> = get
     }),
     create: (request: Request) => handle(request, async () => {
       const s = await service(request);
-      const row = await s.create(await readJson(request));
-      return Response.json(row, { status: 201, headers: { location: `/api/v1/records/${row.id}` } });
+      const input = await readJson(request),key = request.headers.get("idempotency-key");
+      const result = key === null ? { status: "created",record: await s.create(input) } : await s.createOnce(key,input);
+      return Response.json(result.record, { status: result.status === "created" ? 201 : 200,
+        headers: { location: `/api/v1/records/${result.record.id}`,...(key === null ? {} : { "idempotency-replayed": String(result.status === "existing") }) } });
     }),
+    creation: (request: Request,key: string) => handle(request,async () => Response.json(await (await service(request)).creation(key))),
     get: (request: Request, id: string) => handle(request, async () => Response.json(await (await service(request)).get(id))),
     update: (request: Request, id: string) => handle(request, async () => {
       const s = await service(request);

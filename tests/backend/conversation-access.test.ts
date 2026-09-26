@@ -111,7 +111,7 @@ it("rechecks revocation and chat availability on every MCP request",async () => 
   const client = await mcp(alice);
   vi.stubEnv("AI_CHAT_ENABLED","false");
   const tools = (await client.listTools()).tools;
-  expect(tools).toHaveLength(6);
+  expect(tools).toHaveLength(7);
   expect(tools.map(tool => tool.name)).toContain("account_profile");
   expect((await client.callTool({ name: "conversations_get",arguments: { operationId: id } })).isError).toBe(true);
   await expect(run(["conversations","get",id],{ APP_API_TOKEN: alice },request)).rejects.toThrow("HTTP 503: chat_disabled");

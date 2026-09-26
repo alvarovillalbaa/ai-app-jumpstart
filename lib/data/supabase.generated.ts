@@ -293,6 +293,33 @@ export type Database = {
         }
         Relationships: []
       }
+      app_record_creates: {
+        Row: {
+          created_at: string
+          creation_key: string
+          record_id: string
+          request_hash: string
+          subject: string
+          tenant: string
+        }
+        Insert: {
+          created_at?: string
+          creation_key: string
+          record_id: string
+          request_hash: string
+          subject: string
+          tenant: string
+        }
+        Update: {
+          created_at?: string
+          creation_key?: string
+          record_id?: string
+          request_hash?: string
+          subject?: string
+          tenant?: string
+        }
+        Relationships: []
+      }
       app_records: {
         Row: {
           content: string
@@ -388,6 +415,18 @@ export type Database = {
         Returns: Json
       }
       app_budget_correct_settlement: { Args: { input: Json }; Returns: string }
+      app_create_record_once: {
+        Args: {
+          _content: string
+          _hash: string
+          _id: string
+          _key: string
+          _subject: string
+          _tenant: string
+          _title: string
+        }
+        Returns: Json
+      }
       app_delete_artifact: {
         Args: {
           p_deleted: number

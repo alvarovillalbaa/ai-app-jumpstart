@@ -407,6 +407,14 @@ test("structured form recovers a missing result projection, then saves and reope
   await expect(page.getByLabel("Title",{ exact: true })).toHaveValue("Deterministic title",{ timeout: 30_000 });
   expect(creations).toBe(1);
   await page.getByLabel("Title",{ exact: true }).fill("Reviewed title");
+  let saves = 0;
+  await page.route("**/api/v1/records",async route => {
+    if (route.request().method() !== "POST") return route.continue();
+    saves++;expect(route.request().headers()["idempotency-key"]).toBe(id);
+    const response = await route.fetch();
+    if (saves === 1) await route.abort("connectionreset");
+    else await route.fulfill({ response });
+  });
   await page.getByRole("button",{ name: "Save draft" }).click();
   await expect.poll(() => new URL(page.url()).searchParams.get("draft")).toMatch(/^[a-f0-9-]{36}$/);
   const draftId = new URL(page.url()).searchParams.get("draft")!;
@@ -419,12 +427,16 @@ test("structured form recovers a missing result projection, then saves and reope
   expect(JSON.parse(row.content)).toMatchObject({ kind: "structured-draft",schemaVersion: 1,sourceOperationId: id,value: { title: "Reviewed title",summary: "Organized fixture notes." } });
   expect((await request.get(draftUrl,{ headers: { authorization: `Bearer ${bob.token}` } })).status()).toBe(404);
   expect(await runCli(["get",draftId],{ APP_API_URL: process.env.APP_ORIGIN!,APP_API_TOKEN: alice.token })).toEqual(row);
+  expect(await runCli(["creation",id!],{ APP_API_URL: process.env.APP_ORIGIN!,APP_API_TOKEN: alice.token })).toEqual({ status: "created",record: row });
+  expect((await request.get(`/api/v1/records/creation/${id}`,{ headers: { authorization: `Bearer ${bob.token}` } })).status()).toBe(404);
   const mcp = new Client({ name: "structured-draft-contract",version: "1" });
   try {
     await mcp.connect(new StreamableHTTPClientTransport(new URL("/api/mcp",process.env.APP_ORIGIN!),{ requestInit: { headers: { authorization: `Bearer ${alice.token}` } } }));
     const result = await mcp.callTool({ name: "records_get",arguments: { id: draftId } });
     expect(result.isError).not.toBe(true);
     expect(JSON.parse((result.content as { text: string }[])[0].text)).toEqual(row);
+    const status = await mcp.callTool({ name: "records_creation_status",arguments: { creationKey: id } });
+    expect(JSON.parse((status.content as { text: string }[])[0].text)).toEqual({ status: "created",record: row });
   } finally { await mcp.close(); }
   await page.reload();
   await expect(page.getByLabel("Title",{ exact: true })).toHaveValue("Reviewed title",{ timeout: 30_000 });
@@ -435,6 +447,20 @@ test("structured form recovers a missing result projection, then saves and reope
   const revised = await (await request.get(draftUrl,{ headers: { authorization: `Bearer ${alice.token}` } })).json();
   expect(revised.revision).toBe(2);
   expect(JSON.parse(revised.content).value.summary).toBe("Reviewed after saving.");
+  // Reopening the source operation loses local draft metadata. A changed
+  // first-save input must recover the same row and leave the edits unsaved.
+  await page.goto(`/structured?id=${id}`);
+  await expect(page.getByLabel("Title",{ exact: true })).toHaveValue("Deterministic title",{ timeout: 30_000 });
+  await page.getByLabel("Title",{ exact: true }).fill("Still unsaved after recovery");
+  await page.getByRole("button",{ name: "Save draft" }).click();
+  await expect(page.getByRole("main").getByRole("alert")).toContainText("Saved draft recovered");
+  expect(new URL(page.url()).searchParams.get("draft")).toBe(draftId);
+  await expect(page.getByLabel("Title",{ exact: true })).toHaveValue("Still unsaved after recovery");
+  await expect(page.getByRole("status")).toContainText("Unsaved changes");
+  expect(saves).toBe(2);
+  const records = await (await request.get("/api/v1/records",{ headers: { authorization: `Bearer ${alice.token}` } })).json();
+  expect(records.items).toHaveLength(1);
+  expect(records.items[0]).toEqual(revised);
   await page.goto("/account");
   await page.getByRole("button",{ name: "Load records" }).click();
   await page.getByRole("link",{ name: "Open structured draft" }).click();

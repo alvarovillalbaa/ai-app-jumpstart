@@ -36,3 +36,23 @@ it("fails closed when auth is unconfigured and redacts unexpected provider error
   const result = await recordHandlers(async () => { throw new Error("postgres://secret@host"); }).list(request("{}"));
   expect(result.status).toBe(500); expect(await result.text()).not.toContain("secret");
 });
+
+it("reports keyed creation, replay, changed-input conflict, status and deletion without creating duplicates",async () => {
+  const api = recordHandlers(async () => repo),key = crypto.randomUUID(),input = { title: "Keyed",content: "One record" };
+  const create = (body = input,creationKey = key) => api.create(request(JSON.stringify(body),{ "idempotency-key": creationKey }));
+  const first = await create(),row = await first.json();
+  expect(first.status).toBe(201);expect(first.headers.get("idempotency-replayed")).toBe("false");
+  const replay = await create(input,key.toUpperCase());
+  expect(replay.status).toBe(200);expect(replay.headers.get("idempotency-replayed")).toBe("true");
+  expect(replay.headers.get("location")).toBe(`/api/v1/records/${row.id}`);
+  expect(await replay.json()).toEqual(row);
+  expect((await create({ ...input,content: "Changed" })).status).toBe(409);
+  expect((await create(input,"bad-key")).status).toBe(400);
+  expect((await create(input,"")).status).toBe(400);
+  const read = new Request("http://localhost:3000",{ headers: { authorization: `Bearer ${token}` } });
+  expect(await (await api.creation(read,key)).json()).toEqual({ status: "created",record: row });
+  await repo.delete({ tenant: "test",subject: "alice" },row.id,1);
+  expect((await create()).status).toBe(410);
+  expect(await (await api.creation(read,key)).json()).toEqual({ status: "deleted",id: row.id });
+  expect((await api.creation(read,crypto.randomUUID())).status).toBe(404);
+});

@@ -1,7 +1,7 @@
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
-import { recordInput, recordUpdate } from "./data/contract";
+import { recordInput, recordUpdate, recordCreationKey } from "./data/contract";
 import { RecordService } from "./data/service";
 import { authenticate, bearerToken } from "./http/auth";
 import { AppError } from "./http/errors";
@@ -47,9 +47,13 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, ({ id }) => result(() => service.get(id)));
   server.registerTool("records_create", {
-    description: "Create a private record. Each invocation creates a new record; do not retry blindly.",
-    inputSchema: recordInput, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-  }, input => result(() => service.create(input)));
+    description: "Create a private record. Supply a stable creationKey UUID to safely retry the same input; otherwise every call creates a new record. Key reuse with changed input conflicts; deleted records cannot be recreated with their old key. Replays return the original creation, not later edits.",
+    inputSchema: recordInput.extend({ creationKey: recordCreationKey.optional() }), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, ({ creationKey,...input }) => result(async () => creationKey ? (await service.createOnce(creationKey,input)).record : service.create(input)));
+  server.registerTool("records_creation_status", {
+    description: "Recover an owned keyed record creation. Returns the current record or a deleted receipt. Requires records:read; never creates or changes a record.",
+    inputSchema: { creationKey: recordCreationKey },annotations: { readOnlyHint: true,openWorldHint: false },
+  }, ({ creationKey }) => result(() => service.creation(creationKey)));
   server.registerTool("records_update", {
     description: "Replace a private record using its current revision. Refresh on conflict.",
     inputSchema: recordUpdate.extend({ id: z.string().uuid() }),

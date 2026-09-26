@@ -7,7 +7,7 @@ import { sourceEventOptions } from "../lib/agent-access/source-events";
 import { reconcileInput } from "../lib/agent-access/reconcile";
 import { artifactOptions } from "../lib/agent-access/artifact-contract";
 import { ledgerQueryOptions } from "../lib/budgets/contract";
-import { recordId, recordInput } from "../lib/data/contract";
+import { recordId, recordInput, recordCreationKey } from "../lib/data/contract";
 import { exportApplication } from "./export-application";
 import { verifyExport } from "./verify-export";
 import { saveUploadDownload } from "./download-upload";
@@ -23,7 +23,7 @@ const seedPage = z.object({
 export async function run(args: string[], env: Record<string, string | undefined> = process.env, request = fetch): Promise<unknown> {
   const [command, ...rest] = args;
   if (!command || command === "help") return {
-    records: "npm run app -- <list [cursor] | get ID | create JSON_FILE | update ID JSON_FILE | delete ID REVISION>",
+    records: "npm run app -- <list [cursor] | get ID | create JSON_FILE [--key UUID] | creation UUID | update ID JSON_FILE | delete ID REVISION>",
     seed: "npm run app -- seed [--allow-remote] (two idempotent, owner-scoped example records)",
     conversations: "npm run app -- conversations <list [--archived] [--limit N] [--cursor CURSOR] | get OPERATION_UUID | events OPERATION_UUID [AFTER_INGESTION_INDEX] | source-events OPERATION_UUID [START_SOURCE_INDEX] | reconcile OPERATION_UUID [START_SOURCE_INDEX] | update OPERATION_UUID JSON_FILE>",
     artifacts: "npm run app -- artifacts <list [--limit N] [--cursor CURSOR] | get ARTIFACT_UUID | delete ARTIFACT_UUID>",
@@ -208,7 +208,12 @@ export async function run(args: string[], env: Record<string, string | undefined
   }
   else if (command === "list" && rest.length <= 1) { if (rest[0]) path += `?after=${encodeURIComponent(id(rest[0]))}`; }
   else if (command === "get" && rest.length === 1) path += `/${id(rest[0])}`;
-  else if (command === "create" && rest.length === 1) { method = "POST"; body = await readFile(rest[0], "utf8"); }
+  else if (command === "creation" && rest.length === 1) return call(`/api/v1/records/creation/${recordCreationKey.parse(rest[0])}`);
+  else if (command === "create" && (rest.length === 1 || rest.length === 3 && rest[1] === "--key")) {
+    const key = rest.length === 3 ? recordCreationKey.parse(rest[2]) : undefined;
+    const input = recordInput.parse(JSON.parse(await readFile(rest[0],"utf8")));
+    return call(path,"POST",JSON.stringify(input),key ? { "idempotency-key": key } : {});
+  }
   else if (command === "update" && rest.length === 2) { method = "PATCH"; path += `/${id(rest[0])}`; body = await readFile(rest[1], "utf8"); }
   else if (command === "delete" && rest.length === 2 && /^[1-9]\d*$/.test(rest[1])) { method = "DELETE"; path += `/${id(rest[0])}?revision=${rest[1]}`; }
   else throw new Error("Invalid command or arguments. Run npm run app -- help.");

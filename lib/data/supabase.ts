@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
-import { page, type AppRecord, type ListInput, type Owner, type RecordInput, type RecordRepository, type RecordUpdate } from "./contract";
+import { page, recordCreateResult, type AppRecord, type ListInput, type Owner, type RecordInput, type RecordRepository, type RecordUpdate } from "./contract";
+import { recordCreationHash } from "./create-request";
 import type { Database } from "./supabase.generated";
 
 type Row = Database["public"]["Tables"]["app_records"]["Row"];
@@ -31,6 +32,20 @@ export class SupabaseRepository implements RecordRepository {
     const { data, error } = await this.client.from("app_records").insert({ id: randomUUID(), tenant: owner.tenant, subject: owner.subject, ...input }).select().single();
     if (error) throw error;
     return this.row(data as Row);
+  }
+  async createOnce(owner: Owner,key: string,input: RecordInput) {
+    const { data,error } = await this.client.rpc("app_create_record_once",{
+      _tenant: owner.tenant,_subject: owner.subject,_key: key,_hash: recordCreationHash(input),
+      _id: randomUUID(),_title: input.title,_content: input.content,
+    });
+    if (error) throw error;
+    return recordCreateResult.parse(data);
+  }
+  async getCreateReceipt(owner: Owner,key: string) {
+    const { data,error } = await this.client.from("app_record_creates").select("record_id,created_at")
+      .eq("tenant",owner.tenant).eq("subject",owner.subject).eq("creation_key",key).maybeSingle();
+    if (error) throw error;
+    return data ? { id: data.record_id,createdAt: new Date(data.created_at).toISOString() } : null;
   }
   async update(owner: Owner, id: string, input: RecordUpdate) {
     const { data, error } = await this.client.from("app_records").update({ title: input.title, content: input.content, revision: input.revision + 1, updated_at: new Date().toISOString() })

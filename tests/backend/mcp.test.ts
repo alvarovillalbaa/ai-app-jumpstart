@@ -17,9 +17,14 @@ it("speaks the MCP protocol with tools, resources and scoped mutations", async (
   await server.connect(remote); await client.connect(local);
   try {
     expect((await client.listTools()).tools.map(t => t.name)).toContain("records_create");
-    const created = await client.callTool({ name: "records_create", arguments: { title: "From MCP", content: "Hello" } });
+    const creationKey = crypto.randomUUID(),input = { title: "From MCP",content: "Hello",creationKey };
+    const created = await client.callTool({ name: "records_create", arguments: input });
     const content = created.content as { type: string; text: string }[];
     const record = JSON.parse(content[0].text);
+    expect(await client.callTool({ name: "records_create",arguments: input })).toEqual(created);
+    expect((await client.callTool({ name: "records_create",arguments: { ...input,content: "Changed" } })).isError).toBe(true);
+    const status = await client.callTool({ name: "records_creation_status",arguments: { creationKey } });
+    expect(JSON.parse((status.content as { text: string }[])[0].text)).toEqual({ status: "created",record });
     const resource = await client.readResource({ uri: `records:///${record.id}` });
     const item = resource.contents[0];
     expect("text" in item && JSON.parse(item.text).title).toBe("From MCP");
@@ -44,7 +49,7 @@ it("initializes and calls tools over stateless authenticated Streamable HTTP", a
   });
   try {
     await client.connect(transport);
-    expect((await client.listTools()).tools).toHaveLength(5);
+    expect((await client.listTools()).tools).toHaveLength(6);
     const denied = await client.callTool({ name: "records_create", arguments: { title: "Denied", content: "" } });
     expect(denied.isError).toBe(true);
     const unauth = await handler(new Request("http://localhost:3000/api/mcp", { method: "POST", body: "{}", headers: { "content-type": "application/json" } }));

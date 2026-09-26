@@ -2,6 +2,8 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 export default defineSchema({
+  recordCreates: defineTable({ tenant: v.string(),subject: v.string(),key: v.string(),hash: v.string(),id: v.string(),createdAt: v.string() })
+    .index("by_owner_key",["tenant","subject","key"]),
   uploads: defineTable({ id: v.string(),tenant: v.string(),subject: v.string(),name: v.string(),mediaType: v.string(),
     size: v.number(),sha256: v.string(),createdAt: v.number(),state: v.union(v.literal("pending"),v.literal("quarantined"),v.literal("deleting"),v.literal("deleted")) })
     .index("by_external_id",["id"]).index("by_owner_state",["tenant","subject","state"])

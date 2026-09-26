@@ -18,7 +18,7 @@ it("runs CLI CRUD through the HTTP handlers and propagates failures", async () =
     if (req.method === "POST") return api.create(req);
     if (req.method === "PATCH") return api.update(req, id);
     if (req.method === "DELETE") return api.delete(req, id);
-    return id ? api.get(req, id) : api.list(req);
+    return id === "creation" ? api.creation(req,new URL(req.url).pathname.split("/")[5]) : id ? api.get(req, id) : api.list(req);
   };
   const env = { APP_API_TOKEN: token }, dir = await mkdtemp(join(tmpdir(), "jumpstart-cli-"));
   try {
@@ -31,6 +31,15 @@ it("runs CLI CRUD through the HTTP handlers and propagates failures", async () =
     await expect(run(["delete", row.id, "1"], env, request)).rejects.toThrow("HTTP 409");
     expect(await run(["delete", row.id, "2"], env, request)).toEqual({ deleted: true });
     await expect(run(["get", row.id], env, request)).rejects.toThrow("HTTP 404");
+    await writeFile(file,JSON.stringify({ title: "Keyed CLI",content: "Retry safely" }));
+    const key = crypto.randomUUID();
+    const keyed = await run(["create",file,"--key",key],env,request) as { id: string };
+    expect(await run(["create",file,"--key",key],env,request)).toEqual(keyed);
+    expect(await run(["creation",key],env,request)).toEqual({ status: "created",record: keyed });
+    await writeFile(file,JSON.stringify({ title: "Different input",content: "Retry safely" }));
+    await expect(run(["create",file,"--key",key],env,request)).rejects.toThrow("HTTP 409: creation_conflict");
+    await run(["delete",keyed.id,"1"],env,request);
+    expect(await run(["creation",key],env,request)).toEqual({ status: "deleted",id: keyed.id });
     await expect(run(["list"], { ...env, APP_API_URL: "http://remote.example" }, request)).rejects.toThrow("HTTPS");
   } finally { await repo.close(); await rm(dir, { recursive: true }); }
 });

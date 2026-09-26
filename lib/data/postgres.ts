@@ -1,6 +1,7 @@
 import { Pool } from "pg";
 import { randomUUID } from "node:crypto";
-import { page, type AppRecord, type ListInput, type Owner, type RecordInput, type RecordRepository, type RecordUpdate } from "./contract";
+import { page,recordCreateResult, type AppRecord, type ListInput, type Owner, type RecordInput, type RecordRepository, type RecordUpdate } from "./contract";
+import { recordCreationHash } from "./create-request";
 
 type Row = { id: string; title: string; content: string; revision: number; created_at: Date; updated_at: Date };
 export class PostgresRepository implements RecordRepository {
@@ -24,6 +25,15 @@ export class PostgresRepository implements RecordRepository {
   async create(owner: Owner, input: RecordInput) {
     const { rows } = await this.pool.query<Row>("INSERT INTO app_records(id,tenant,subject,title,content) VALUES($1,$2,$3,$4,$5) RETURNING *", [randomUUID(), owner.tenant, owner.subject, input.title, input.content]);
     return this.row(rows[0]);
+  }
+  async createOnce(owner: Owner,key: string,input: RecordInput) {
+    const { rows } = await this.pool.query("SELECT app_create_record_once($1,$2,$3,$4,$5,$6,$7) AS result",
+      [owner.tenant,owner.subject,key,recordCreationHash(input),randomUUID(),input.title,input.content]);
+    return recordCreateResult.parse(rows[0].result);
+  }
+  async getCreateReceipt(owner: Owner,key: string) {
+    const { rows } = await this.pool.query("SELECT record_id,created_at FROM app_record_creates WHERE tenant=$1 AND subject=$2 AND creation_key=$3",[owner.tenant,owner.subject,key]);
+    return rows[0] ? { id: rows[0].record_id as string,createdAt: (rows[0].created_at as Date).toISOString() } : null;
   }
   async update(owner: Owner, id: string, input: RecordUpdate) {
     const { rows } = await this.pool.query<Row>("UPDATE app_records SET title=$1,content=$2,revision=revision+1,updated_at=now() WHERE tenant=$3 AND subject=$4 AND id=$5 AND revision=$6 RETURNING *", [input.title, input.content, owner.tenant, owner.subject, id, input.revision]);
