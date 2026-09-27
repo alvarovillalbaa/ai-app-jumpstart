@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { parseRuntimeBudgetSettings } from "../../lib/budgets/runtime";
+import { parseRuntimeBudgetSettings, runtimeReservationPolicy } from "../../lib/budgets/runtime";
 import { quotedEnvelopeMicros } from "../../lib/budgets/cost-basis";
 import { checkBudgetPolicy } from "../../scripts/check-budget-policy";
 
@@ -46,4 +46,21 @@ it("gives an operator a secret-free policy check using the production parser", (
   expect(() => checkBudgetPolicy(invalid)).toThrow("costBasis.sourceUrl");
   try { checkBudgetPolicy(invalid); }
   catch (error) { expect(String(error)).toContain("costBasis.sourceUrl"); expect(String(error)).not.toContain(secret); }
+});
+
+it("binds reservations to a canonical envelope independent of object and model ordering", () => {
+  const policy = runtimeReservationPolicy(settings);
+  expect(policy.id).toMatch(/^runtime-v2:[a-f0-9]{64}$/);
+  expect(policy).toMatchObject({ dailyMicros: 100, maxActive: 2, maxPerMinute: 10 });
+  expect(runtimeReservationPolicy({ ...settings, modelIds: [...settings.modelIds].reverse(),
+    costBasis: { ...basis, models: basis.models.toReversed().map(model => ({
+      outputMicrosPerMillion: model.outputMicrosPerMillion, inputMicrosPerMillion: model.inputMicrosPerMillion,
+      maxOutputTokens: model.maxOutputTokens, maxInputTokens: model.maxInputTokens, id: model.id,
+    })) } })).toEqual(policy);
+  for (const changed of [
+    { ...settings, maxModelCalls: 4 }, { ...settings, estimateMicros: 20 },
+    { ...settings, policy: { ...settings.policy, id: "new-review" } },
+    { ...settings, costBasis: { ...basis, reviewedAt: "2026-09-25" } },
+    { ...settings, costBasis: { ...basis, models: basis.models.map(model => ({ ...model, maxOutputTokens: model.maxOutputTokens + 1 })) } },
+  ]) expect(runtimeReservationPolicy(changed).id).not.toBe(policy.id);
 });

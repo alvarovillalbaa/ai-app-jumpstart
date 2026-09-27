@@ -6,3 +6,9 @@ const state = defineState<RuntimeBudgetState>("jumpstart.runtime-budget.v1", () 
 export async function runtimeBudgets() {
   return new RuntimeBudgets(await getBudgetStore(),await getSessionAccessStore(),state,readRuntimeBudgetSettings());
 }
+export async function prepareRuntimeModelCall(modelId: string,provider: string) {
+  // Local-development/eval sessions have no application-owned budget. Owned
+  // turns and manual compaction set this flag before reaching the model.
+  if (!state.get().enforced) return undefined;
+  return (await runtimeBudgets()).prepareProviderCall(modelId,provider);
+}

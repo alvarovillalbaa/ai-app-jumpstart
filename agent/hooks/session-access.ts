@@ -1,8 +1,13 @@
 import { defineHook } from "eve/hooks";
 import { getSessionAccessStore } from "../../lib/agent-access/store";
 import { recordRuntimeSession } from "../../lib/agent-access/runtime-receipt";
-import { runtimeBudgets } from "#lib/budgets.ts";
+import { runtimeBudgets, prepareRuntimeModelCall } from "#lib/budgets.ts";
+import { installBudgetProvider } from "../../lib/budgets/model";
 import { persistRuntimeProjection } from "../../lib/agent-access/projection";
+
+// Loaded with the runtime hooks before AI SDK resolves the configured string
+// model. Keep Eve's catalog identity and Gateway route intact.
+installBudgetProvider(prepareRuntimeModelCall);
 
 export default defineHook({
   events: {

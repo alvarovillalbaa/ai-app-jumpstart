@@ -1,3 +1,5 @@
+import { recordedModel } from "../lib/fixture-model";
+void recordedModel;
 import { defineHook } from "eve/hooks";
 import { access, appendFile } from "node:fs/promises";
 import productionHook from "../../../../../agent/hooks/session-access";
