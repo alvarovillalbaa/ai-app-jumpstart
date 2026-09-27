@@ -17,6 +17,22 @@ const raw = supabaseUploadObjects(storage);
 beforeAll(async () => { await verifyUploadStoragePolicy(database);await verifyPrivateUploadBucket(storage); });
 afterEach(() => vi.unstubAllEnvs());
 
+// Only the owned Auth harness adds a broad policy; never modify a configured
+// project's RLS to enable this positive control.
+if (process.env.TEST_STORAGE_PERMISSIVE === "1") it("allows an unrelated bucket through the fixture policy while quarantine stays private",async () => {
+  const bucket = `control-${randomUUID()}`,key = "control.txt";
+  const anon = createClient(url,anonKey,{ auth: { persistSession: false,autoRefreshToken: false } });
+  expect((await storage.createBucket(bucket,{ public: false })).error).toBeNull();
+  try {
+    expect((await anon.storage.from(bucket).upload(key,new Blob(["control"]),{ contentType: "application/octet-stream" })).error).toBeNull();
+    const found = await anon.storage.from(bucket).download(key);
+    expect(found.error).toBeNull();expect(await found.data!.text()).toBe("control");
+  } finally {
+    const removed = await storage.from(bucket).remove([key]);expect(removed.error).toBeNull();
+    expect((await storage.deleteBucket(bucket)).error).toBeNull();
+  }
+});
+
 uploadObjectContract("live Supabase Storage",async () => {
   const created: Array<{ owner: Parameters<PrivateUploadObjects["put"]>[0];id: string }> = [];
   const store: PrivateUploadObjects = {

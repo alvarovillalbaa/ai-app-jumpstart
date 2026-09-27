@@ -27,7 +27,7 @@ const jwtSecret = randomBytes(32).toString("base64url");
 const redactions = [jwtSecret,password];
 const containers = [];
 const image = process.env.TEST_CONTAINER_IMAGE ?? "ai-app-jumpstart:test";
-let web, proxy, runtime, scanner, dataFixture, imageManifest, failed = false, webOutput = "";
+let web, proxy, runtime, scanner, dataFixture, storageOrigin, databaseUrl, imageManifest, failed = false, webOutput = "";
 async function command(executable, args, options = {}) {
   return testCommand(executable,args,options,redactions);
 }
@@ -73,8 +73,25 @@ try {
   await docker("exec", `${name}-postgres`, "psql", "-U", "auth_test", "-d", "auth_test", "-v", "ON_ERROR_STOP=1", "-c", "CREATE ROLE postgres NOLOGIN; CREATE SCHEMA auth AUTHORIZATION auth_test; ALTER ROLE auth_test SET search_path = auth, public;");
   if (supabaseData) {
     await docker("exec",`${name}-postgres`,"psql","-U","auth_test","-d","auth_test","-v","ON_ERROR_STOP=1","-c","CREATE DATABASE app_data_test;");
-    dataFixture = await startSupabaseDataFixture({ directory,jwtSecret,
-      databaseUrl: `postgresql://auth_test:${password}@127.0.0.1:${await portOf(`${name}-postgres`,5432)}/app_data_test` });
+    databaseUrl = `postgresql://auth_test:${password}@127.0.0.1:${await portOf(`${name}-postgres`,5432)}/app_data_test`;
+    dataFixture = await startSupabaseDataFixture({ directory,jwtSecret,databaseUrl,beforeMigrate: async () => {
+      // Version from Supabase's official self-hosting compose. The service owns
+      // both storage.objects and private bytes; this is not the app's local adapter.
+      const storage = await runContainer("storage","supabase/storage-api:v1.74.0",{
+        DATABASE_URL: `postgresql://auth_test:${password}@postgres:5432/app_data_test`,
+        AUTH_JWT_SECRET: jwtSecret,DB_INSTALL_ROLES: "true",
+        STORAGE_BACKEND: "file",STORAGE_FILE_BACKEND_PATH: "/var/lib/storage",STORAGE_S3_BUCKET: name,
+        UPLOAD_FILE_SIZE_LIMIT: "5242880",IMAGE_TRANSFORMATION_ENABLED: "false",S3_PROTOCOL_ENABLED: "false",
+        LOG_LEVEL: "fatal",
+      },["--publish","127.0.0.1::5000","--volume","/var/lib/storage"]);
+      storageOrigin = `http://127.0.0.1:${await portOf(storage,5000)}`;
+      await waitFor(async () => (await fetch(`${storageOrigin}/status`,{ signal: AbortSignal.timeout(1000) })).ok,
+        "Supabase Storage",async () => (await docker("inspect","--format","{{.State.Running}}",storage)) === "true");
+      // Deliberately permissive, only in this disposable database. The app's
+      // restrictive policy must protect quarantine even alongside another policy.
+      await docker("exec",`${name}-postgres`,"psql","-U","auth_test","-d","app_data_test","-v","ON_ERROR_STOP=1","-c",
+        "CREATE POLICY jumpstart_fixture_permissive ON storage.objects FOR ALL TO PUBLIC USING (true) WITH CHECK (true);");
+    } });
   }
   const mail = await runContainer("mail", "axllent/mailpit:v1.31.2", {}, ["--publish", "127.0.0.1::8025"]);
   const mailOrigin = `http://127.0.0.1:${await portOf(mail, 8025)}`;
@@ -87,7 +104,8 @@ try {
     res.setHeader("access-control-allow-methods", "GET,POST,PUT,DELETE,OPTIONS");
     if (req.method === "OPTIONS") { res.writeHead(204).end(); return; }
     const upstreamUrl = req.url?.startsWith("/auth/v1/") ? `${authOrigin}${req.url.slice("/auth/v1".length)}`
-      : dataFixture && req.url?.startsWith("/rest/v1/") ? `${dataFixture.origin}${req.url.slice("/rest/v1".length)}` : null;
+      : dataFixture && req.url?.startsWith("/rest/v1/") ? `${dataFixture.origin}${req.url.slice("/rest/v1".length)}`
+      : storageOrigin && req.url?.startsWith("/storage/v1/") ? `${storageOrigin}${req.url.slice("/storage/v1".length)}` : null;
     if (!upstreamUrl) { res.writeHead(404).end(); return; }
     try {
       const chunks = []; for await (const chunk of req) chunks.push(chunk);
@@ -122,7 +140,15 @@ try {
   const admin = await new SignJWT({ role: "service_role" }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("1h").sign(key);
   redactions.push(anon,admin);
   const env = { ...process.env, NODE_ENV: "production", AUTH_PROVIDER: "supabase", SUPABASE_AUTH_URL: publicAuthOrigin, SUPABASE_PUBLISHABLE_KEY: anon, APP_API_KEYS: "[]", APP_ORIGIN: appOrigin, DATA_PROVIDER: "sqlite", SQLITE_PATH: join(directory, "records.sqlite"), UPLOAD_STORAGE_PROVIDER: "local", UPLOAD_LOCAL_ROOT: join(directory, "uploads") };
-  if (supabaseData) { env.DATA_PROVIDER = "supabase";env.SUPABASE_URL = publicAuthOrigin;env.SUPABASE_SECRET_KEY = admin; }
+  if (supabaseData) {
+    env.DATA_PROVIDER = "supabase";env.SUPABASE_URL = publicAuthOrigin;env.SUPABASE_SECRET_KEY = admin;
+    env.UPLOAD_STORAGE_PROVIDER = "supabase";
+    const storageEnv = { ...env,DATABASE_URL: databaseUrl,SUPABASE_ANON_KEY: anon,TEST_STORAGE_PERMISSIVE: "1" };
+    await command(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/check-upload-storage.ts","--create"],{ env: storageEnv,stdio: "inherit" });
+    // Run the reusable real-object contract once, in the account mode. Chat modes
+    // prove the production app and native reader against the same real service.
+    if (!chat) await command(process.execPath,["node_modules/vitest/vitest.mjs","run","--config","vitest.upload-live.config.ts"],{ env: storageEnv,stdio: "inherit" });
+  }
   env.APP_REQUESTS_PER_MINUTE = "10000";
   env.AI_CHAT_ENABLED = chat ? "true" : "false";
   env.UPLOAD_AGENT_POLICY = uploads ? "reviewed-text" : "off";
@@ -179,7 +205,8 @@ try {
     TEST_RECEIPT_GATE_HOST: chat ? join(directory, "gate") : "", TEST_MODEL_RECEIPTS_HOST: chat ? join(directory, "models.txt") : "",
     TEST_FAILURE_RECEIPTS_HOST: chat ? join(directory, "failures.txt") : "", TEST_CHAT_CONTAINER: containerMode ? `${name}-app` : "" }, stdio: "inherit" });
   if (supabaseData && existsSync(env.SQLITE_PATH)) throw new Error("Supabase mode created an unexpected SQLite application database.");
-  console.log(supabaseData ? `Real Supabase Auth and migrated PostgREST ${uploads ? "reviewed-upload" : chat ? "account-chat" : "account"} browser contract passed (local private objects).`
+  if (supabaseData && existsSync(env.UPLOAD_LOCAL_ROOT)) throw new Error("Supabase mode created unexpected local application upload bytes.");
+  console.log(supabaseData ? `Real Supabase Auth, migrated PostgREST and private Storage ${uploads ? "reviewed-upload" : chat ? "account-chat" : "account"} browser contract passed.`
     : containerMode ? "Account chat browser contract passed through the production container." : chat ? "Account chat browser contract passed with real Auth and compiled Eve." : "Real Supabase Auth browser contract passed.");
 } catch (error) {
   failed = true;

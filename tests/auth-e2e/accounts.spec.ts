@@ -13,6 +13,8 @@ import { createSessionAccessStore } from "../../lib/agent-access/store";
 import { createBudgetStore } from "../../lib/budgets/store";
 import { createClient } from "@supabase/supabase-js";
 import type { ProjectionEntry } from "../../lib/agent-access/projection-contract";
+import { uploadObjectKey } from "../../lib/uploads/contract";
+import { SUPABASE_UPLOAD_BUCKET } from "../../lib/uploads/supabase";
 
 const auth = process.env.TEST_AUTH_ORIGIN!;
 const adminHeaders = { authorization: `Bearer ${process.env.TEST_AUTH_ADMIN_KEY!}`, apikey: process.env.SUPABASE_PUBLISHABLE_KEY! };
@@ -277,6 +279,32 @@ test("signed-in uploads remain private across account changes and can be deleted
   await auditAccessibility(page, "signed-in quarantined upload");
 
   const bobToken = await tokenFor(request, bob);
+  const aliceToken = await tokenFor(request, alice);
+  let storage: ReturnType<typeof createClient>["storage"] | undefined,key: string | undefined;
+  if (process.env.UPLOAD_STORAGE_PROVIDER === "supabase") {
+    const profile = await (await request.get("/api/v1/account/profile",{ headers: { authorization: `Bearer ${aliceToken}` } })).json();
+    key = uploadObjectKey({ tenant: `supabase:${auth}`,subject: profile.id },uploaded.id);
+    storage = createClient(process.env.SUPABASE_URL!,process.env.SUPABASE_SECRET_KEY!,{ auth: { persistSession: false,autoRefreshToken: false } }).storage;
+    const stored = await storage.from(SUPABASE_UPLOAD_BUCKET).download(key);
+    expect(stored.error).toBeNull();expect(await stored.data!.text()).toBe("Alice private bytes");
+    // Neither the uploader nor another verified user gets direct Storage access.
+    // The fixture has a broad permissive policy; the restrictive app policy wins.
+    for (const bearer of [process.env.SUPABASE_PUBLISHABLE_KEY!,aliceToken,bobToken]) {
+      const direct = createClient(process.env.SUPABASE_URL!,process.env.SUPABASE_PUBLISHABLE_KEY!,{
+        auth: { persistSession: false,autoRefreshToken: false },global: { headers: { authorization: `Bearer ${bearer}` } },
+      }).storage.from(SUPABASE_UPLOAD_BUCKET);
+      expect((await direct.download(key)).error).not.toBeNull();
+      expect((await direct.createSignedUrl(key,60)).error).not.toBeNull();
+      expect((await direct.upload(key,new Blob(["forged"]),{ upsert: true,contentType: "application/octet-stream" })).error).not.toBeNull();
+      expect((await direct.upload(`${key}-forged`,new Blob(["forged"]),{ contentType: "application/octet-stream" })).error).not.toBeNull();
+      await direct.remove([key]);
+      const listing = await direct.list(key.split("/").slice(0,-1).join("/"));
+      expect(listing.data?.some(item => item.name === uploaded.id)).not.toBe(true);
+      expect((await fetch(direct.getPublicUrl(key).data.publicUrl)).ok).toBe(false);
+    }
+    const unchanged = await storage.from(SUPABASE_UPLOAD_BUCKET).download(key);
+    expect(unchanged.error).toBeNull();expect(await unchanged.data!.text()).toBe("Alice private bytes");
+  }
   const bobHeaders = { authorization: `Bearer ${bobToken}` };
   expect((await request.get(`/api/v1/uploads/${uploaded.id}`, { headers: bobHeaders })).status()).toBe(404);
   expect((await request.delete(`/api/v1/uploads/${uploaded.id}`, { headers: bobHeaders })).status()).toBe(404);
@@ -298,7 +326,6 @@ test("signed-in uploads remain private across account changes and can be deleted
   await expect(page.getByText("No uploads yet.")).toBeVisible();
   await expect(page.getByText(filename)).toHaveCount(0);
 
-  const aliceToken = await tokenFor(request, alice);
   const aliceMcp = new Client({ name: "upload-auth-owner", version: "1" });
   try {
     await aliceMcp.connect(new StreamableHTTPClientTransport(new URL("/api/mcp", process.env.APP_ORIGIN!), { requestInit: { headers: { authorization: `Bearer ${aliceToken}` } } }));
@@ -309,6 +336,11 @@ test("signed-in uploads remain private across account changes and can be deleted
   } finally { await aliceMcp.close(); }
   expect((await request.delete(`/api/v1/uploads/${uploaded.id}`, { headers: { authorization: `Bearer ${aliceToken}` } })).status()).toBe(204);
   expect((await request.get(`/api/v1/uploads/${uploaded.id}`, { headers: { authorization: `Bearer ${aliceToken}` } })).status()).toBe(404);
+  if (storage && key) {
+    expect((await storage.from(SUPABASE_UPLOAD_BUCKET).download(key)).error).not.toBeNull();
+    const listing = await storage.from(SUPABASE_UPLOAD_BUCKET).list(key.split("/").slice(0,-1).join("/"));
+    expect(listing.error).toBeNull();expect(listing.data?.some(item => item.name === uploaded.id)).toBe(false);
+  }
 });
 
 test("revoked sessions and forged access tokens cannot read the API", async ({ request }) => {

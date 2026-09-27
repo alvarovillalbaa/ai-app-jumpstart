@@ -8,7 +8,7 @@ import { installPostgrest } from "../testing/postgrest.mjs";
 import { testCommand } from "./test-command.mjs";
 
 /** Real migrated application database and JWT-enforcing PostgREST, no hosted credentials. */
-export async function startSupabaseDataFixture({ databaseUrl,jwtSecret,directory }) {
+export async function startSupabaseDataFixture({ databaseUrl,jwtSecret,directory,beforeMigrate }) {
   if (new URL(databaseUrl).hostname !== "127.0.0.1") throw new Error("The Auth data fixture requires a disposable loopback database.");
   const database = new Client({ connectionString: databaseUrl,connectionTimeoutMillis: 5000 });
   await database.connect();
@@ -16,6 +16,9 @@ export async function startSupabaseDataFixture({ databaseUrl,jwtSecret,directory
     await database.query(`CREATE ROLE anon NOLOGIN; CREATE ROLE authenticated NOLOGIN; CREATE ROLE service_role NOLOGIN BYPASSRLS;
       GRANT USAGE ON SCHEMA public TO anon,authenticated,service_role;`);
   } finally { await database.end(); }
+  // Storage owns its schema and migrations. Start the real service first so the
+  // canonical application migration can install its restrictive quarantine policy.
+  await beforeMigrate?.();
   await testCommand(process.execPath,["scripts/migrate.ts"],{
     env: { ...process.env,DATABASE_URL: databaseUrl },
   },[databaseUrl,jwtSecret]);
