@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect,it } from "vitest";
 import { validateCloudManifest,type CloudProvider } from "../../lib/deploy/cloud-config";
+import { filledCloudManifest } from "../helpers/cloud-manifest";
 
 const files: Record<CloudProvider,string> = {
   aws: "deploy/aws/task-definition.example.json",
@@ -18,14 +19,7 @@ const providers = Object.keys(files) as CloudProvider[];
 const templates = Object.fromEntries(providers.map(provider => [provider,
   JSON.parse(readFileSync(files[provider],"utf8"))])) as Record<CloudProvider,FixtureManifest>;
 function filled(provider: CloudProvider) {
-  const text = JSON.stringify(templates[provider])
-    .replaceAll("REPLACE_WITH_POSTGRES_WORKFLOW_IMAGE_AT_SHA256_DIGEST",`registry.example/app@sha256:${"a".repeat(64)}`)
-    .replaceAll("REPLACE_WITH_INGRESS_IMAGE_AT_SHA256_DIGEST",`registry.example/ingress@sha256:${"b".repeat(64)}`)
-    .replaceAll("REPLACE_WITH_EXECUTION_ROLE_ARN","arn:aws:iam::123456789012:role/fixture-execution")
-    .replaceAll("REPLACE_WITH_TASK_ROLE_ARN","arn:aws:iam::123456789012:role/fixture-task")
-    .replace(/REPLACE_WITH_[A-Z0-9_]+_SECRET_ARN/g,"arn:aws:secretsmanager:eu-west-1:123456789012:secret:fixture")
-    .replace(/REPLACE_[A-Z0-9_]+/g,"fixture");
-  return JSON.parse(text) as FixtureManifest;
+  return filledCloudManifest(provider) as FixtureManifest;
 }
 function app(provider: CloudProvider,manifest: FixtureManifest) {
   return provider === "aws" ? manifest.containerDefinitions[0] :

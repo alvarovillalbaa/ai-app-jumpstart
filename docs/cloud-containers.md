@@ -6,6 +6,8 @@ For separate Next and Eve services, use the [streaming ingress recipe](hosting.m
 
 ## Shared release preparation
 
+Use the [migration job generator](cloud-migrations.md) to produce separate application preview/apply and Workflow apply jobs from the reviewed runtime manifest. It reuses the pinned image and managed references while removing web/agent startup and ingress; observe successful terminal job executions before runtime rollout.
+
 Build both the app and ingress images for the destination architecture and pin their registry digests. The AWS example selects x86-64; build Linux amd64 for that definition and for the documented Cloud Run path:
 
 ```sh
@@ -76,5 +78,7 @@ Record both deployed image digests, region, application revision, workflow packa
 For a deployment with separate self-hosted PostgreSQL application and Workflow databases, the [stopped two-database set](postgres-recovery.md) provides a local archive/restore rehearsal and one hash manifest. Provider-managed database snapshots and external object storage still need their own recovery checks; the repository test does not prove a cloud control-plane restore.
 
 ## Amplify
+
+Amplify's newer [self-managed hosting](https://docs.amplify.aws/nextjs/deploy-and-host/self-hosting/frameworks/) is a separate path from the managed SSR service described below. Its docs describe an OpenNext adapter and streaming support, checked 2026-09-27. This repository has not built or accepted that adapter with Next 16 and Eve, so it remains an unverified extension rather than an accepted deployment target.
 
 The pinned app is Next.js 16.3.5 on Node 24 and uses streaming. AWS's [Amplify SSR support page](https://docs.aws.amazon.com/amplify/latest/userguide/ssr-amplify-support.html), checked 2026-09-25, documents support through Next.js 15 and lists Next.js streaming as unsupported. AWS now [supports Node 24](https://docs.aws.amazon.com/amplify/latest/userguide/ssr-supported-features.html), so Node itself is not the gate. A custom adapter is possible under the [deployment specification](https://docs.aws.amazon.com/amplify/latest/userguide/ssr-deployment-specification.html), but its compute bundle must be self-contained and at most 220 MB uncompressed; it does not establish Next 16 or streaming support for this app. The current app cannot be presented as an accepted Amplify SSR deployment. A split service alone does not remove the web-side version/streaming mismatch. Keep Amplify as a compatibility gate; do not silently downgrade Next or disable required chat behavior to claim support. Vercel remains the managed serverless path; the long-running container recipes above cover the three clouds pending actual provider acceptance.

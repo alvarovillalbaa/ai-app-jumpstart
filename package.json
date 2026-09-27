@@ -67,6 +67,7 @@
     "check:managed-config": "tsx --env-file-if-exists=.env.local scripts/check-managed-config.ts",
     "check:cloud-config": "tsx scripts/check-cloud-config.ts",
     "check:cloud-templates": "tsx scripts/check-cloud-config.ts --templates",
+    "cloud:migration-job": "tsx scripts/create-migration-job.ts",
     "check:upload-storage": "tsx --env-file-if-exists=.env.local scripts/check-upload-storage.ts",
     "check:upload-scanner": "tsx --env-file-if-exists=.env.local scripts/check-upload-scanner.ts",
     "check:budget-policy": "tsx --env-file-if-exists=.env.local scripts/check-budget-policy.ts",

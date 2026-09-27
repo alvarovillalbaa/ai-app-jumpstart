@@ -302,6 +302,12 @@ try {
     } finally { await admin.end(); }
   }
   // Exercise the real migration runner twice: the second run must be safe.
+  if (!withSupabase && !backupOnly) {
+    await database.createDatabase("cloud_migration_workflows");
+    await run(["--import", "tsx", "scripts/test-cloud-migrations.ts"], 0, {
+      ...env, WORKFLOW_POSTGRES_URL: env.DATABASE_URL.replace(/\/app_test$/, "/cloud_migration_workflows"),
+    });
+  }
   await run(["scripts/migrate.ts"]);
   await run(["scripts/migrate.ts"]);
   await run(["scripts/migrate.ts", "--dry-run"]);

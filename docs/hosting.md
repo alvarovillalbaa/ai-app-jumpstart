@@ -87,6 +87,8 @@ All modes check web/data/Eve health, the records page, anonymous denial, cross-o
 
 ## AWS / Azure / GCP / Amplify
 
+The [cloud migration job generator](cloud-migrations.md) produces separate one-off application preview/apply and Workflow apply jobs for all three container providers, using the reviewed runtime image digest and managed database references. Generation is offline; job submission and runtime rollout belong to the controlled release path.
+
 The [cloud container recipes](cloud-containers.md) include ECS/Fargate, Azure Container Apps and Cloud Run definitions with a packaged streaming ingress, managed secret references, remote application data and PostgreSQL workflows. Runtime replacement/replay is tested locally with the compiled PostgreSQL world; `npm run test:workflow-compose` also checks the combined two-database container stack and app replacement. Cloud control-plane validation and deployed acceptance remain pending. A local workflow world requires persistent storage and one instance. PostgreSQL workers require continuously available CPU, a private workflow database and explicit migrations.
 
 Amplify compatibility remains blocked by the currently documented Next.js version and streaming support: this app uses Next.js 16.3.5, while [AWS Next.js support](https://docs.aws.amazon.com/amplify/latest/userguide/ssr-amplify-support.html) documents versions through 15 and excludes Next.js streaming (checked 2026-09-25). [Node 24 is supported](https://docs.aws.amazon.com/amplify/latest/userguide/ssr-supported-features.html), but that does not resolve either mismatch. A separately hosted Eve service does not itself resolve the web-side mismatch. See the explicit gate in the cloud recipes; no Amplify deployment is certified.
