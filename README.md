@@ -67,7 +67,7 @@ Run `npm run db:migrate -- --dry-run` with the target `DATABASE_URL` to review p
 
 Read [database setup](docs/databases.md), [hosting](docs/hosting.md), [operations](docs/operations.md), and [testing](docs/testing.md).
 
-The [extension recipes](docs/extending.md) show where to add a tool, model, connection, schema change or UI route. The [private upload guide](docs/uploads.md) describes the quarantine browser/API/CLI/MCP surface, opt-in scanned owner downloads including the [remote scanner contract](docs/remote-upload-scanner.md), and remaining release-policy and agent-attachment work. [Authenticated request limits](docs/request-limits.md) share per-owner quotas across browser, REST, CLI and MCP on every data provider; the environment example enables 120 per UTC minute. [Runtime diagnostics](docs/runtime-observability.md) use native Eve metadata-only instrumentation, signed creation correlation and replaceable observability destinations.
+The [runtime retention guide](docs/runtime-retention.md) covers native purge-on-finish configuration, build/runtime checks and its limits; replayable account chat requires default retention. The [extension recipes](docs/extending.md) show where to add a tool, model, connection, schema change or UI route. The [private upload guide](docs/uploads.md) describes the quarantine browser/API/CLI/MCP surface, opt-in scanned owner downloads including the [remote scanner contract](docs/remote-upload-scanner.md), and remaining release-policy and agent-attachment work. [Authenticated request limits](docs/request-limits.md) share per-owner quotas across browser, REST, CLI and MCP on every data provider; the environment example enables 120 per UTC minute. [Runtime diagnostics](docs/runtime-observability.md) use native Eve metadata-only instrumentation, signed creation correlation and replaceable observability destinations.
 
 ## Validate
 
@@ -89,6 +89,7 @@ npm run test:auth:supabase
 npm run test:chat:supabase
 npm run test:chat:uploads:supabase
 npm run test:workflow-compose
+npm run test:workflow-retention
 ```
 
 `test:ai` uses a dedicated fixture model through Eve's real runtime with no paid model calls. `eval:live` exercises the unchanged production model and requires credentials. `test:providers` starts isolated real PostgreSQL, PostgREST and Convex services without hosted accounts. Run `test:integration` against a disposable configured PostgreSQL/Supabase/Convex backend; missing configuration fails explicitly. Reuse `tests/contracts/records.ts` for new providers. The `test:auth:supabase`, `test:chat:supabase` and `test:chat:uploads:supabase` modes run real account/browser/runtime contracts with the Supabase application adapters against disposable PostgreSQL, JWT-verifying PostgREST and the real private Supabase Storage API. The account mode also runs the reusable live object contract and proves quarantine blocks anonymous and registered users even alongside a permissive fixture policy. They require Docker, Chromium and the production build, and use deterministic models without hosted credentials. See [testing](docs/testing.md).

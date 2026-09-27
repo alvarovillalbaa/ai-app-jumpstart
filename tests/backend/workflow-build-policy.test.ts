@@ -41,3 +41,17 @@ it("fails closed for an unmarked, malformed or unconfigured PostgreSQL build", (
   writeWorkflowBuildMarker({ EVE_WORKFLOW_PROVIDER: "postgres" }, path);
   expect(() => verifyWorkflowBuild({}, path)).toThrow("requires WORKFLOW_POSTGRES_URL");
 });
+
+it("refuses changing compiled retention through runtime settings or missing markers",() => {
+  const path = marker();writeWorkflowBuildMarker({ EVE_WORKFLOW_RETENTION: "0" },path);
+  expect(verifyWorkflowBuild({ WORKFLOW_EXPECTED_RETENTION: "0" },path)).toBe("default");
+  expect(() => verifyWorkflowBuild({},path)).toThrow("Compiled Workflow retention differs");
+  expect(() => verifyWorkflowBuild({ EVE_WORKFLOW_RETENTION: "0",WORKFLOW_EXPECTED_RETENTION: "default" },path)).toThrow("Compiled Workflow retention differs");
+  writeWorkflowBuildMarker({},path);
+  expect(() => verifyWorkflowBuild({ EVE_WORKFLOW_RETENTION: "0" },path)).toThrow("Compiled Workflow retention differs");
+  const legacy = marker();writeFileSync(legacy,"default\n");
+  expect(verifyWorkflowBuild({},legacy)).toBe("default");
+  expect(() => verifyWorkflowBuild({ WORKFLOW_EXPECTED_RETENTION: "0" },legacy)).toThrow("retention marker is missing or invalid");
+  writeFileSync(join(legacy,"..","jumpstart-workflow-retention"),"private-fixture-value\n");
+  expect(() => verifyWorkflowBuild({},legacy)).toThrow("retention marker is missing or invalid");
+});

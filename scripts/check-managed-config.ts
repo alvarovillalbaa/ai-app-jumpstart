@@ -7,6 +7,7 @@ import { trustedHttpOrigin } from "../lib/security/origin";
 import { remoteScannerSettings } from "../lib/uploads/scanner";
 import { uploadLinkSettings } from "../lib/uploads/download-links";
 import { uploadReaderEnabled } from "../lib/uploads/agent-reader";
+import { requireReplayRetention } from "./workflow-retention.mjs";
 
 function httpsOrigin(value: string | undefined, name: string) {
   const origin = trustedHttpOrigin(value);
@@ -16,6 +17,7 @@ function httpsOrigin(value: string | undefined, name: string) {
 
 /** Offline shape check for the managed Vercel + Supabase runtime configuration. */
 export function checkManagedConfig(env: NodeJS.ProcessEnv, requireChat = false) {
+  requireReplayRetention(env);
   const required = ["APP_ORIGIN", "SUPABASE_URL", "SUPABASE_SECRET_KEY", "SUPABASE_PUBLISHABLE_KEY"];
   const missing = required.filter(name => !env[name]?.trim());
   if (missing.length) throw new Error(`Set ${missing.join(", ")} before a managed deployment.`);

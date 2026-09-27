@@ -32,6 +32,13 @@ it("accepts an explicit records-first managed setup and a fully shaped account-c
   expect(checkManagedConfig(chat, true)).toMatchObject({ accountChat: "enabled" });
 });
 
+it("checks native retention and refuses zero-retention account replay",() => {
+  expect(checkManagedConfig({ ...baseline,EVE_WORKFLOW_RETENTION: "0" })).toMatchObject({ accountChat: "disabled" });
+  expect(() => checkManagedConfig({ ...chat,EVE_WORKFLOW_RETENTION: "0" })).toThrow("Account chat requires default Workflow retention");
+  expect(() => checkManagedConfig({ ...chat,WORKFLOW_EXPECTED_RETENTION: "0" })).toThrow("Account chat requires default Workflow retention");
+  expect(() => checkManagedConfig({ ...baseline,EVE_WORKFLOW_RETENTION: "30d" })).toThrow("Workflow retention must be default or 0");
+});
+
 it("rejects serverless-local storage, plaintext origins, wrong credentials and workflow world", () => {
   expect(() => checkManagedConfig({ ...baseline, DATA_PROVIDER: "sqlite" })).toThrow("DATA_PROVIDER=supabase");
   expect(() => checkManagedConfig({ ...baseline, APP_ORIGIN: "http://localhost:3000" })).toThrow("APP_ORIGIN");

@@ -3,12 +3,14 @@ import { parseRuntimeBudgetSettings } from "../budgets/runtime";
 import { AppError } from "../http/errors";
 import { checkedSettings } from "./signing";
 import { trustedHttpOrigin } from "../security/origin";
+import { requireReplayRetention } from "../../scripts/workflow-retention.mjs";
 
 /** Read at request time in both services. Never serialize this object to React. */
 export function chatSettings(env: NodeJS.ProcessEnv = process.env) {
   if (!env.AI_CHAT_ENABLED || env.AI_CHAT_ENABLED === "false") return null;
   try {
     if (env.AI_CHAT_ENABLED !== "true") throw new Error("Invalid flag");
+    requireReplayRetention(env);
     const auth = authSettings(env);
     if (!auth) throw new Error("Registered user authentication is required");
     const signing = checkedSettings(JSON.parse(env.AI_CREATION_SIGNING_JSON ?? ""));
