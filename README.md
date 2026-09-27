@@ -94,3 +94,5 @@ On a reviewed staging account, `--agent` additionally verifies one authenticated
 ## License
 
 Original template code is licensed under [MIT](LICENSE). Copied AI Elements and shadcn/ui components retain their upstream terms; see [third-party notices](THIRD_PARTY_NOTICES.md). Installed dependencies have separate licenses.
+
+The optional [outbound MCP development reference](docs/reference-mcp.md) demonstrates Eve native discovery of a real read-only local catalog. Its fixed allowlist and runtime evals are independent of the inbound application-data MCP endpoint; it is disabled without development configuration.

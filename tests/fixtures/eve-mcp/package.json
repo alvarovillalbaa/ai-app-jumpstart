@@ -1,0 +1,1 @@
+{"name":"jumpstart-mcp-fixture","private":true,"type":"module","imports":{"#*":"./agent/*"},"dependencies":{"eve":"0.54.5"}}
