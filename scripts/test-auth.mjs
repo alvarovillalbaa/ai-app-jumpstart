@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { SignJWT } from "jose";
 import { startChatFixture } from "./helpers/eve-chat-fixture.mjs";
+import { testCommand } from "./helpers/test-command.mjs";
 
 // Real isolated Supabase Auth, PostgreSQL and SMTP delivery. No hosted account.
 const name = `jumpstart-auth-${randomBytes(5).toString("hex")}`;
@@ -20,13 +21,7 @@ if (containerMode && !chat) throw new Error("Container mode requires --chat.");
 const image = process.env.TEST_CONTAINER_IMAGE ?? "ai-app-jumpstart:test";
 let web, proxy, runtime, imageManifest, failed = false, webOutput = "";
 async function command(executable, args, options = {}) {
-  const child = spawn(executable, args, { stdio: ["ignore", "pipe", "pipe"], ...options });
-  let output = "";
-  child.stdout?.on("data", chunk => { output = (output + chunk).slice(-12000); });
-  child.stderr?.on("data", chunk => { output = (output + chunk).slice(-12000); });
-  const [code, signal] = await once(child, "exit");
-  if (code !== 0 || signal) throw new Error(`${executable} failed (${signal ?? code}): ${output.replaceAll(jwtSecret, "[redacted]").replaceAll(password, "[redacted]")}`);
-  return output.trim();
+  return testCommand(executable,args,options,[jwtSecret,password]);
 }
 const docker = (...args) => command("docker", args);
 async function runContainer(suffix, image, vars, extra = [], args = []) {

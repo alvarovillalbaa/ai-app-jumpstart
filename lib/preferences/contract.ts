@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { Owner } from "../data/contract";
 
+// Zod captures its JIT choice when constructing object schemas. Configure it
+// here before construction; the provider module can load before AppProviders.
+z.config({ jitless: true });
+
 export const preferenceValues = z.object({ theme: z.enum(["system","light","dark"]),soundEnabled: z.boolean(),soundVolume: z.number().min(0).max(1) }).strict();
 export const preferences = preferenceValues.extend({ schemaVersion: z.literal(1),revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),updatedAt: z.iso.datetime().nullable() }).strict();
 export const preferencePatch = preferenceValues.partial().extend({ revision: preferences.shape.revision.max(Number.MAX_SAFE_INTEGER-1) }).strict()
