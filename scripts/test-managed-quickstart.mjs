@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp,readFile,rm } from "node:fs/promises";
+import { cp,mkdtemp,readFile,rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -14,7 +14,7 @@ const env = Object.fromEntries(["PATH","TMPDIR","TEMP","TMP","LANG","LC_ALL","PL
 Object.assign(env,{ CI: "true",NEXT_TELEMETRY_DISABLED: "1",EVE_TELEMETRY_DISABLED: "1",NO_COLOR: "1" });
 const manager = processManager({ cwd: root,env });
 const command = (...args) => manager.command(...args);
-let directory,stage = "preflight",interrupted = false;
+let directory,checkout,stage = "preflight",interrupted = false;
 function phase(name) { stage = name;console.log(`Managed quickstart: ${name}...`); }
 for (const signal of ["SIGINT","SIGTERM"]) process.once(signal,() => {
   interrupted = true;void manager.stopAll().catch(() => {});
@@ -26,7 +26,9 @@ try {
   phase("Docker readiness");
   await command("docker",["info","--format","{{.ServerVersion}}"],{ timeout: 20_000 });
   directory = await mkdtemp(join(tmpdir(),"jumpstart-managed-quickstart-"));
-  const { checkout,revision } = await cloneCommittedCheckout({ root,directory,env,command,phase });
+  const cloned = await cloneCommittedCheckout({ root,directory,env,command,phase });
+  checkout = cloned.checkout;
+  const { revision } = cloned;
   console.log(`Rehearsing managed path from fresh commit ${revision.slice(0,7)} without hosted credentials...`);
   phase("documented managed settings");
   const example = await readFile(join(checkout,".env.example"),"utf8");
@@ -55,5 +57,11 @@ try {
   process.exitCode = 1;
 } finally {
   await manager.stopAll();
+  if (process.exitCode && checkout && process.env.GITHUB_ACTIONS === "true") {
+    for (const name of ["playwright-report","test-results"]) {
+      try { await cp(join(checkout,name),join(root,name),{ recursive: true,force: false,errorOnExist: true }); }
+      catch (error) { if (error.code !== "ENOENT") console.error(`Could not preserve managed quickstart ${name} artifact.`); }
+    }
+  }
   if (directory) await rm(directory,{ recursive: true,force: true });
 }
