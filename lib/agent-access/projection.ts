@@ -7,6 +7,9 @@ import { projectionEntry, type ProjectionEntry } from "./projection-contract";
 export function projectEvent(event: MessageStreamEvent): ProjectionEntry | null {
   let payload: ProjectionEntry["payload"];
   switch (event.type) {
+    case "step.started":
+      if (!event.data.turnId || event.data.modelId.length > 200) return null;
+      payload = { kind: "model",modelId: event.data.modelId }; break;
     case "turn.started": payload = { kind: "run",state: "running" }; break;
     case "turn.completed": payload = { kind: "run",state: "completed" }; break;
     case "turn.cancelled": payload = { kind: "run",state: "cancelled" }; break;

@@ -9,6 +9,7 @@ const applicationCounts = {
   upload_usage: "uploadUsage", budget_reservation: "reservations",
   budget_correction: "corrections", usage: "usage",
 } as const;
+const applicationCountsV6 = { ...applicationCounts,run: "runs" } as const;
 const recordCounts = { record: "records" } as const;
 const sourceCounts = { source_event: "sourceEvents" } as const;
 const footer = z.object({ counts: z.record(z.string(), z.number().int().nonnegative()),
@@ -32,11 +33,13 @@ export async function verifyExport(path: string) {
     if (lineNumber === 1) {
       if (row.type !== "manifest" || !row.value || typeof row.value !== "object") throw new Error("Export has no manifest.");
       manifest = row.value as Record<string, unknown>;
+      const sections = manifest.format === "ai-app-jumpstart-visible-data-v5" ? applicationCounts
+        : manifest.format === "ai-app-jumpstart-visible-data-v6" ? applicationCountsV6 : undefined;
       expected = manifest.format === "ai-app-jumpstart-source-events-v1" ? sourceCounts
-        : manifest.format === "ai-app-jumpstart-visible-data-v5" && manifest.mode === "application" ? applicationCounts
-        : manifest.format === "ai-app-jumpstart-visible-data-v5" && manifest.mode === "records" ? recordCounts : undefined;
+        : sections && manifest.mode === "application" ? sections
+        : sections && manifest.mode === "records" ? recordCounts : undefined;
       if (!expected) throw new Error("Export format or mode is unsupported.");
-      counts = Object.fromEntries(Object.values(expected === recordCounts ? applicationCounts : expected).map(key => [key, 0]));
+      counts = Object.fromEntries(Object.values(expected === recordCounts ? sections! : expected).map(key => [key, 0]));
     } else if (row.type === "end") {
       const result = footer.parse(row.value);
       if (Object.keys(result.counts).length !== Object.keys(counts).length ||

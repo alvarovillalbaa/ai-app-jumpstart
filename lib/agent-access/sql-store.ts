@@ -3,6 +3,7 @@ import { conversationTitle, historyOptions, historyPatch, pageOfHistory, summary
 import { projectionEntry, projectionOptions, projectionSourceIndex, pageOfProjections, type ProjectionEntry, type ProjectionOptions } from "./projection-contract";
 import { artifactInput, artifactCallId, artifactOptions, artifactFromRow, pageOfArtifacts, type ArtifactInput, type ArtifactOptions } from "./artifact-contract";
 import { createHash, randomUUID } from "node:crypto";
+import { pageOfRuns, runOptions, runRepairOptions, type RunOptions } from "./run-contract";
 
 export interface AccessDatabase {
   lockBinding?: boolean;
@@ -11,6 +12,19 @@ export interface AccessDatabase {
 }
 export class SqlSessionAccessStore implements SessionAccessStore {
   constructor(private db: AccessDatabase) {}
+  async listRuns(owner: AccessOwner,operation: string,options: RunOptions) {
+    const o = accessOwner.parse(owner),id = operationId.parse(operation),q = runOptions.parse(options);
+    const rows = await this.db.query(`SELECT r.turn_id,r.payload,c.projection_checkpoint FROM app_conversation_runs r
+      JOIN app_conversations c ON c.operation_id=r.operation_id WHERE c.tenant=? AND c.subject=? AND r.operation_id=?
+      AND r.first_ordinal>? ORDER BY r.first_ordinal ASC LIMIT ?`,[o.tenant,o.subject,id,q.after ?? 0,q.limit+1]);
+    return pageOfRuns(rows.map(value => { const row = value as { turn_id: string;payload: string;projection_checkpoint: number|string };
+      return { turnId: row.turn_id,payload: row.payload,checkpoint: Number(row.projection_checkpoint),indexComplete: true }; }),q.limit);
+  }
+  async rebuildRuns(owner: AccessOwner,operation: string,options: Parameters<SessionAccessStore["rebuildRuns"]>[2]) {
+    accessOwner.parse(owner);operationId.parse(operation);const q = runRepairOptions.parse(options);
+    // SQL migrations backfill under the same transaction that installs triggers.
+    return { processed: 0,nextIndex: q.after,complete: true };
+  }
   async saveArtifact(owner: AccessOwner,operation: string,session: string,callId: string,input: ArtifactInput) {
     const o = accessOwner.parse(owner),id = operationId.parse(operation),sid = sessionId.parse(session),call = artifactCallId.parse(callId),data = artifactInput.parse(input);
     const hash = createHash("sha256").update(JSON.stringify(data)).digest("hex"),createdAt = Date.now();

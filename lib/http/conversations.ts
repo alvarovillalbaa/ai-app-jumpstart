@@ -12,6 +12,11 @@ export function conversationHandlers(store: () => Promise<SessionAccessStore> = 
     return new ConversationHistoryService(await store(),owner);
   }
   return {
+    runs: (request: Request,id: string) => handle(request,async () => {
+      const s = await service(request);
+      const options = z.object({ limit: z.coerce.number().int().min(1).max(50).default(20),after: z.coerce.number().int().nonnegative().optional() }).strict().parse(Object.fromEntries(new URL(request.url).searchParams));
+      return Response.json(await s.runs(id,options));
+    }),
     events: (request: Request,id: string) => handle(request,async () => {
       const s = await service(request);
       const options = z.object({ limit: z.coerce.number().int().min(1).max(50).default(20),after: z.coerce.number().int().nonnegative().optional() }).strict().parse(Object.fromEntries(new URL(request.url).searchParams));

@@ -9,6 +9,50 @@ export function sessionAccessContract(name: string, factory: () => Promise<Sessi
     let store: SessionAccessStore, owner: AccessOwner, strangers: AccessOwner[], input: Reservation;
     let sessionNamespace: string;
     const sid = (name: string) => `${name}-${sessionNamespace}`;
+    it("materializes run boundaries atomically, verifies source order and retains uncertain/late attempts",async () => {
+      await store.reserve(input);const session = sid("run-session");await store.bind(owner,input.operationId,session);
+      const event = (n: number,payload: ProjectionEntry["payload"],turnId = "run-one"): ProjectionEntry => ({ schemaVersion: 1,eventId: `evt_${n.toString(16).toUpperCase().padStart(26,"0")}`,
+        at: "2026-09-27T12:00:00.000Z",turnId,sequence: 0,payload });
+      const completed = event(101,{ kind: "run",state: "completed" });
+      const writes = await Promise.all([1,2,3].map(() => store.appendProjection(owner,input.operationId,session,completed)));
+      expect(writes.filter(result => result === "inserted")).toHaveLength(1);
+      let run = (await store.listRuns(owner,input.operationId,{})).items[0];
+      const firstIndex = run.firstIndex;
+      expect(run).toMatchObject({ state: "unverified",boundaryCount: 1,unindexedBoundaries: 1 });
+      await store.appendProjection(owner,input.operationId,session,event(102,{ kind: "run",state: "running" }),1);
+      await store.appendProjection(owner,input.operationId,session,event(103,{ kind: "model",modelId: "fixture/model" }),2);
+      expect(await store.advanceProjectionCheckpoint(owner,input.operationId,session,0,4)).toBe(true);
+      expect((await store.listRuns(owner,input.operationId,{})).items[0].state).toBe("unverified");
+      expect(await store.appendProjection(owner,input.operationId,session,completed,3)).toBe("duplicate");
+      run = (await store.listRuns(owner,input.operationId,{})).items[0];
+      expect(run).toMatchObject({ firstIndex,state: "completed",boundaryCount: 2,unindexedFacts: 0,models: ["fixture/model"],lastSourceIndex: 3 });
+      const earlier = { ...event(104,{ kind: "run",state: "failed",code: "earlier_failure" }),at: "2020-01-01T00:00:00.000Z" };
+      await store.appendProjection(owner,input.operationId,session,earlier,0);
+      expect((await store.listRuns(owner,input.operationId,{})).items[0]).toMatchObject({ state: "completed",code: null,boundaryCount: 3 });
+      await store.appendProjection(owner,input.operationId,session,event(105,{ kind: "model",modelId: "fixture/retry" }),5);
+      expect(await store.advanceProjectionCheckpoint(owner,input.operationId,session,4,6)).toBe(true);
+      expect((await store.listRuns(owner,input.operationId,{})).items[0].state).toBe("unverified");
+      await store.appendProjection(owner,input.operationId,session,event(106,{ kind: "run",state: "cancelled" }),6);
+      expect(await store.advanceProjectionCheckpoint(owner,input.operationId,session,6,7)).toBe(true);
+      expect((await store.listRuns(owner,input.operationId,{})).items[0]).toMatchObject({ state: "cancelled",models: ["fixture/model","fixture/retry"],boundaryCount: 4 });
+      for (const stranger of strangers) expect((await store.listRuns(stranger,input.operationId,{})).items).toEqual([]);
+      expect(JSON.stringify(await store.listRuns(owner,input.operationId,{}))).not.toContain("facts");
+      await store.revoke(owner,input.id);
+      expect(await store.appendProjection(owner,input.operationId,session,event(107,{ kind: "run",state: "completed" }))).toBe("unavailable");
+      expect((await store.listRuns(owner,input.operationId,{})).items[0].state).toBe("cancelled");
+    });
+    it("pages stable run identities while mutable summaries update",async () => {
+      await store.reserve(input);const session = sid("run-pages");await store.bind(owner,input.operationId,session);
+      for (let n = 201; n <= 203; n++) await store.appendProjection(owner,input.operationId,session,{ schemaVersion: 1,
+        eventId: `evt_${n.toString(16).toUpperCase().padStart(26,"0")}`,at: "2026-09-27T12:00:00.000Z",turnId: `turn-${n}`,sequence: n,payload: { kind: "run",state: "running" } });
+      const first = await store.listRuns(owner,input.operationId,{ limit: 2 });
+      expect(first.items.map(row => row.turnId)).toEqual(["turn-201","turn-202"]);
+      expect(first.nextCursor).toBe(first.items[1].firstIndex);
+      const last = await store.listRuns(owner,input.operationId,{ after: first.nextCursor! });
+      expect(last.items.map(row => row.turnId)).toEqual(["turn-203"]);expect(last.nextCursor).toBeNull();
+      await store.rebuildRuns(owner,input.operationId,{});
+      expect((await store.listRuns(owner,input.operationId,{ limit: 2 })).items).toEqual(first.items);
+    });
     beforeEach(async () => {
       store = await factory();
       sessionNamespace = randomUUID();

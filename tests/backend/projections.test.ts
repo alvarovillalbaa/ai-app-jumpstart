@@ -101,3 +101,28 @@ it("does not advance the checkpoint when a caller replays beyond an unverified g
     expect(await store.getProjectionCheckpoint(owner,operationId,"runtime-session")).toBe(0);
   } finally { await store.close(); }
 });
+
+it("backfills retained SQLite run boundaries transactionally and keeps annotations idempotent after reopening",async () => {
+  const directory = await mkdtemp(join(tmpdir(),"jumpstart-run-upgrade-")),path = join(directory,"app.sqlite");
+  const owner = { tenant: "org",subject: "alice" },operationId = randomUUID(),store = sqliteAccessStore(path);
+  const running = { ...projectEvent(message)!,payload: { kind: "run" as const,state: "running" as const } };
+  const completed = { ...running,eventId: "evt_00000000000000000000000002",payload: { kind: "run" as const,state: "completed" as const } };
+  try {
+    await store.reserve({ ...owner,id: randomUUID(),operationId,requestHash: "a".repeat(64) }); await store.bind(owner,operationId,"runtime-session");
+    await store.appendProjection(owner,operationId,"runtime-session",running,0);
+    await store.appendProjection(owner,operationId,"runtime-session",completed);
+    await store.close();
+    const legacy = new DatabaseSync(path);
+    legacy.exec("DROP TRIGGER conversation_runs_insert; DROP TRIGGER conversation_runs_source; DROP TABLE app_conversation_runs"); legacy.close();
+    const upgraded = sqliteAccessStore(path);
+    try {
+      expect((await upgraded.listRuns(owner,operationId,{})).items[0]).toMatchObject({ state: "unverified",boundaryCount: 2,unindexedBoundaries: 1 });
+      expect(await upgraded.appendProjection(owner,operationId,"runtime-session",completed,1)).toBe("duplicate");
+      await upgraded.advanceProjectionCheckpoint(owner,operationId,"runtime-session",0,2);
+      expect((await upgraded.listRuns(owner,operationId,{})).items[0]).toMatchObject({ state: "completed",boundaryCount: 2,unindexedBoundaries: 0 });
+    } finally { await upgraded.close(); }
+    const reopened = sqliteAccessStore(path);
+    try { expect((await reopened.listRuns(owner,operationId,{})).items[0]).toMatchObject({ state: "completed",boundaryCount: 2 }); }
+    finally { await reopened.close(); }
+  } finally { await rm(directory,{ recursive: true,force: true }); }
+});

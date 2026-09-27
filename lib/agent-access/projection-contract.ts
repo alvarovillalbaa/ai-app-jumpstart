@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const projectionEventId = z.string().regex(/^evt_[0-9A-HJKMNP-TV-Z]{26}$/);
 export const projectionPayload = z.discriminatedUnion("kind",[
+  z.object({ kind: z.literal("model"),modelId: z.string().min(1).max(200) }).strict(),
   z.object({ kind: z.literal("run"),state: z.enum(["running","completed","failed","cancelled"]),code: z.string().max(100).optional() }).strict(),
   z.object({ kind: z.literal("message"),role: z.enum(["user","assistant"]),parts: z.array(z.discriminatedUnion("type",[
     z.object({ type: z.literal("text"),text: z.string() }).strict(),

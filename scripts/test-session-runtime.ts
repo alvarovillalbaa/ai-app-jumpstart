@@ -8,6 +8,7 @@ import { dirname, join, resolve } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { Client } from "eve/client";
+import { reconcileProjections } from "../lib/agent-access/reconcile";
 import { sqliteAccessStore } from "../lib/agent-access/sqlite";
 import { ConversationBroker, creationTransport } from "../lib/agent-access/broker";
 import { BudgetedCreation } from "../lib/budgets/creation";
@@ -150,6 +151,19 @@ try {
     return events.includes("session.waiting");
   }, "The initial owned turn did not settle.");
   assert.equal(await lines(receipts), 1);
+  await eventually(async () => (await store.listRuns(alice,input.operationId,{})).items.length === 1,"Owned run summary was not captured.");
+  assert.equal((await store.listRuns(alice,input.operationId,{})).items[0].state,"unverified");
+  const repair = await reconcileProjections(store,alice,input.operationId,{ resume: true },origin,aliceToken);
+  assert.equal(repair.complete,true);
+  const runSummary = await store.listRuns(alice,input.operationId,{});
+  assert.equal(runSummary.items[0].state,"completed");
+  assert.ok(runSummary.items[0].models.length > 0,"Observed model ID was not persisted.");
+  assert.equal(runSummary.items[0].boundaryCount,2);
+  assert.equal(JSON.stringify(runSummary).includes('"facts"'),false);
+  assert.equal((await store.listRuns({ ...alice,subject: "other-owner" },input.operationId,{})).items.length,0);
+  await reconcileProjections(store,alice,input.operationId,{ resume: true },origin,aliceToken);
+  assert.deepEqual(await store.listRuns(alice,input.operationId,{}),runSummary);
+  assert.equal(await lines(receipts),1,"Run-history verification dispatched an extra model turn.");
   if (!postgresWorkflows) {
     const records = new SqliteRepository(database);
     const record = await records.create(alice,{ title: "Recovered private record",content: "Snapshot must retain application data." });

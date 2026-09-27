@@ -58,3 +58,24 @@ it("rejects unsafe endpoints and malformed provider output without leaking it", 
   const repository = new ConvexRepository("https://test.convex.site", secret, async () => Response.json({ secret: "do not expose", ready: true }));
   await expect(repository.health()).rejects.toMatchObject({ code: "storage_contract_error" });
 });
+
+it("backfills legacy run facts in bounded pages without marking skipped ranges verified",async () => {
+  const { backend,access } = fixture(),owner = { tenant: "org",subject: "alice" },operationId = crypto.randomUUID();
+  const entries = ["running","completed"].map((state,index) => ({ schemaVersion: 1,eventId: `evt_${String(index+1).padStart(26,"0")}`,
+    turnId: "legacy-turn",sequence: index,at: "2026-09-27T10:00:00.000Z",payload: { kind: "run",state } }));
+  await backend.run(async ctx => {
+    await ctx.db.insert("conversations",{ ...owner,id: crypto.randomUUID(),operationId,requestHash: "a".repeat(64),sessionId: "legacy",status: "active",
+      projectionSequence: 2,projectionCheckpoint: 2 });
+    for (const [index,entry] of entries.entries()) await ctx.db.insert("conversationEvents",{ operationId,eventId: entry.eventId,payload: JSON.stringify(entry),ordinal: index+1,sourceIndex: index });
+  });
+  expect((await access.listRuns(owner,operationId,{})).items).toEqual([]);
+  expect(await access.rebuildRuns(owner,operationId,{ after: 1,limit: 1 })).toEqual({ processed: 1,nextIndex: 2,complete: false });
+  expect((await access.listRuns(owner,operationId,{})).items[0]).toMatchObject({ state: "unverified",coverage: { indexComplete: false } });
+  expect(await access.rebuildRuns(owner,operationId,{ limit: 1 })).toEqual({ processed: 1,nextIndex: 1,complete: false });
+  expect(await access.rebuildRuns(owner,operationId,{ after: 1,limit: 1 })).toEqual({ processed: 1,nextIndex: 2,complete: true });
+  const page = await access.listRuns(owner,operationId,{});
+  expect(page.items[0]).toMatchObject({ state: "completed",boundaryCount: 2,models: [],coverage: { indexComplete: true } });
+  expect(await access.rebuildRuns(owner,operationId,{})).toEqual({ processed: 2,nextIndex: 2,complete: true });
+  expect(await access.listRuns(owner,operationId,{})).toEqual(page);
+  expect((await access.listRuns({ ...owner,subject: "bob" },operationId,{})).items).toEqual([]);
+});

@@ -37,6 +37,7 @@ afterEach(async () => { for (const client of clients.splice(0)) await client.clo
 
 const request: typeof fetch = async (url,init) => {
   const req = new Request(url,init), path = new URL(req.url).pathname.split("/");
+  if (path[5] === "runs") return api.runs(req,path[4]);
   return req.method === "PATCH" ? api.update(req,path[4]) : path[4] ? api.get(req,path[4]) : api.list(req);
 };
 async function mcp(token: string) {
@@ -92,7 +93,7 @@ it("allows only the artifact owner to erase it through MCP and blocks same-call 
 it("denies foreign access and record keys even when their configured owner matches",async () => {
   const foreign = await mcp(bob);
   expect(value(await foreign.callTool({ name: "conversations_list",arguments: {} })).items).toEqual([]);
-  for (const tool of ["conversations_get","conversations_update"]) {
+  for (const tool of ["conversations_get","conversations_update","conversations_runs"]) {
     expect((await foreign.callTool({ name: tool,arguments: { operationId: id,...(tool.endsWith("update") ? { patch: { revision: 1,title: "Stolen" } } : {}) } })).isError).toBe(true);
   }
   await expect(foreign.readResource({ uri: `conversations:///${id}` })).rejects.toThrow("Conversation unavailable");
@@ -104,6 +105,11 @@ it("denies foreign access and record keys even when their configured owner match
   expect((await recordClient.listTools()).tools.map(tool => tool.name)).not.toContain("usage_corrections");
   expect((await recordClient.callTool({ name: "conversations_get",arguments: { operationId: id } })).isError).toBe(true);
   await expect(run(["conversations","get",id],{ APP_API_TOKEN: key },request)).rejects.toThrow("HTTP 401");
+  expect((await recordClient.listTools()).tools.map(tool => tool.name)).not.toContain("conversations_runs");
+  await expect(run(["conversations","runs",id],{ APP_API_TOKEN: key },request)).rejects.toThrow("HTTP 401");
+  await expect(run(["conversations","runs",id],{ APP_API_TOKEN: bob },request)).rejects.toThrow("HTTP 404");
+  expect(await run(["conversations","runs",id],{ APP_API_TOKEN: alice },request)).toMatchObject({ source: "eve-run-boundaries",items: [] });
+  expect((await api.runs(new Request(`http://localhost:3000/api/v1/conversations/${id}/runs?limit=51`,{ headers: { authorization: `Bearer ${alice}` } }),id)).status).toBe(400);
   expect((await store.getDetails(owner,id))?.revision).toBe(1);
 });
 

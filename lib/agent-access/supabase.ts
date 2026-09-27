@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
+import { pageOfRuns,runOptions,runRepairOptions } from "./run-contract";
 import { accessOwner, reservation, operationId, sessionId, bodyHash, fromAccessRow, type AccessOwner, type Reservation, type SessionAccessStore } from "./contract";
 import { conversationTitle, historyOptions, historyPatch, pageOfHistory, summaryFromRow } from "./contract";
 import { projectionEntry, projectionOptions, projectionOutcome, projectionSourceIndex, pageOfProjections } from "./projection-contract";
@@ -10,6 +11,18 @@ import type { Database } from "../data/supabase.generated";
 export function supabaseAccessStore(url: string, secret: string): SessionAccessStore {
   const client = createClient<Database>(url, secret, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: (input, init) => fetch(input, { ...init, redirect: "error", signal: AbortSignal.timeout(10_000) }) } });
   const store: SessionAccessStore = {
+    async listRuns(owner,operation,options) {
+      const o = accessOwner.parse(owner),id = operationId.parse(operation),q = runOptions.parse(options);
+      const { data,error } = await client.from("app_conversation_runs").select("turn_id,payload,app_conversations!inner(tenant,subject,projection_checkpoint)")
+        .eq("operation_id",id).eq("app_conversations.tenant",o.tenant).eq("app_conversations.subject",o.subject)
+        .gt("first_ordinal",q.after ?? 0).order("first_ordinal",{ ascending: true }).limit(q.limit+1);
+      if (error) throw error;
+      return pageOfRuns(data.map(row => ({ turnId: row.turn_id,payload: row.payload,checkpoint: Number(row.app_conversations.projection_checkpoint),indexComplete: true })),q.limit);
+    },
+    async rebuildRuns(owner,operation,options) {
+      accessOwner.parse(owner);operationId.parse(operation);const q = runRepairOptions.parse(options);
+      return { processed: 0,nextIndex: q.after,complete: true };
+    },
     async saveArtifact(owner,operation,session,callId,input) {
       const o = accessOwner.parse(owner),data = artifactInput.parse(input),id = operationId.parse(operation),sid = sessionId.parse(session),call = artifactCallId.parse(callId);
       const hash = createHash("sha256").update(JSON.stringify(data)).digest("hex");

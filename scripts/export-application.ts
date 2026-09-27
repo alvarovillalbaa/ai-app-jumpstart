@@ -6,6 +6,7 @@ import { z } from "zod";
 import { historyPage } from "../lib/agent-access/contract";
 import { artifactPage } from "../lib/agent-access/artifact-contract";
 import { projectionPage } from "../lib/agent-access/projection-contract";
+import { runPage } from "../lib/agent-access/run-contract";
 import { sourceEventPage } from "../lib/agent-access/source-events";
 import { accountProfile } from "../lib/auth/profile";
 import { ledgerPage, ownerCorrectionPage } from "../lib/budgets/contract";
@@ -36,7 +37,7 @@ export async function exportApplication(mode: Mode, output: string, call: Call, 
   const temporary = join(directory, `${randomUUID()}.ndjson`);
   let file: Awaited<ReturnType<typeof open>> | undefined;
   const digest = createHash("sha256");
-  const counts = { profile: 0, records: 0, conversations: 0, projections: 0, artifacts: 0, uploads: 0, uploadUsage: 0, reservations: 0, corrections: 0, usage: 0 };
+  const counts = { profile: 0, records: 0, conversations: 0, projections: 0, runs: 0, artifacts: 0, uploads: 0, uploadUsage: 0, reservations: 0, corrections: 0, usage: 0 };
   async function write(type: string, value: unknown) {
     if (!file) throw new Error("Export file is unavailable.");
     const line = `${JSON.stringify({ type, value })}\n`;
@@ -93,14 +94,14 @@ export async function exportApplication(mode: Mode, output: string, call: Call, 
       throw new Error("Export exceeded 10,000 source event pages.");
     }
     await write("manifest", {
-      format: "ai-app-jumpstart-visible-data-v5", mode, exportedAt: new Date().toISOString(),
+      format: "ai-app-jumpstart-visible-data-v6", mode, exportedAt: new Date().toISOString(),
       consistency: "paged-live-reads; concurrent changes may appear or be missed",
       exclusions: mode === "application" ? [
         "Auth credentials, sessions, MFA factors, linked identity details and provider logs; profile is selected fields only",
         "Eve session/model history, workflow checkpoints, sandboxes and traces",
         "Budget model-attempt IDs, operator correction notes/evidence and historical daily aggregate rows; owner-visible reservation and correction histories are included",
         "Deleted artifact tombstones and database backups",
-        "Conversation projections are selected events, not a canonical transcript",
+        "Conversation projections and run summaries are selected events, not a canonical transcript; private run cache facts are omitted",
         "Private upload object bytes, deleted upload tombstones and retained scan decisions, and derived data",
         "Record creation keys, request hashes and retained deletion fences",
       ] : ["Conversation, artifact, upload, usage, Auth, Eve and budget data","Record creation keys, request hashes and retained deletion fences"],
@@ -122,6 +123,11 @@ export async function exportApplication(mode: Mode, output: string, call: Call, 
               (cursor: number | null) => `/api/v1/conversations/${item.operationId}/events?${new URLSearchParams({ limit: "50", ...(cursor ? { after: String(cursor) } : {}) })}`,
               value => projectionPage.parse(value),
               async event => { await write("projection", { operationId: item.operationId, event }); counts.projections++; },
+            );
+            await walk(
+              (cursor: number | null) => `/api/v1/conversations/${item.operationId}/runs?${new URLSearchParams({ limit: "50", ...(cursor ? { after: String(cursor) } : {}) })}`,
+              value => runPage.parse(value),
+              async run => { await write("run", { operationId: item.operationId, run }); counts.runs++; },
             );
           },
         );

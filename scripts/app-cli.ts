@@ -26,7 +26,7 @@ export async function run(args: string[], env: Record<string, string | undefined
   if (!command || command === "help") return {
     records: "npm run app -- <list [cursor] | get ID | create JSON_FILE [--key UUID] | creation UUID | update ID JSON_FILE | delete ID REVISION>",
     seed: "npm run app -- seed [--allow-remote] (two idempotent, owner-scoped example records)",
-    conversations: "npm run app -- conversations <list [--archived] [--limit N] [--cursor CURSOR] | get OPERATION_UUID | events OPERATION_UUID [AFTER_INGESTION_INDEX] | source-events OPERATION_UUID [START_SOURCE_INDEX] | reconcile OPERATION_UUID [START_SOURCE_INDEX] | update OPERATION_UUID JSON_FILE>",
+    conversations: "npm run app -- conversations <list [--archived] [--limit N] [--cursor CURSOR] | get OPERATION_UUID | events OPERATION_UUID [AFTER_INGESTION_INDEX] | runs OPERATION_UUID [AFTER_INGESTION_INDEX] | source-events OPERATION_UUID [START_SOURCE_INDEX] | reconcile OPERATION_UUID [START_SOURCE_INDEX] | update OPERATION_UUID JSON_FILE>",
     artifacts: "npm run app -- artifacts <list [--limit N] [--cursor CURSOR] | get ARTIFACT_UUID | delete ARTIFACT_UUID>",
     uploads: "npm run app -- uploads <list | get UPLOAD_UUID | put FILE | scan UPLOAD_UUID | link UPLOAD_UUID | download UPLOAD_UUID OUTPUT_FILE | download-link LINK_JSON_FILE OUTPUT_FILE | delete UPLOAD_UUID> (scan/download/link require uploads:download and an enabled scan-on-read policy)",
     account: "npm run app -- account profile (selected fields; current registered-user token required)",
@@ -155,10 +155,10 @@ export async function run(args: string[], env: Record<string, string | undefined
   else if (command === "conversations") {
     const [action,...options] = rest;
     path = "/api/v1/conversations";
-    if (action === "events" && options.length >= 1 && options.length <= 2) {
+    if ((action === "events" || action === "runs") && options.length >= 1 && options.length <= 2) {
       const id = operationId.safeParse(options[0]), query = projectionOptions.safeParse(options[1] ? { after: Number(options[1]) } : {});
       if (!id.success || !query.success) throw new Error("Provide a conversation operation UUID and optional projection ingestion cursor.");
-      path += `/${id.data}/events${query.data.after ? `?after=${encodeURIComponent(query.data.after)}` : ""}`;
+      path += `/${id.data}/${action}${query.data.after ? `?after=${encodeURIComponent(query.data.after)}` : ""}`;
     } else if (action === "source-events" && options.length >= 1 && options.length <= 2) {
       const id = operationId.safeParse(options[0]);
       const query = sourceEventOptions.safeParse(options[1] === undefined ? {} : { startIndex: Number(options[1]) });

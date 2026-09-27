@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { creationBody, requestHash } from "../../lib/agent-access/signing";
 import { sourceEventPage } from "../../lib/agent-access/source-events";
+import { runPage } from "../../lib/agent-access/run-contract";
 import { projectionPage } from "../../lib/agent-access/projection-contract";
 import { auditAccessibility } from "../helpers/accessibility";
 import { runHostedSmoke } from "../../scripts/smoke-hosted.mjs";
@@ -154,6 +155,9 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
   expect(JSON.stringify(projections)).toContain("Deterministic owned response");
   expect(projections.items.every(item => item.sourceIndex === undefined)).toBe(true);
   expect((await request.get(projectionUrl,{ headers: { authorization: `Bearer ${bob.token}` } })).status()).toBe(404);
+  const runsUrl = `/api/v1/conversations/${receipt.operationId}/runs`;
+  expect(runPage.parse(await (await request.get(runsUrl,{ headers: { authorization: `Bearer ${alice.token}` } })).json()).items[0].state).toBe("unverified");
+  expect((await request.get(runsUrl,{ headers: { authorization: `Bearer ${bob.token}` } })).status()).toBe(404);
   await page.unroute(recoveryRoute);
   await page.reload();
   await expect.poll(async () => {
@@ -164,6 +168,9 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
   expect(recovery.status()).toBe(200); expect(await recovery.json()).toMatchObject({ processed: 0,inserted: 0,complete: true });
   const recovered = projectionPage.parse(await (await request.get(projectionUrl,{ headers: { authorization: `Bearer ${alice.token}` } })).json());
   expect(recovered.items.map(({ sourceIndex,...entry }) => { expect(sourceIndex).toBeGreaterThanOrEqual(0); return entry; })).toEqual(projections.items);
+  const capturedRuns = runPage.parse(await (await request.get(runsUrl,{ headers: { authorization: `Bearer ${alice.token}` } })).json());
+  expect(capturedRuns.items[0]).toMatchObject({ state: "completed",boundaryCount: 2,unindexedFacts: 0 });
+  expect(capturedRuns.items[0].models.length).toBeGreaterThan(0);
   const history = await request.get("/api/v1/conversations",{ headers: { authorization: `Bearer ${alice.token}` } });
   expect(history.status()).toBe(200);
   const summary = (await history.json()).items[0];
@@ -244,6 +251,8 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
     const aliceLines = (await readFile(aliceFile,"utf8")).trim().split("\n").map(line => JSON.parse(line));
     expect(aliceLines.some(line => line.type === "record" && line.value.id === exportRecordId)).toBe(true);
     expect(aliceLines.some(line => line.type === "conversation" && line.value.operationId === receipt.operationId)).toBe(true);
+    expect(aliceLines[0].value.format).toBe("ai-app-jumpstart-visible-data-v6");
+    expect(aliceLines.find(line => line.type === "run" && line.value.operationId === receipt.operationId)?.value.run).toMatchObject({ turnId: capturedRuns.items[0].turnId,state: "completed",models: capturedRuns.items[0].models,boundaryCount: 2 });
     expect(aliceLines.some(line => line.type === "projection" && line.value.operationId === receipt.operationId)).toBe(true);
     expect(aliceLines.some(line => line.type === "upload" && line.value.id === exportUploadId && line.value.state === "quarantined")).toBe(true);
     expect(aliceLines.some(line => line.type === "upload_usage" && line.value.files === 1)).toBe(true);
@@ -251,7 +260,7 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
     expect(aliceLines.filter(line => line.type === "budget_reservation").map(line => line.value)).toEqual(aliceLedger.items);
     expect(await readFile(aliceFile,"utf8")).not.toContain("Alice's quarantined bytes are not exportable.");
     expect(await runCli(["export","application",bobFile],{ ...env,APP_API_TOKEN: bob.token })).toMatchObject({
-      counts: { profile: 1,records: 0,conversations: 0,projections: 0,artifacts: 0,uploads: 0,uploadUsage: 1,reservations: 0,corrections: 0,usage: 1 },
+      counts: { profile: 1,records: 0,conversations: 0,projections: 0,runs: 0,artifacts: 0,uploads: 0,uploadUsage: 1,reservations: 0,corrections: 0,usage: 1 },
     });
     expect(await readFile(bobFile,"utf8")).not.toContain(exportRecordId);
     expect(await readFile(bobFile,"utf8")).not.toContain(receipt.operationId);
@@ -586,6 +595,9 @@ test("real account tokens share history across production REST, MCP resources/to
       await foreignPage.goto(`/conversations/${operationId}/activity`);
       await expect(foreignPage.locator("main [role=alert]")).toContainText("Conversation not found");
       await expect(foreignPage.locator("ol")).not.toContainText("Shared metadata across transports");
+      await foreignPage.goto(`/conversations/${operationId}/runs`);
+      await expect(foreignPage.locator("main [role=alert]")).toContainText("Conversation not found");
+      await expect(foreignPage.getByRole("heading",{ name: "Run completed" })).toHaveCount(0);
     } finally { await foreignContext.close(); }
     const sourceResponse = await request.get(`/api/v1/conversations/${operationId}/source-events?limit=1`,{
       headers: { authorization: `Bearer ${alice.token}` },
@@ -605,6 +617,26 @@ test("real account tokens share history across production REST, MCP resources/to
     const reconcileTool = await client.callTool({ name: "conversations_reconcile",arguments: { operationId } });
     expect(reconcileTool.isError).not.toBe(true);
     expect(JSON.parse((reconcileTool.content as { text: string }[])[0].text)).toMatchObject({ processed: 0,complete: true });
+    const runsResponse = await request.get(`/api/v1/conversations/${operationId}/runs`,{ headers: { authorization: `Bearer ${alice.token}` } });
+    expect(runsResponse.headers()["cache-control"]).toBe("no-store");
+    const runs = runPage.parse(await runsResponse.json());
+    expect(runs.items[0]).toMatchObject({ state: "completed",unindexedFacts: 0 });
+    expect(runs.items[0].models.length).toBeGreaterThan(0);
+    expect(await runCli(["conversations","runs",operationId],env)).toEqual(runs);
+    const runTool = await client.callTool({ name: "conversations_runs",arguments: { operationId } });
+    expect(runTool.isError).not.toBe(true);
+    expect(JSON.parse((runTool.content as { text: string }[])[0].text)).toEqual(runs);
+    await page.getByRole("link",{ name: "Run history" }).click();
+    await expect(page).toHaveURL(new RegExp(`/conversations/${operationId}/runs$`));
+    await expect(page.getByRole("heading",{ name: "Run completed" })).toBeVisible();
+    await page.getByRole("button",{ name: "Check history" }).click();
+    await expect(page.getByRole("button",{ name: "Check history" })).toBeEnabled();
+    await expect(page.getByRole("heading",{ name: "Run completed" })).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole("heading",{ name: "Run completed" })).toBeVisible();
+    await auditAccessibility(page,"run history");
+    expect((await request.get(`/api/v1/conversations/${operationId}/runs`,{ headers: { authorization: `Bearer ${bob.token}` } })).status()).toBe(404);
+    await expect(runCli(["conversations","runs",operationId],{ ...env,APP_API_TOKEN: bob.token })).rejects.toThrow("HTTP 404");
     expect((await request.get(`/api/v1/conversations/${operationId}/source-events`,{
       headers: { authorization: `Bearer ${bob.token}` },
     })).status()).toBe(404);

@@ -41,6 +41,7 @@ try {
   await cp(join(root, "lib/data/contract.ts"), join(directory, "lib/data/contract.ts"));
   await mkdir(join(directory, "lib/agent-access"), { recursive: true });
   await cp(join(root, "lib/agent-access/contract.ts"), join(directory, "lib/agent-access/contract.ts"));
+  await cp(join(root,"lib/agent-access/run-contract.ts"),join(directory,"lib/agent-access/run-contract.ts"));
   await cp(join(root, "lib/agent-access/projection-contract.ts"), join(directory, "lib/agent-access/projection-contract.ts"));
   await cp(join(root, "lib/agent-access/artifact-contract.ts"), join(directory, "lib/agent-access/artifact-contract.ts"));
   await mkdir(join(directory, "lib/uploads"), { recursive: true });

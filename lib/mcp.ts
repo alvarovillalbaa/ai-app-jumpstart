@@ -10,6 +10,7 @@ import { getRepository } from "./data/repository";
 import type { RecordRepository } from "./data/contract";
 import { ConversationHistoryService } from "./agent-access/history";
 import { historyOptions, historyPatch, operationId, type SessionAccessStore } from "./agent-access/contract";
+import { runOptions } from "./agent-access/run-contract";
 import { getSessionAccessStore } from "./agent-access/store";
 import { chatSettings } from "./agent-access/settings";
 import { projectionOptions } from "./agent-access/projection-contract";
@@ -73,6 +74,10 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
     catch { throw new Error("Record unavailable."); }
   });
   if (history) {
+    server.registerTool("conversations_runs",{
+      description: "Read persisted run summaries and their source-capture coverage. Unverified status means capture has not established an ordered boundary. These are observed run boundaries, not canonical model-history attribution.",
+      inputSchema: z.object({ operationId,options: runOptions.optional() }).strict(),annotations: { readOnlyHint: true,openWorldHint: false },
+    },input => result(() => history.runs(input.operationId,input.options)));
     server.registerTool("conversations_events", {
       description: "Read versioned conversation stream projections, including finalized text and run boundaries. These may contain retried attempts and may lag Eve; they are not canonical model history. Empty results do not prove a conversation was empty.",
       inputSchema: z.object({ operationId,options: projectionOptions.optional() }).strict(),annotations: { readOnlyHint: true,openWorldHint: false },

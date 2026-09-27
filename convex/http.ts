@@ -83,6 +83,8 @@ http.route({ path: "/app/records", method: "POST", handler: httpAction(async (ct
       case "budget.snapshot": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.budgets.snapshot, { input })); }
       case "access.reserve": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.access.reserve, input)); }
       case "access.list": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.access.list, input)); }
+      case "access.listRuns": { const { operation: _,...input } = parsed.data;void _;return json(await ctx.runQuery(internal.access.listRuns,input)); }
+      case "access.rebuildRuns": { const { operation: _,...input } = parsed.data;void _;return json(await ctx.runMutation(internal.access.rebuildRuns,input)); }
       case "access.appendProjection": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.access.appendProjection, input)); }
       case "access.listProjections": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.access.listProjections, input)); }
       case "access.getProjectionCheckpoint": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.access.getProjectionCheckpoint, input)); }

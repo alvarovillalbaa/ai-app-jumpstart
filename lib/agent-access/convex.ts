@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { runOptions,runPage,runRepairOptions,runRepairResult } from "./run-contract";
 import { ConvexBackend } from "../data/convex-client";
 import { conversation, historyOptions, historyPage, conversationSummary, type AccessOwner, type Reservation, type SessionAccessStore } from "./contract";
 import { projectionEntry, projectionOptions, projectionOutcome, projectionPage, projectionSourceIndex } from "./projection-contract";
@@ -7,6 +8,8 @@ import { artifactInput, artifactCallId, artifactOptions, artifactSaveResult, art
 export function convexAccessStore(url: string, secret: string, request: typeof fetch = fetch): SessionAccessStore {
   const backend = new ConvexBackend(url, secret, request);
   return {
+    listRuns: (owner,operationId,options) => backend.call("access.listRuns",{ ...owner,operationId,options: runOptions.parse(options) },runPage),
+    rebuildRuns: (owner,operationId,options) => backend.call("access.rebuildRuns",{ ...owner,operationId,options: runRepairOptions.parse(options) },runRepairResult),
     saveArtifact: (owner,operationId,sessionId,callId,input) => backend.call("access.saveArtifact",{ ...owner,operationId,sessionId,callId: artifactCallId.parse(callId),input: artifactInput.parse(input) },artifactSaveResult),
     listArtifacts: (owner,options) => backend.call("access.listArtifacts",{ ...owner,options: artifactOptions.parse(options) },artifactPage),
     getArtifact: (owner,id) => backend.call("access.getArtifact",{ ...owner,id },artifact.nullable()),

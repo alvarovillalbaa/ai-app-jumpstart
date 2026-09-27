@@ -1,11 +1,44 @@
 import { v } from "convex/values";
-import { internalMutation, internalQuery, type QueryCtx } from "./_generated/server";
+import { internalMutation, internalQuery, type QueryCtx, type MutationCtx } from "./_generated/server";
+import { materializeRun,pageOfRuns,runOptions,runRepairOptions } from "../lib/agent-access/run-contract";
+import type { ProjectionEntry } from "../lib/agent-access/projection-contract";
 import { accessOwner, reservation, operationId, sessionId, bodyHash, type AccessOwner } from "../lib/agent-access/contract";
 import { conversation, conversationTitle, conversationSummary, historyOptions, historyPatch, pageOfHistory } from "../lib/agent-access/contract";
 import { projectionEntry, projectionOptions, projectionSourceIndex, pageOfProjections } from "../lib/agent-access/projection-contract";
 import { artifactInput, artifactCallId, artifactOptions, artifact, pageOfArtifacts } from "../lib/agent-access/artifact-contract";
 
 const ownerFields = { tenant: v.string(), subject: v.string() };
+async function captureRun(ctx: MutationCtx,operation: string,entry: ProjectionEntry,ordinal: number,source?: number) {
+  if (entry.payload.kind !== "run" && entry.payload.kind !== "model") return;
+  const row = await ctx.db.query("conversationRuns").withIndex("by_operation_turn",q => q.eq("operationId",operation).eq("turnId",entry.turnId)).unique();
+  const payload = materializeRun(row?.payload ?? null,entry,ordinal,source)!;
+  if (row) await ctx.db.patch(row._id,{ payload,firstOrdinal: Math.min(row.firstOrdinal,ordinal) });
+  else await ctx.db.insert("conversationRuns",{ operationId: operation,turnId: entry.turnId,firstOrdinal: ordinal,payload });
+}
+export const listRuns = internalQuery({
+  args: { ...ownerFields,operationId: v.string(),options: v.object({ limit: v.number(),after: v.optional(v.number()) }) },
+  handler: async (ctx,args) => {
+    const q = runOptions.parse(args.options),row = await ownedOperation(ctx,args,args.operationId);
+    if (!row) return pageOfRuns([],q.limit);
+    const rows = await ctx.db.query("conversationRuns").withIndex("by_operation_ordinal",index => index.eq("operationId",args.operationId).gt("firstOrdinal",q.after ?? 0)).order("asc").take(q.limit+1);
+    return pageOfRuns(rows.map(run => ({ turnId: run.turnId,payload: run.payload,checkpoint: row.projectionCheckpoint ?? 0,
+      indexComplete: (row.runIndexCursor ?? 0) === (row.projectionSequence ?? 0) })),q.limit);
+  },
+});
+export const rebuildRuns = internalMutation({
+  args: { ...ownerFields,operationId: v.string(),options: v.object({ after: v.number(),limit: v.number() }) },
+  handler: async (ctx,args) => {
+    const q = runRepairOptions.parse(args.options),row = await ownedOperation(ctx,args,args.operationId);
+    if (!row) return { processed: 0,nextIndex: q.after,complete: true };
+    const events = await ctx.db.query("conversationEvents").withIndex("by_operation_ordinal",index => index.eq("operationId",args.operationId).gt("ordinal",q.after)).order("asc").take(q.limit);
+    for (const event of events) await captureRun(ctx,args.operationId,projectionEntry.parse(JSON.parse(event.payload)),event.ordinal,event.sourceIndex);
+    const next = events.at(-1)?.ordinal ?? q.after;
+    const current = q.after === 0 ? 0 : row.runIndexCursor ?? 0;
+    const cursor = current >= q.after && current <= next ? next : current;
+    if (cursor !== (row.runIndexCursor ?? 0)) await ctx.db.patch(row._id,{ runIndexCursor: cursor });
+    return { processed: events.length,nextIndex: next,complete: cursor === (row.projectionSequence ?? 0) };
+  },
+});
 const sameOwner = (row: AccessOwner, owner: AccessOwner) => row.tenant === owner.tenant && row.subject === owner.subject;
 const summary = (row: unknown) => conversationSummary.strip().parse(row);
 async function ownedOperation(ctx: QueryCtx, owner: AccessOwner, id: string) {
@@ -81,6 +114,7 @@ export const appendProjection = internalMutation({
         if (taken) return "conflict";
         await ctx.db.patch(existing._id,{ sourceIndex: source });
       }
+      await captureRun(ctx,args.operationId,entry,existing.ordinal,source ?? existing.sourceIndex);
       return "duplicate";
     }
     if (source !== undefined) {
@@ -88,8 +122,10 @@ export const appendProjection = internalMutation({
       if (taken) return "conflict";
     }
     const ordinal = (row.projectionSequence ?? 0)+1;
-    await ctx.db.patch(row._id,{ projectionSequence: ordinal });
+    await ctx.db.patch(row._id,{ projectionSequence: ordinal,
+      runIndexCursor: (row.runIndexCursor ?? 0) === (row.projectionSequence ?? 0) ? ordinal : row.runIndexCursor ?? 0 });
     await ctx.db.insert("conversationEvents",{ operationId: args.operationId,eventId: entry.eventId,ordinal,payload,...(source === undefined ? {} : { sourceIndex: source }) });
+    await captureRun(ctx,args.operationId,entry,ordinal,source);
     return "inserted";
   },
 });

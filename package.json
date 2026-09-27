@@ -43,6 +43,7 @@
     "backup:postgres-databases": "node scripts/backup-postgres-databases.mjs",
     "workflow:recover": "node --env-file-if-exists=.env.local scripts/recover-workflow.mjs",
     "uploads:cleanup": "tsx --env-file-if-exists=.env.local scripts/cleanup-uploads.ts",
+    "runs:backfill": "tsx --env-file-if-exists=.env.local scripts/backfill-convex-runs.ts",
     "starts:inspect": "tsx --env-file-if-exists=.env.local scripts/inspect-starts.ts",
     "budgets:reconcile": "tsx --env-file-if-exists=.env.local scripts/reconcile-budget.ts",
     "check": "npm run typecheck && npm run lint && npm test",

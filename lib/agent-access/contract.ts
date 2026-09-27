@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { runOptions, runPage, runRepairOptions, runRepairResult, type RunOptions } from "./run-contract";
 import { projectionEntry, projectionOptions, projectionPage, projectionOutcome, projectionSourceIndex, type ProjectionEntry, type ProjectionOptions } from "./projection-contract";
 import { artifactInput, artifactCallId, artifactOptions, artifactPage, artifactSaveResult, artifact, type ArtifactInput, type ArtifactOptions } from "./artifact-contract";
 
@@ -40,6 +41,8 @@ export function summaryFromRow(value: unknown): ConversationSummary {
 
 /** Server-only storage. HTTP metadata edits require a verified owner and revision. */
 export interface SessionAccessStore {
+  listRuns(owner: AccessOwner, operation: string, options: RunOptions): Promise<z.infer<typeof runPage>>;
+  rebuildRuns(owner: AccessOwner, operation: string, options: z.input<typeof runRepairOptions>): Promise<z.infer<typeof runRepairResult>>;
   saveArtifact(owner: AccessOwner, operation: string, session: string, callId: string, input: ArtifactInput): Promise<z.infer<typeof artifactSaveResult>>;
   listArtifacts(owner: AccessOwner, options: ArtifactOptions): Promise<z.infer<typeof artifactPage>>;
   getArtifact(owner: AccessOwner, id: string): Promise<z.infer<typeof artifact> | null>;
@@ -62,6 +65,8 @@ export interface SessionAccessStore {
 }
 
 export const accessCommand = z.discriminatedUnion("operation", [
+  accessOwner.extend({ operation: z.literal("access.listRuns"),operationId,options: runOptions }).strict(),
+  accessOwner.extend({ operation: z.literal("access.rebuildRuns"),operationId,options: runRepairOptions }).strict(),
   accessOwner.extend({ operation: z.literal("access.saveArtifact"),operationId,sessionId,callId: artifactCallId,input: artifactInput }).strict(),
   accessOwner.extend({ operation: z.literal("access.listArtifacts"),options: artifactOptions }).strict(),
   accessOwner.extend({ operation: z.literal("access.getArtifact"),id: z.uuid() }).strict(),

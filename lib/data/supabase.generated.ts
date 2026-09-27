@@ -218,6 +218,35 @@ export type Database = {
           },
         ]
       }
+      app_conversation_runs: {
+        Row: {
+          first_ordinal: number
+          operation_id: string
+          payload: string
+          turn_id: string
+        }
+        Insert: {
+          first_ordinal: number
+          operation_id: string
+          payload: string
+          turn_id: string
+        }
+        Update: {
+          first_ordinal?: number
+          operation_id?: string
+          payload?: string
+          turn_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "app_conversation_runs_operation_id_fkey"
+            columns: ["operation_id"]
+            isOneToOne: false
+            referencedRelation: "app_conversations"
+            referencedColumns: ["operation_id"]
+          },
+        ]
+      }
       app_conversations: {
         Row: {
           archived: number
@@ -471,6 +500,16 @@ export type Database = {
         }
         Returns: boolean
       }
+      app_materialize_run: {
+        Args: {
+          p_entry: string
+          p_existing: string
+          p_ordinal: number
+          p_source: number
+        }
+        Returns: string
+      }
+      app_run_cache: { Args: { p_facts: Json }; Returns: string }
       app_save_artifact: {
         Args: {
           p_call: string

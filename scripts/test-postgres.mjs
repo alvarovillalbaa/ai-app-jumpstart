@@ -84,6 +84,9 @@ async function rehearseUpgrade() {
       VALUES($1,$2,$3,$4,$5,$6,'active',$7,$8)`,
       [conversationId, "upgrade-tenant", "upgrade-owner", operationId, "a".repeat(64), "upgrade-session", "Before upgrade", 1]);
     await probe.query("INSERT INTO app_conversation_events(operation_id,event_id,payload) VALUES($1,$2,$3)", [operationId, eventId, event]);
+    const runEvent = JSON.stringify({ schemaVersion: 1,eventId: `evt_${"1".repeat(26)}`,at: "2026-09-24T00:00:01.000Z",
+      turnId: "upgrade-turn",sequence: 0,payload: { kind: "run",state: "completed" } });
+    await probe.query("INSERT INTO app_conversation_events(operation_id,event_id,payload) VALUES($1,$2,$3)",[operationId,`evt_${"1".repeat(26)}`,runEvent]);
     await probe.query(`INSERT INTO app_uploads(id,tenant,subject,name,media_type,size,sha256,created_at,state)
       VALUES($1,'upgrade-tenant','upgrade-owner','before.txt','text/plain',10,$3,1,'quarantined'),
       ($2,'upgrade-tenant','upgrade-owner','deleted.txt','text/plain',20,$3,2,'deleted')`,[uploadId,deletedUploadId,"a".repeat(64)]);
@@ -107,6 +110,10 @@ async function rehearseUpgrade() {
       { tenant: "upgrade-tenant", subject: "upgrade-owner", status: "active", projection_checkpoint: "0" });
     assert.deepEqual((await probe.query("SELECT payload,source_index FROM app_conversation_events WHERE event_id=$1", [eventId])).rows[0],
       { payload: event, source_index: null });
+    const runCache = JSON.parse((await probe.query("SELECT payload FROM app_conversation_runs WHERE operation_id=$1",[operationId])).rows[0].payload);
+    assert.equal(runCache.summary.boundaryCount,1,"Retained run boundary was not backfilled");
+    assert.equal(runCache.summary.unindexedFacts,1,"Backfill invented source coverage");
+    assert.deepEqual(runCache.summary.models,[],"Backfill invented model information");
     if (withSupabase) await probe.query("SET ROLE service_role");
     try {
       const owner = { tenant: "upgrade-tenant",subject: "upgrade-owner",id: uploadId };
