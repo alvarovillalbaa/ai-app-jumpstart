@@ -8,7 +8,7 @@ export const appConfig = {
     { href: "/conversations", label: "Conversations", feature: "auth" },
     { href: "/structured", label: "Structured output", feature: "chat" },
     { href: "/artifacts", label: "Artifacts", feature: "auth" },
-    { href: "/usage", label: "AI usage", feature: "chat" },
+    { href: "/usage", label: "AI usage", feature: "auth" },
     { href: "/account", label: "Account", feature: "auth" },
   ],
 } as const;

@@ -151,7 +151,7 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
   }
   if (usage) {
     server.registerTool("usage_get",{
-      description: "Read the signed-in user's current UTC-day AI budget usage and configured daily limit. Unknown costs charge the estimate; these are not provider invoice totals.",
+      description: "Read the signed-in user's current UTC-day application usage. dailyLimitMicros is null when chat is disabled, never unlimited allowance. Unknown costs charge the estimate; these are not provider invoice totals.",
       inputSchema: z.object({}).strict(),annotations: { readOnlyHint: true,openWorldHint: false },
     },() => result(() => usage.get()));
     server.registerTool("usage_reservations",{
@@ -248,7 +248,7 @@ export function mcpHandler(repository: () => Promise<RecordRepository> = getRepo
     const owner = { tenant: principal.tenant,subject: principal.subject };
     const history = ownedStore ? new ConversationHistoryService(ownedStore,owner) : undefined;
     const artifacts = ownedStore ? new ArtifactService(ownedStore,owner) : undefined;
-    const usage = settings ? new UsageService(budgetStore,owner,settings.budget.policy.dailyMicros) : undefined;
+    const usage = principal.credentialType === "user" ? new UsageService(budgetStore,owner,settings?.budget.policy.dailyMicros ?? null) : undefined;
     const uploads = process.env.UPLOAD_STORAGE_PROVIDER ? new UploadService(await uploadCatalog(),createUploadObjects,principal,createUploadScanner) : undefined;
     const profile = principal.credentialType === "user" ? async () => {
       const auth = authSettings();

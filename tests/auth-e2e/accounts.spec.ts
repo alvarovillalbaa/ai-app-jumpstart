@@ -1,5 +1,8 @@
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import { mkdtemp,readFile,rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { auditAccessibility } from "../helpers/accessibility";
@@ -7,6 +10,7 @@ import { run as runCli } from "../../scripts/app-cli";
 import { preferences,defaultPreferences } from "../../lib/preferences/contract";
 import { runHostedSmoke } from "../../scripts/smoke-hosted.mjs";
 import { sqliteAccessStore } from "../../lib/agent-access/sqlite";
+import { sqliteBudgetStore } from "../../lib/budgets/sqlite";
 import type { ProjectionEntry } from "../../lib/agent-access/projection-contract";
 
 const auth = process.env.TEST_AUTH_ORIGIN!;
@@ -55,7 +59,7 @@ test("portable account-browser smoke verifies login, records, reload and logout 
   expect(result.accountBrowser).toBe(true);expect(result.agent).toBeUndefined();
 });
 
-test("paused chat retains private history, activity, runs and artifact access across browser, REST, CLI and MCP",async ({ page,request }) => {
+test("paused chat retains private history, artifacts, usage and application export across browser, REST, CLI and MCP",async ({ page,request }) => {
   expect(process.env.AI_CHAT_ENABLED).toBe("false");
   const alice = `retained-alice-${randomUUID()}@example.test`,bob = `retained-bob-${randomUUID()}@example.test`;
   await confirmedUser(request,alice);await confirmedUser(request,bob);
@@ -81,6 +85,25 @@ test("paused chat retains private history, activity, runs and artifact access ac
     if (saved.status !== "created") throw new Error("Retained fixture could not be saved");
     artifactId = saved.artifact.id;
   } finally { await store.close(); }
+  const otherProfile = await (await request.get("/api/v1/account/profile",{ headers: foreign })).json();
+  const budget = sqliteBudgetStore(process.env.SQLITE_PATH!);
+  const correction = randomUUID(),pending = randomUUID();
+  try {
+    const policy = { id: "retained-fixture",dailyMicros: 100,maxActive: 10,maxPerMinute: 20 };
+    for (const [subject,operationId] of [[owner.subject,operation],[owner.subject,pending],[otherProfile.id,randomUUID()]]) {
+      expect(await budget.reserve({ ...owner,subject,operationId,requestHash: "b".repeat(64),estimateMicros: 20,policy,now: Date.now() })).toMatchObject({ status: "reserved" });
+      if (subject === otherProfile.id) await budget.settle({ ...owner,subject,operationId,actualMicros: 73 });
+    }
+    expect(await budget.settle({ ...owner,operationId: operation,actualMicros: null })).toBe(true);
+    expect(await budget.correctSettlement({ ...owner,operationId: operation,correctionId: correction,expectedActualMicros: null,correctedActualMicros: 5,
+      actor: "private-export-operator",reason: "Private fixture evidence for retained usage",evidenceRef: "private-export-receipt" })).toBe("applied");
+  } finally { await budget.close(); }
+  const currentUsage = await (await request.get("/api/v1/usage",{ headers })).json();
+  const retainedUsage = { dailyLimitMicros: null,chargedMicros: 5,reservedMicros: 20,active: 1 };
+  expect(currentUsage).toMatchObject(retainedUsage);
+  expect(await runCli(["usage"],{ APP_API_URL: process.env.APP_ORIGIN,APP_API_TOKEN: token })).toMatchObject(retainedUsage);
+  expect(await (await request.get("/api/v1/usage",{ headers: foreign })).json()).toMatchObject({ dailyLimitMicros: null,chargedMicros: 73,reservedMicros: 0 });
+  for (const url of ["/api/v1/usage","/api/v1/usage/reservations","/api/v1/usage/corrections"]) expect((await request.get(url)).status()).toBe(401);
   const urls = [`/api/v1/conversations/${operation}/metadata`,`/api/v1/conversations/${operation}/events`,`/api/v1/conversations/${operation}/runs`,
     `/api/v1/artifacts/${artifactId}`,`/api/v1/artifacts/${artifactId}/versions`,`/api/v1/artifacts/${artifactId}/download`];
   for (const url of urls) {
@@ -95,13 +118,36 @@ test("paused chat retains private history, activity, runs and artifact access ac
     await client.connect(new StreamableHTTPClientTransport(new URL(`${process.env.APP_ORIGIN}/api/mcp`),{ requestInit: { headers } }));
     const tools = (await client.listTools()).tools.map(tool => tool.name);
     expect(tools).toContain("conversations_get");expect(tools).toContain("artifacts_versions");
-    expect(tools).not.toContain("conversations_source_events");expect(tools).not.toContain("conversations_reconcile");expect(tools).not.toContain("usage_get");
+    expect(tools).not.toContain("conversations_source_events");expect(tools).not.toContain("conversations_reconcile");expect(tools).toContain("usage_get");
+    const usage = await client.callTool({ name: "usage_get",arguments: {} });expect(usage.isError).not.toBe(true);
+    expect(JSON.parse((usage.content as { text: string }[])[0].text)).toMatchObject(retainedUsage);
+    const corrections = await client.callTool({ name: "usage_corrections",arguments: {} });expect(corrections.isError).not.toBe(true);
+    expect(JSON.parse((corrections.content as { text: string }[])[0].text)).toMatchObject({ items: [{ correctionId: correction,correctedActualMicros: 5 }] });
     for (const uri of [`conversations:///${operation}`,`artifacts:///${artifactId}`]) expect((await client.readResource({ uri })).contents).toHaveLength(1);
     const edited = await client.callTool({ name: "artifacts_update",arguments: { id: artifactId,revision: 1,title: "Retained edited artifact",content: "Owner edit with chat paused" } });
     expect(edited.isError).not.toBe(true);
   } finally { await client.close(); }
   expect((await request.patch(`/api/v1/conversations/${operation}`,{ headers,data: { revision: 1,title: "Retained renamed conversation" } })).status()).toBe(200);
   expect((await request.patch(`/api/v1/artifacts/${artifactId}`,{ headers: foreign,data: { revision: 2,title: "Stolen",content: "Stolen" } })).status()).toBe(404);
+  const record = await request.post("/api/v1/records",{ headers,data: { title: "Paused export record",content: "Owned retained record" } });expect(record.status()).toBe(201);
+  const uploaded = await request.post("/api/v1/uploads",{ headers: { ...headers,"content-type": "application/octet-stream",
+    "x-upload-name": "paused-export.txt","x-upload-media-type": "text/plain" },data: Buffer.from("Private bytes excluded") });expect(uploaded.status()).toBe(201);
+  const directory = await mkdtemp(join(tmpdir(),"jumpstart-paused-export-"));
+  try {
+    const output = join(directory,"account.ndjson");
+    const exported = await runCli(["export","application",output],{ APP_API_URL: process.env.APP_ORIGIN,APP_API_TOKEN: token });
+    expect(exported).toMatchObject({ counts: { profile: 1,preferences: 1,records: 1,conversations: 1,projections: 3,runs: 1,
+      artifacts: 1,artifactVersions: 2,uploads: 1,uploadReviews: 1,reservations: 2,corrections: 1,usage: 1 } });
+    const raw = await readFile(output,"utf8"),lines = raw.trim().split("\n").map(line => JSON.parse(line));
+    expect(lines[0].value.format).toBe("ai-app-jumpstart-visible-data-v10");
+    expect(lines.find(line => line.type === "usage").value).toMatchObject(retainedUsage);
+    expect(lines.find(line => line.type === "budget_correction").value).toMatchObject({ correctionId: correction,correctedActualMicros: 5 });
+    expect(raw).not.toMatch(/private-export-operator|private-export-receipt|Private fixture evidence|Private bytes excluded/);
+    expect(await runCli(["export","verify",output],{})).toMatchObject({ format: "ai-app-jumpstart-visible-data-v10",counts: { reservations: 2,corrections: 1 } });
+    const foreignOutput = join(directory,"other.ndjson");
+    expect(await runCli(["export","application",foreignOutput],{ APP_API_URL: process.env.APP_ORIGIN,APP_API_TOKEN: other })).toMatchObject({ counts: { records: 0,conversations: 0,artifacts: 0,uploads: 0,reservations: 1,corrections: 0 } });
+    expect(await readFile(foreignOutput,"utf8")).not.toContain(artifactId);
+  } finally { await rm(directory,{ recursive: true,force: true }); }
   expect((await request.post("/api/v1/conversations",{ headers,data: { operationId: randomUUID(),prompt: "Do not dispatch" } })).status()).toBe(503);
   expect((await request.get(`/api/v1/conversations/${operation}`,{ headers })).status()).toBe(503);
   expect((await request.post(`/api/v1/conversations/${operation}/reconcile`,{ headers,data: { resume: true } })).status()).toBe(503);
@@ -111,7 +157,13 @@ test("paused chat retains private history, activity, runs and artifact access ac
   const navigation = page.getByRole("navigation",{ name: "Workspace" });
   await expect(navigation.getByRole("link",{ name: "Conversations",exact: true })).toBeVisible();
   await expect(navigation.getByRole("link",{ name: "Artifacts",exact: true })).toBeVisible();
+  await expect(navigation.getByRole("link",{ name: "AI usage",exact: true })).toBeVisible();
   await expect(navigation.getByRole("link",{ name: "Chat",exact: true })).toHaveCount(0);
+  await navigation.getByRole("link",{ name: "AI usage",exact: true }).click();
+  await expect(page.getByText(/Chat is disabled\. There is no active spending allowance/)).toBeVisible();
+  await expect(page.getByRole("progressbar")).toHaveCount(0);await expect(page.getByText("$0.000005",{ exact: true })).toBeVisible();
+  await page.reload();await expect(page.getByText("$0.000005",{ exact: true })).toBeVisible();
+  await auditAccessibility(page,"paused-chat usage");
   await page.goto("/conversations");
   const title = page.getByRole("link",{ name: "Retained renamed conversation",exact: true });
   await expect(title).toHaveAttribute("href",`/conversations/${operation}/activity`);await title.click();

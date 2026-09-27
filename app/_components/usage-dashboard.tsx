@@ -57,16 +57,16 @@ export function UsageDashboard({ settings,userId }: { settings: PublicAuthSettin
   const used = view ? view.chargedMicros + view.reservedMicros : 0;
   return <main className="mx-auto max-w-3xl space-y-6 p-6 sm:p-8">
     <h1 className="text-3xl font-medium">AI usage</h1>
-    <p className="text-muted-foreground">Your current UTC-day budget snapshot. It is an application limit, not a provider invoice.</p>
+    <p className="text-muted-foreground">Your current UTC-day application usage. These figures are not a provider invoice.</p>
     <button className="rounded border px-3 py-2" disabled={busy} onClick={() => void load()}>Refresh</button>
     {error && <p role="alert">{error}</p>}
     {busy && <p role="status">Loading…</p>}
     {view && <section className="space-y-5" aria-label="Current AI usage">
       <p className="font-medium">UTC day {new Date(view.day * 86_400_000).toISOString().slice(0,10)}</p>
-      <div>
+      {view.dailyLimitMicros === null ? <p>Chat is disabled. There is no active spending allowance; retained charges and reservations remain visible.</p> : <div>
         <label htmlFor="daily-budget" className="block">Charged plus reserved: {usd(used)} of {usd(view.dailyLimitMicros)}</label>
         <progress id="daily-budget" className="mt-2 w-full" max={view.dailyLimitMicros} value={Math.min(used,view.dailyLimitMicros)} />
-      </div>
+      </div>}
       <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div><dt className="text-muted-foreground">Charged today</dt><dd className="font-medium">{usd(view.chargedMicros)}</dd></div>
         <div><dt className="text-muted-foreground">Reserved for pending work</dt><dd className="font-medium">{usd(view.reservedMicros)}</dd></div>

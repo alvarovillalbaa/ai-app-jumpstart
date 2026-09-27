@@ -40,7 +40,7 @@ export async function verifyExport(path: string) {
         : manifest.format === "ai-app-jumpstart-visible-data-v6" ? applicationCountsV6
         : manifest.format === "ai-app-jumpstart-visible-data-v7" ? applicationCountsV7
         : manifest.format === "ai-app-jumpstart-visible-data-v8" ? applicationCountsV8
-        : manifest.format === "ai-app-jumpstart-visible-data-v9" ? applicationCountsV9 : undefined;
+        : ["ai-app-jumpstart-visible-data-v9","ai-app-jumpstart-visible-data-v10"].includes(String(manifest.format)) ? applicationCountsV9 : undefined;
       expected = manifest.format === "ai-app-jumpstart-source-events-v1" ? sourceCounts
         : sections && manifest.mode === "application" ? sections
         : sections && manifest.mode === "records" ? recordCounts : undefined;

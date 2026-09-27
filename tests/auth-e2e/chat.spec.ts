@@ -256,7 +256,7 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
     expect(aliceLines.some(line => line.type === "record" && line.value.id === exportRecordId)).toBe(true);
     expect(aliceLines.some(line => line.type === "conversation" && line.value.operationId === receipt.operationId)).toBe(true);
     expect(aliceLines.find(line => line.type === "account_preferences")?.value).toMatchObject({ schemaVersion: 1,soundEnabled: false });
-    expect(aliceLines[0].value.format).toBe("ai-app-jumpstart-visible-data-v9");
+    expect(aliceLines[0].value.format).toBe("ai-app-jumpstart-visible-data-v10");
     expect(aliceLines.find(line => line.type === "run" && line.value.operationId === receipt.operationId)?.value.run).toMatchObject({ turnId: capturedRuns.items[0].turnId,state: "completed",models: capturedRuns.items[0].models,boundaryCount: 2 });
     expect(aliceLines.some(line => line.type === "projection" && line.value.operationId === receipt.operationId)).toBe(true);
     expect(aliceLines.some(line => line.type === "upload" && line.value.id === exportUploadId && line.value.state === "quarantined")).toBe(true);

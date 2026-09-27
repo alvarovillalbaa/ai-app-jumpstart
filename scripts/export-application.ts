@@ -31,7 +31,7 @@ export async function exportApplication(mode: Mode, output: string, call: Call, 
   const destination = resolve(output);
   if (existsSync(destination)) throw new Error("Export destination already exists; choose a new file.");
 
-  // Verify the current registered user and enabled account chat before creating
+  // Verify the current registered user and account views before creating
   // a local file. Neither a record API key nor a stale token can export a profile.
   const profile = mode === "application" ? accountProfile.parse(await call("/api/v1/account/profile")) : null;
   const accountPreferences = mode === "application" ? preferences.parse(await call("/api/v1/account/preferences")) : null;
@@ -97,7 +97,7 @@ export async function exportApplication(mode: Mode, output: string, call: Call, 
       throw new Error("Export exceeded 10,000 source event pages.");
     }
     await write("manifest", {
-      format: "ai-app-jumpstart-visible-data-v9", mode, exportedAt: new Date().toISOString(),
+      format: "ai-app-jumpstart-visible-data-v10", mode, exportedAt: new Date().toISOString(),
       consistency: "paged-live-reads; concurrent changes may appear or be missed",
       exclusions: mode === "application" ? [
         "Auth credentials, sessions, MFA factors, linked identity details and provider logs; profile is selected fields only",

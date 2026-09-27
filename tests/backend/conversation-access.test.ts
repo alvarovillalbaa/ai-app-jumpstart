@@ -7,6 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { sqliteAccessStore } from "../../lib/agent-access/sqlite";
 import { SqliteRepository } from "../../lib/data/sqlite";
+import { sqliteBudgetStore } from "../../lib/budgets/sqlite";
 import { artifactHandlers } from "../../lib/http/artifacts";
 import { conversationHandlers } from "../../lib/http/conversations";
 import { mcpHandler } from "../../lib/mcp";
@@ -15,6 +16,7 @@ import { run } from "../../scripts/app-cli";
 const alice = "alice-user-token-".repeat(4), bob = "bob-user-token-".repeat(4), key = "record-only-key-".repeat(4);
 const owner = { tenant: "supabase:https://identity.example",subject: "alice" };
 let store: ReturnType<typeof sqliteAccessStore>, repo: SqliteRepository, id: string;
+let budget: ReturnType<typeof sqliteBudgetStore>;
 let api: ReturnType<typeof conversationHandlers>, handler: ReturnType<typeof mcpHandler>;
 const clients: Client[] = [];
 beforeEach(async () => {
@@ -32,9 +34,10 @@ beforeEach(async () => {
   }));
   store = sqliteAccessStore(":memory:"); repo = new SqliteRepository(":memory:"); id = randomUUID();
   await store.reserve({ ...owner,id: randomUUID(),operationId: id,requestHash: "b".repeat(64) },"Initial private title");
-  api = conversationHandlers(async () => store); handler = mcpHandler(async () => repo,async () => store);
+  budget = sqliteBudgetStore(":memory:");
+  api = conversationHandlers(async () => store); handler = mcpHandler(async () => repo,async () => store,async () => budget);
 });
-afterEach(async () => { for (const client of clients.splice(0)) await client.close(); await store.close(); await repo.close(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+afterEach(async () => { for (const client of clients.splice(0)) await client.close(); await store.close(); await repo.close(); await budget.close();vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 const request: typeof fetch = async (url,init) => {
   const req = new Request(url,init), path = new URL(req.url).pathname.split("/");
@@ -124,9 +127,10 @@ it("retains saved-data capabilities while removing runtime tools when chat is pa
   expect(tools.map(tool => tool.name)).toContain("artifacts_get");
   expect(tools.map(tool => tool.name)).not.toContain("conversations_source_events");
   expect(tools.map(tool => tool.name)).not.toContain("conversations_reconcile");
-  expect(tools.map(tool => tool.name)).not.toContain("usage_get");
+  expect(tools.map(tool => tool.name)).toContain("usage_get");
   vi.stubEnv("AI_BUDGET_POLICY_JSON","invalid disabled configuration");
   vi.stubEnv("AI_CREATION_SIGNING_JSON","");
+  expect(value(await client.callTool({ name: "usage_get",arguments: {} }))).toMatchObject({ dailyLimitMicros: null });
   expect(value(await client.callTool({ name: "conversations_get",arguments: { operationId: id } }))).toMatchObject({ title: "Initial private title" });
   expect(await run(["conversations","get",id],{ APP_API_TOKEN: alice },request)).toMatchObject({ title: "Initial private title" });
   vi.stubGlobal("fetch",vi.fn().mockResolvedValue(Response.json({ msg: "Revoked",code: "session_not_found" },{ status: 401 })));

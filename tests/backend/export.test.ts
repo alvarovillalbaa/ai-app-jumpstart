@@ -7,6 +7,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { run } from "../../scripts/app-cli";
 import { recordHandlers } from "../../lib/http/records";
 import { SqliteRepository } from "../../lib/data/sqlite";
+import { defaultPreferences } from "../../lib/preferences/contract";
 
 afterEach(() => vi.unstubAllEnvs());
 const lines = async (path: string) => (await readFile(path, "utf8")).trim().split("\n").map(line => JSON.parse(line));
@@ -26,7 +27,7 @@ it("exports every paged record for one owner to a private file without replacing
     expect(await run(["export", "records", output], env, request)).toMatchObject({ mode: "records", counts: { records: 105 } });
     const exported = await lines(output);
     expect(exported).toHaveLength(107);
-    expect(exported[0].value).toMatchObject({ format: "ai-app-jumpstart-visible-data-v9", mode: "records" });
+    expect(exported[0].value).toMatchObject({ format: "ai-app-jumpstart-visible-data-v10", mode: "records" });
     expect(exported.filter(line => line.type === "record").map(line => line.value.title)).not.toContain("Foreign");
     expect(exported.at(-1).value.counts.records).toBe(105);
     expect((await stat(output)).mode & 0o077).toBe(0);
@@ -42,7 +43,7 @@ it("exports every paged record for one owner to a private file without replacing
   } finally { await repository.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
-it("exports visible account data, including archived conversations and paged projections", async () => {
+it.each([100,null])("exports all visible account collections with daily limit %s, including paused chat", async dailyLimitMicros => {
   const directory = await mkdtemp(join(tmpdir(), "jumpstart-export-account-"));
   const operation = randomUUID(), archivedOperation = randomUUID(), record = randomUUID(), artifact = randomUUID(), upload = randomUUID();
   const firstCorrection = randomUUID(),secondCorrection = randomUUID();
@@ -59,7 +60,7 @@ it("exports visible account data, including archived conversations and paged pro
       lastSignInAt: null, emailConfirmedAt: null, phoneConfirmedAt: null, providers: ["email"], userMetadata: { displayName: "Alice" } });
     if (path.pathname === "/api/v1/account/preferences") return Response.json({ schemaVersion: 1,revision: 2,theme: "dark",soundEnabled: false,soundVolume: 0.25,updatedAt: "2026-09-27T10:00:00.000Z" });
     if (path.pathname === "/api/v1/usage") return Response.json({ day: 1, reservedMicros: 0, chargedMicros: 5,
-      active: 0, recent: 0, unknownCosts: 0, dailyLimitMicros: 100 });
+      active: 0, recent: 0, unknownCosts: 0, dailyLimitMicros });
     if (path.pathname === "/api/v1/records") return Response.json({ items: [{ id: record, title: "Record", content: "private",
       revision: 1, createdAt: "2026-09-24T10:00:00.000Z", updatedAt: "2026-09-24T10:00:00.000Z" }], nextCursor: null });
     if (path.pathname === "/api/v1/conversations") return Response.json({
@@ -112,6 +113,8 @@ it("exports visible account data, including archived conversations and paged pro
       scan: { status: "rejected",reason: "malware",checkedAt: 2,policyVersion: 1 } });
     expect(exported.find(line => line.type === "upload_usage")?.value).toEqual({ files: 1, bytes: 4 });
     expect(exported.find(line => line.type === "budget_reservation")?.value).toMatchObject({ operationId: operation,actualMicros: 5 });
+    expect(exported[0].value.format).toBe("ai-app-jumpstart-visible-data-v10");
+    expect(exported.find(line => line.type === "usage")?.value).toMatchObject({ dailyLimitMicros,chargedMicros: 5 });
     expect(await run(["export", "verify", output], {})).toMatchObject({ mode: "application", counts: { reservations: 2, corrections: 2 } });
     expect(exported.filter(line => line.type === "budget_reservation")[1].value).toMatchObject({ operationId: archivedOperation,status: "reserved" });
     expect(exported.filter(line => line.type === "budget_correction").map(line => line.value.correctionId)).toEqual([firstCorrection,secondCorrection]);
@@ -133,6 +136,28 @@ it("publishes no partial export when a later page fails", async () => {
     expect(existsSync(output)).toBe(false);
     expect(await readdir(directory)).toEqual([]);
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+it.each(["current","ledger"])("publishes no paused application export when %s usage fails",async failure => {
+  const directory = await mkdtemp(join(tmpdir(),"jumpstart-paused-export-failure-")),output = join(directory,"incomplete.ndjson");
+  const operation = randomUUID();
+  const request: typeof fetch = async url => {
+    const path = new URL(String(url));
+    if (path.pathname === "/api/v1/account/profile") return Response.json({ id: randomUUID(),email: "alice@example.test",phone: null,
+      createdAt: "2026-09-27T10:00:00.000Z",updatedAt: null,lastSignInAt: null,emailConfirmedAt: null,phoneConfirmedAt: null,providers: ["email"],userMetadata: {} });
+    if (path.pathname === "/api/v1/account/preferences") return Response.json(defaultPreferences);
+    if (path.pathname === "/api/v1/usage") return failure === "current" ? Response.json({ error: { code: "chat_unconfigured" } },{ status: 503 })
+      : Response.json({ day: 1,reservedMicros: 0,chargedMicros: 5,active: 0,recent: 0,unknownCosts: 0,dailyLimitMicros: null });
+    if (path.pathname === "/api/v1/uploads") return Response.json({ items: [],usage: { files: 0,bytes: 0 } });
+    if (path.pathname === "/api/v1/usage/reservations") return path.searchParams.has("cursor")
+      ? Response.json({ error: { code: "provider_unavailable" } },{ status: 503 })
+      : Response.json({ items: [{ operationId: operation,createdAt: 1,day: 0,policyId: "retained",estimateMicros: 20,status: "settled",actualMicros: 5 }],nextCursor: `1.${operation}` });
+    return Response.json({ items: [],nextCursor: null });
+  };
+  try {
+    await expect(run(["export","application",output],{ APP_API_TOKEN: "current-account-token" },request)).rejects.toThrow("HTTP 503");
+    expect(existsSync(output)).toBe(false);expect(await readdir(directory)).toEqual([]);
+  } finally { await rm(directory,{ recursive: true,force: true }); }
 });
 
 it("exports an owned source stream across empty selected pages without losing its absolute cursor", async () => {
@@ -196,5 +221,19 @@ it.each([5,6,7,8])("continues verifying published v%s exports without accepting 
     expect(await run(["export","verify",path],{})).toMatchObject({ format: `ai-app-jumpstart-visible-data-v${version}`,counts });
     await writeFile(path,manifest+JSON.stringify({ type: "upload_review",value: {} })+"\n");
     await expect(run(["export","verify",path],{})).rejects.toThrow("unexpected type");
+  } finally { await rm(directory,{ recursive: true,force: true }); }
+});
+
+it("continues verifying v9 exports with review sections and a positive daily limit",async () => {
+  const directory = await mkdtemp(join(tmpdir(),"jumpstart-export-v9-")),path = join(directory,"old.ndjson");
+  const counts = { profile: 0,records: 0,conversations: 0,projections: 0,artifacts: 0,uploads: 0,uploadUsage: 0,reservations: 0,
+    corrections: 0,usage: 1,runs: 0,preferences: 0,artifactVersions: 0,uploadReviews: 1 };
+  const content = [{ type: "manifest",value: { format: "ai-app-jumpstart-visible-data-v9",mode: "application" } },
+    { type: "upload_review",value: { revision: 0,status: "unreviewed" } },
+    { type: "usage",value: { day: 1,chargedMicros: 5,reservedMicros: 0,active: 0,recent: 0,unknownCosts: 0,dailyLimitMicros: 100 } }]
+    .map(line => JSON.stringify(line)+"\n").join("");
+  try {
+    await writeFile(path,content+JSON.stringify({ type: "end",value: { counts,contentSha256: createHash("sha256").update(content).digest("hex") } })+"\n");
+    expect(await run(["export","verify",path],{})).toMatchObject({ format: "ai-app-jumpstart-visible-data-v9",counts });
   } finally { await rm(directory,{ recursive: true,force: true }); }
 });
