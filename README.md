@@ -34,6 +34,8 @@ Open `http://localhost:3000/records`, enter the token, and create a record. Toke
 
 For a local production process, run `npm run build:local` then `npm start`. The local build compiles both Eve and Next. `npm run test:vercel-build` checks the generated Vercel-mode Next/Eve service graph without a linked project or credentials. A local build is not proof of a successful hosted agent turn.
 
+`npm run test:quickstart` rehearses this SQLite path from a new clone of **committed HEAD**, with a fresh install/cache, disposable CLI-generated keys, build/start, seed reruns, restart persistence, two-owner browser/REST/CLI/MCP access and deterministic AI evals. Install Chromium first with `npx playwright install chromium`. It requires macOS or Linux, uses free loopback ports and removes its own clone/services; local uncommitted changes are excluded. See [testing](docs/testing.md).
+
 ## Shared data access
 
 - Browser: `/records`.
