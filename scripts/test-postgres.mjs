@@ -16,6 +16,7 @@ import { backupPostgresApplication, backupPostgresWorkflow } from "./backup-post
 import { createPostgresDatabaseSet, restorePostgresUploadSnapshot, verifyPostgresDatabaseSet } from "./backup-postgres-databases.mjs";
 import { checkSnapshotUploadCatalog, describeUploadSnapshot } from "./private-upload-snapshot.mjs";
 import { accountOrphanCountQueries,accountOwnerCountQueries } from "./account-data-inventory.mjs";
+import { inspectPostgresAccountData } from "./inspect-account-data.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const withSupabase = process.argv.includes("--supabase");
@@ -129,6 +130,11 @@ async function rehearseUpgrade() {
       "Owner inventory crossed SQL accounts");
     for (const query of accountOrphanCountQueries("sql"))
       assert.equal(Number((await probe.query(query.sql)).rows[0].count),0,`Unattributable ${query.entity} rows in the migrated schema`);
+    const inspection = await inspectPostgresAccountData(upgradeEnv.DATABASE_URL,"upgrade-tenant","upgrade-owner");
+    assert.equal(inspection.ownerRows.records,1);
+    assert.equal(inspection.ownerRows.artifacts,2);
+    assert.equal(inspection.ownerRows.uploads,2);
+    assert.equal(inspection.orphanRowTotal,0);
     assert.deepEqual((await probe.query("SELECT revision,title,content,updated_at FROM app_artifact_versions WHERE artifact_id=$1",[artifactId])).rows,
       [{ revision: 1,title: "Before upgrade",content: "Retained approved text",updated_at: "10" }]);
     assert.equal((await probe.query("SELECT count(*)::int AS count FROM app_artifact_versions WHERE artifact_id=$1",[deletedArtifactId])).rows[0].count,0);

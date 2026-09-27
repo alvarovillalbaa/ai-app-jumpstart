@@ -1,6 +1,7 @@
 import { expect,it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync,mkdtempSync,rmSync,writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SqliteRepository } from "../../lib/data/sqlite";
@@ -10,6 +11,7 @@ import { sqliteUploadCatalog } from "../../lib/uploads/catalog-sqlite";
 import { sqlitePreferenceStore } from "../../lib/preferences/sqlite";
 import { sqliteRequestLimitStore } from "../../lib/request-limits/sqlite";
 import { accountDataInventory,accountOrphanCountQueries,accountOwnerCountQueries,readAccountSchemaSources,verifyAccountDataInventory } from "../../scripts/account-data-inventory.mjs";
+import { inspectSqliteAccountData } from "../../scripts/inspect-account-data.mjs";
 
 const sources = readAccountSchemaSources();
 
@@ -86,6 +88,24 @@ it("finds two owners' real SQLite rows, including child data and tombstones",asy
       expect(orphanQueries.every(query => (db.prepare(query.sql).get() as { count: number }).count === 0)).toBe(true);
       db.exec("INSERT INTO app_budget_attempts VALUES('missing-operation','orphan-attempt')");
       expect((db.prepare(orphanQueries.find(query => query.entity === "budgetAttempts")!.sql).get() as { count: number }).count).toBe(1);
+      const report = inspectSqliteAccountData(path,"acme","alice");
+      expect(report).toMatchObject({ provider: "sqlite",ownerRowTotal: 9,orphanRowTotal: 1,
+        ownerRows: { records: 1,uploads: 1,uploadScans: 1,uploadReviews: 1 },
+        orphanRows: { budgetAttempts: 1 } });
+      const result = spawnSync(process.execPath,["scripts/inspect-account-data.mjs","--sqlite",path],{
+        cwd: process.cwd(),encoding: "utf8",env: { ...process.env,ACCOUNT_AUDIT_TENANT: "acme",ACCOUNT_AUDIT_SUBJECT: "bob" },
+      });
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ provider: "sqlite",ownerRowTotal: 1,orphanRowTotal: 1 });
+      expect(result.stdout).not.toContain("acme");
+      expect(result.stdout).not.toContain("bob");
+      const missing = spawnSync(process.execPath,["scripts/inspect-account-data.mjs","--sqlite",join(dir,"missing.sqlite")],{
+        cwd: process.cwd(),encoding: "utf8",env: { ...process.env,ACCOUNT_AUDIT_TENANT: "acme",ACCOUNT_AUDIT_SUBJECT: "alice" },
+      });
+      expect(missing.status).toBe(1);
+      expect(missing.stdout).toBe("");
+      expect(missing.stderr).not.toContain(dir);
+      expect(missing.stderr).not.toContain("alice");
     } finally { db.close(); }
   } finally { rmSync(dir,{ recursive: true,force: true }); }
 });
