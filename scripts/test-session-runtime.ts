@@ -17,6 +17,8 @@ import { sqliteBudgetStore } from "../lib/budgets/sqlite";
 import { SqliteRepository } from "../lib/data/sqlite";
 import { workflowPostgresFixture } from "./helpers/workflow-postgres-fixture.mjs";
 import { backupPostgresWorkflow } from "./backup-postgres.mjs";
+import { withRequestContext } from "../lib/observability/request";
+import { runtimeReference } from "../lib/observability/runtime";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const postgresWorkflows = process.argv.includes("--postgres-workflows");
@@ -46,11 +48,27 @@ const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: "production", EVE_DEV
 };
 for (const name of ["VERCEL", "VERCEL_ENV", "VERCEL_TARGET_ENV", "VERCEL_OIDC_TOKEN", "AI_GATEWAY_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"]) delete env[name];
 let child: ChildProcess | undefined, diagnostics = "", interrupted = false, validationFailed = false;
+const auditRows: Record<string,unknown>[] = [];
+let auditOverflow = false;
 const secrets = [aliceToken, bobToken, signing.keys.fixture];
 function start(command: string, args: string[]) {
   const process = spawn(command, args, { cwd: fixture, env, stdio: ["ignore", "pipe", "pipe"] });
   const capture = (chunk: Buffer) => { diagnostics = (diagnostics + chunk.toString()).slice(-12000); };
   process.stdout?.on("data", capture); process.stderr?.on("data", capture);
+  let pending = "";
+  process.stdout?.on("data",(chunk: Buffer) => {
+    pending += chunk.toString();
+    const lines = pending.split("\n");pending = lines.pop() ?? "";
+    if (pending.length>32768) pending = "";
+    for (const line of lines) {
+      try {
+        const row = JSON.parse(line);
+        if (["runtime_lifecycle","runtime_session_bound","runtime_step_usage"].includes(row.event)) {
+          if (auditRows.length<2000) auditRows.push(row);else auditOverflow = true;
+        }
+      } catch { /* Unrelated framework output is not an audit record. */ }
+    }
+  });
   return process;
 }
 for (const signal of ["SIGTERM", "SIGINT"] as const) process.on(signal, () => { interrupted = true; child?.kill(signal); });
@@ -140,7 +158,8 @@ try {
   });
   const creation = new BudgetedCreation(broker,budgets,runtimeReservationPolicy(budgetSettings),() => budgetSettings.estimateMicros);
   const input = { message: "One owned turn", operationId: randomUUID() };
-  await creation.create(alice, input);
+  let creationRequestId = "";
+  await withRequestContext(async requestId => { creationRequestId = requestId;await creation.create(alice,input); });
   await eventually(async () => (await broker.read(alice, input.operationId)).status === "active", "Runtime receipt failed to repair the lost response.");
   const recovered = await creation.create(alice, input);
   assert.equal(recovered.status, "active"); assert.ok(recovered.sessionId); assert.equal(dispatches, 1);
@@ -151,6 +170,13 @@ try {
     return events.includes("session.waiting");
   }, "The initial owned turn did not settle.");
   assert.equal(await lines(receipts), 1);
+  await eventually(async () => auditRows.some(row => row.event === "runtime_lifecycle" && row.phase === "model.call.completed" && row.sessionRef === runtimeReference(recovered.sessionId!)),"Native model instrumentation was not discovered or completed.");
+  const binding = auditRows.find(row => row.event === "runtime_session_bound" && row.sessionRef === runtimeReference(recovered.sessionId!));
+  assert.equal(binding?.creationRequestId,creationRequestId);assert.equal(binding?.conversationId,recovered.conversationId);
+  const modelAudit = auditRows.find(row => row.event === "runtime_lifecycle" && row.phase === "model.call.completed" && row.sessionRef === runtimeReference(recovered.sessionId!));
+  assert.equal(modelAudit?.outcome,"completed");assert.ok(typeof modelAudit?.durationMs === "number");
+  assert.equal(modelAudit?.modelRef,runtimeReference("openai/gpt-5.6-luna-fast"));
+  assert.ok(auditRows.some(row => row.event === "runtime_step_usage" && row.creationRequestId === creationRequestId));
   await eventually(async () => (await store.listRuns(alice,input.operationId,{})).items.length === 1,"Owned run summary was not captured.");
   assert.equal((await store.listRuns(alice,input.operationId,{})).items[0].state,"unverified");
   const repair = await reconcileProjections(store,alice,input.operationId,{ resume: true },origin,aliceToken);
@@ -362,6 +388,13 @@ try {
   assert.equal(await budgets.attemptCount({ ...bob, operationId: loopInput.operationId }),1);
   const limits = (await readFile(limitReceipts,"utf8")).trim().split("\n").map(line => JSON.parse(line));
   assert.ok(limits.length >= 3,"Initial/follow-up/compaction must reach the provider boundary.");
+  assert.equal(auditOverflow,false);
+  assert.ok(auditRows.some(row => row.phase === "action.started" && typeof row.callRef === "string"),"Native durable tool lifecycle was not observed.");
+  assert.ok(auditRows.some(row => row.phase === "turn.failed"),"Denied runtime turn had no failure metadata.");
+  const privateAudit = JSON.stringify(auditRows);
+  for (const value of [...secrets,"One owned turn","Continue the owned conversation","loop-budget-test","input-budget-test","private-provider-error"])
+    assert.ok(!privateAudit.includes(value),"Runtime diagnostics captured private data.");
+  console.log("Runtime audit: native lifecycle/timing/usage, signed creation correlation, hashed identifiers, durable tool outcomes and private-payload exclusion passed.");
   assert.equal(limits.length,await lines(receipts),"Every provider call must have one bounded request receipt.");
   assert.ok(limits.every(row => row.maxOutputTokens === 1),"Provider requests exceeded the admitted output limit.");
   assert.ok(limits.every(row => Number.isSafeInteger(row.inputBytes) && row.inputBytes > 0 && row.inputBytes <= budgetSettings.maxInputBytes),"Provider requests exceeded the admitted input payload limit.");

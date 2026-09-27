@@ -1,8 +1,8 @@
 import { defineAgent } from "eve";
-import { workflowConfiguration } from "#lib/workflow.ts";
+import { agentConfiguration } from "#lib/configuration.ts";
 
 export default defineAgent({
-  ...workflowConfiguration(),
+  ...agentConfiguration(),
   defaultTools: false,
   model: "openai/gpt-5.6-luna-fast",
 });

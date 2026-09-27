@@ -28,6 +28,7 @@
     "app": "tsx --env-file-if-exists=.env.local scripts/app-cli.ts",
     "seed:records": "tsx --env-file-if-exists=.env.local scripts/app-cli.ts seed",
     "auth:key": "tsx scripts/create-api-key.ts",
+    "audit:reference": "tsx scripts/audit-reference.ts",
     "db:migrate": "node --env-file-if-exists=.env.local scripts/migrate.ts",
     "db:local:start": "supabase start --exclude realtime,storage-api,imgproxy,postgres-meta,studio,edge-runtime,logflare,vector,supavisor",
     "db:local:status": "supabase status",

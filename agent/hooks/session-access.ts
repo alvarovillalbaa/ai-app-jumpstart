@@ -4,6 +4,7 @@ import { recordRuntimeSession } from "../../lib/agent-access/runtime-receipt";
 import { runtimeBudgets, prepareRuntimeModelCall } from "#lib/budgets.ts";
 import { installBudgetProvider } from "../../lib/budgets/model";
 import { persistRuntimeProjection } from "../../lib/agent-access/projection";
+import { observeRuntimeStream } from "../../lib/observability/runtime";
 
 // Loaded with the runtime hooks before AI SDK resolves the configured string
 // model. Keep Eve's catalog identity and Gateway route intact.
@@ -13,6 +14,7 @@ export default defineHook({
   events: {
     async "*"(event,ctx) {
       if (ctx.session.auth.initiator?.authenticator !== "jumpstart") return;
+      observeRuntimeStream(event,ctx);
       try { await persistRuntimeProjection(await getSessionAccessStore(),event,ctx); }
       catch {
         // The source event is already durable in Eve. A failed secondary copy

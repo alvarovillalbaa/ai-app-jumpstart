@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { sessionAuthorizer } from "../../lib/agent-access/authorize";
 import { sqliteAccessStore } from "../../lib/agent-access/sqlite";
 import { requestHash, signCreation } from "../../lib/agent-access/signing";
+import { withRequestContext } from "../../lib/observability/request";
 
 const alice = { tenant: "project", subject: "alice" }, bob = { ...alice, subject: "bob" };
 const signing = { audience: "agent:test", activeKey: "one", keys: { one: randomBytes(32).toString("hex") } };
@@ -34,6 +35,22 @@ it("denies unknown paths, malformed IDs, subagent streams and unsupported method
   const auth = sessionAuthorizer({ store, signing, identify: async () => alice });
   for (const path of ["/session/private-session", "/session/private-session/other", "/session/%2F/stream", "/session/%/stream", "/session/missing/stream", "/session/private-session/subagents/call/child/stream", "/task-input/token"]) expect(await auth(new Request(`https://app.test/eve/v1${path}`))).toBeNull();
   expect(await auth(new Request("https://app.test/eve/v1/info"))).toMatchObject({ principalId: "alice" });
+});
+
+it("carries only the signed server creation reference and rejects reference tampering",async () => {
+  const operationId = randomUUID(),body = JSON.stringify({ message: "Hello",operationId });
+  await store.reserve({ ...alice,id: randomUUID(),operationId,requestHash: requestHash(body) });
+  const auth = sessionAuthorizer({ store,signing,identify: async () => alice });
+  await withRequestContext(async requestId => {
+    const headers = signCreation(body,alice,signing);
+    const claims = JSON.parse(Buffer.from(headers["x-jumpstart-create"],"base64url").toString("utf8"));
+    expect(claims.creationRequestId).toBe(requestId);
+    const altered = { ...headers,"x-jumpstart-create": Buffer.from(JSON.stringify({ ...claims,creationRequestId: randomUUID() })).toString("base64url") };
+    expect(await auth(new Request("https://app.test/eve/v1/session",{ method: "POST",body,headers: altered }))).toBeNull();
+    const principal = await auth(new Request("https://app.test/eve/v1/session",{ method: "POST",body,headers: { ...headers,"x-request-id": "caller-private-identity" } }));
+    expect(principal).toMatchObject({ attributes: { creationOperationId: operationId,creationRequestId: requestId } });
+    expect(JSON.stringify(principal)).not.toContain("caller-private-identity");
+  });
 });
 it("propagates storage outages without authenticating the caller", async () => {
   vi.spyOn(store, "ownsSession").mockRejectedValue(new Error("storage offline"));

@@ -2,6 +2,7 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto
 import { z } from "zod";
 import { accessOwner, bodyHash, operationId, type AccessOwner, type SessionAccessStore } from "./contract";
 import { structuredRecordRequest, structuredRecordSchema, structuredRecordWire } from "./structured-record";
+import { currentRequestId } from "../observability/request";
 
 const headerName = "x-jumpstart-create";
 const signatureName = "x-jumpstart-signature";
@@ -12,7 +13,7 @@ export type SigningSettings = z.infer<typeof settings>;
 const claimsSchema = accessOwner.extend({
   version: z.literal(1), keyId, audience: z.string().min(1).max(200),
   method: z.literal("POST"), path: z.literal("/eve/v1/session"),
-  operationId, requestHash: bodyHash, issuedAt: z.number().int().positive(), nonce: z.uuid(),
+  operationId, requestHash: bodyHash, issuedAt: z.number().int().positive(), nonce: z.uuid(),creationRequestId: z.uuid().optional(),
 }).strict();
 const plainMessage = z.object({ message: z.string().min(1).max(32_000), operationId }).strict();
 export const creationInput = z.union([plainMessage,structuredRecordRequest]);
@@ -36,7 +37,8 @@ export function signCreation(body: string, owner: AccessOwner, input: SigningSet
   const config = checkedSettings(input), message = createMessage.parse(JSON.parse(body));
   if (Buffer.byteLength(body) > 131072) throw new Error("Creation body exceeds the limit.");
   const claims = claimsSchema.parse({ ...owner, version: 1, keyId: config.activeKey, audience: config.audience,
-    method: "POST", path: "/eve/v1/session", operationId: message.operationId, requestHash: requestHash(body), issuedAt: now, nonce: randomUUID() });
+    method: "POST", path: "/eve/v1/session", operationId: message.operationId, requestHash: requestHash(body), issuedAt: now, nonce: randomUUID(),
+    creationRequestId: currentRequestId() ?? randomUUID() });
   const encoded = Buffer.from(JSON.stringify(claims)).toString("base64url");
   return { [headerName]: encoded, [signatureName]: digest(encoded, config.keys[config.activeKey]).toString("base64url"), "content-type": "application/json" };
 }
@@ -67,7 +69,7 @@ async function boundedBody(request: Request): Promise<Uint8Array | null> {
 }
 
 /** Invalid/expired/replayed signatures return null; provider failures propagate. */
-export async function verifyCreation(request: Request, input: SigningSettings, store: SessionAccessStore, clock = Date.now): Promise<AccessOwner | null> {
+export async function verifyCreationContext(request: Request, input: SigningSettings, store: SessionAccessStore, clock = Date.now): Promise<{ owner: AccessOwner;creationRequestId?: string } | null> {
   const config = checkedSettings(input), url = new URL(request.url);
   if (request.method !== "POST" || url.pathname !== "/eve/v1/session" || url.search || !request.headers.get("content-type")?.startsWith("application/json")) return null;
   const encoded = request.headers.get(headerName) ?? "", signature = request.headers.get(signatureName) ?? "";
@@ -92,5 +94,10 @@ export async function verifyCreation(request: Request, input: SigningSettings, s
   if (now >= claims.issuedAt + ttl) return null;
   const nonceId = requestHash(JSON.stringify([claims.audience, claims.nonce]));
   if (!await store.claimNonce(nonceId, claims.issuedAt + ttl + skew, now)) return null;
-  return owner;
+  return { owner,...(claims.creationRequestId ? { creationRequestId: claims.creationRequestId } : {}) };
+}
+
+/** Owner-only compatibility surface; correlation never changes authorization. */
+export async function verifyCreation(request: Request,input: SigningSettings,store: SessionAccessStore,clock = Date.now): Promise<AccessOwner | null> {
+  return (await verifyCreationContext(request,input,store,clock))?.owner ?? null;
 }

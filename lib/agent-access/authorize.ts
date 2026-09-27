@@ -1,6 +1,6 @@
 import type { AuthFn } from "eve/channels/auth";
 import { accessOwner, sessionId, type AccessOwner, type SessionAccessStore } from "./contract";
-import { createMessage, verifyCreation, type SigningSettings } from "./signing";
+import { createMessage, verifyCreationContext, type SigningSettings } from "./signing";
 
 export type SessionAuthorizerOptions = {
   store: SessionAccessStore;
@@ -16,8 +16,10 @@ export function sessionAuthorizer(options: SessionAuthorizerOptions): AuthFn<Req
     const { pathname } = new URL(request.url);
     let owner: AccessOwner | null;
     let creationOperationId: string | undefined;
+    let creationRequestId: string | undefined;
     if (pathname === "/eve/v1/session" && request.method === "POST") {
-      owner = await verifyCreation(request, options.signing, options.store, options.clock);
+      const verified = await verifyCreationContext(request, options.signing, options.store, options.clock);
+      owner = verified?.owner ?? null;creationRequestId = verified?.creationRequestId;
       if (owner) creationOperationId = createMessage.parse(await request.clone().json()).operationId;
     } else {
       const info = pathname === "/eve/v1/info" && request.method === "GET";
@@ -34,6 +36,7 @@ export function sessionAuthorizer(options: SessionAuthorizerOptions): AuthFn<Req
     }
     if (!owner) return null;
     return { authenticator: "jumpstart", principalType: "user", principalId: owner.subject,
-      subject: owner.subject, issuer: owner.tenant, attributes: { tenant: owner.tenant, ...(creationOperationId ? { creationOperationId } : {}) } };
+      subject: owner.subject, issuer: owner.tenant, attributes: { tenant: owner.tenant, ...(creationOperationId ? { creationOperationId } : {}),
+        ...(creationRequestId ? { creationRequestId } : {}) } };
   };
 }

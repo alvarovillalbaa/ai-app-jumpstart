@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHmac,randomBytes, randomUUID } from "node:crypto";
 import { sqliteAccessStore } from "../../lib/agent-access/sqlite";
 import { requestHash, signCreation, verifyCreation, type SigningSettings } from "../../lib/agent-access/signing";
 
@@ -46,4 +46,12 @@ it("allows a retained rotation key and rejects a removed key", async () => {
 });
 it("rejects forwarding assertions at the signer boundary", () => {
   expect(() => signCreation(JSON.stringify({ message: "Hello", operationId, principal: "victim" }), owner, config, now)).toThrow();
+});
+
+it("accepts retained version-one signatures that predate the optional correlation claim",async () => {
+  const headers = signCreation(body,owner,config,now);
+  const claims = JSON.parse(Buffer.from(headers["x-jumpstart-create"],"base64url").toString("utf8"));delete claims.creationRequestId;
+  headers["x-jumpstart-create"] = Buffer.from(JSON.stringify(claims)).toString("base64url");
+  headers["x-jumpstart-signature"] = createHmac("sha256",Buffer.from(config.keys.current,"hex")).update(headers["x-jumpstart-create"]).digest("base64url");
+  expect(await verifyCreation(request(headers),config,store,() => now)).toEqual(owner);
 });

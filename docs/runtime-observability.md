@@ -1,0 +1,38 @@
+# Runtime diagnostics and correlation
+
+The template uses Eve's native instrumentation providers for session, delivery, turn, model-attempt, model-call, action and approval lifecycle metadata. The API is experimental in the pinned Eve version; `agent/agent.ts` calls the shared `agent/lib/configuration.ts` factory, which enables `experimental.instrumentationProviders` while preserving the selected Workflow world and build dependencies. The production model and Gateway routing remain unchanged. There is no separate tracing client, database or required external service.
+
+`agent/instrumentation/audit.ts` emits bounded-field JSON `runtime_lifecycle` rows to process stdout. Each row contains a schema version, observation timestamp, phase and SHA-256 operation reference. Available session, turn, attempt, model, provider, tool and call identifiers are also hashed. Native operation-scoped JSON state carries the initial timestamp and selected references across suspension; repeated starts preserve that timestamp. Terminal rows report elapsed wall-clock milliseconds and an outcome, including the wait from an input request to its resolution. Missing start state gives a null duration, and a backwards clock gives zero. Elapsed time includes suspension/recovery and is not provider billing time.
+
+Completed model-call rows include reported input/output/cache token counts. Absent, negative or invalid counts are null; an explicitly reported zero remains zero. These are observations, not exact preflight token enforcement or invoice verification. A separate `runtime_step_usage` row records the public stream's reported micro-USD cost, rounded upward, or null with `costSource: unknown`. It omits unsafe/out-of-range costs and does not change the reservation ledger. A step can include several model calls; do not sum its cost together with separate provider estimates. Native model-call metadata does not supply USD, and cost cannot be inferred from token counts without a reviewed model price.
+
+## Link an application request to runtime work
+
+The application HTTP boundary generates its own UUID and ignores caller correlation headers. The creation signer includes that UUID as an optional HMAC-covered `creationRequestId`; non-HTTP callers receive a new server-generated UUID. Signature/body/owner/reservation/replay checks remain unchanged. The optional claim preserves compatibility with retained version-one signatures. A caller cannot replace it through a header or body without invalidating the signature or request contract.
+
+After the runtime's ownership binding succeeds, `runtime_session_bound` links the creation request UUID, application conversation/operation UUIDs and hashed `sessionRef`. Subsequent native rows can be joined by that reference; stream usage also carries the durable signed creation UUID. This is the **creation** request reference, not the request ID of every continuation, approval, replay or compact request. Older sessions without the claim still emit runtime metadata but have no creation reference. A failed diagnostic read/write does not fail binding, change admission, refund work or repeat a model call.
+
+For split deployments, upgrade the Eve verifier/worker before the web signer. The new verifier accepts older signatures; an older strict verifier rejects the added claim from the new signer. Coordinate rollback of both services instead of rolling back only the worker. No database migration or creation-body hash change is needed. An unacknowledged dispatch retains the existing ambiguous-start behavior; never retry it by creating another operation merely to obtain a diagnostic reference.
+
+Given an owner-authorized runtime ID or a configured model/tool name, compute its reference locally:
+
+```sh
+npm run audit:reference -- openai/gpt-5.6-luna-fast
+npm run audit:reference -- YOUR_SESSION_ID
+```
+
+The helper returns only the digest and needs neither credentials nor a server. Do not pass tokens, prompts or owner identifiers: hashes are correlation references, not anonymization of low-entropy data or an authorization mechanism. Keep logs private and apply retention/access controls.
+
+## Capture policy and replaceable destinations
+
+The custom audit provider explicitly requests metadata only for every channel audience. It selects fixed fields and excludes principals, payloads, prompts, messages, reasoning, model responses, tool arguments/results, approval text, URLs, arbitrary error codes/messages, provider metadata and inbound request IDs. It does not emit token deltas. Its sink and state failures are observational and cannot alter execution. Native providers are failure-isolated; the audit has no asynchronous export queue or third-party endpoint.
+
+`agent/instrumentation/otel.ts` sets the native OpenTelemetry capture ceiling to `recordInputs: false` and `recordOutputs: false`. The `local.ts` and `agent-runs.ts` slots additionally apply Eve's input/output redactors before their managed destinations. Local trace spooling and Vercel Agent Runs follow the framework's environment rules. This does not sanitize every framework/platform log or automatic Workflow tag: Eve's `$eve.title` tag can derive from the initial message, and platform access logs need separate review. Hosted export, retention, sampler behavior and backend availability remain deployment acceptance work.
+
+To add or replace an approved observability backend, use the native one-file-per-provider layout and `otelIntegration()` as documented in `node_modules/eve/docs/guides/instrumentation-providers.md`. Preserve the capture ceiling and review metadata, credentials and retention at the destination. To disable a native slot, export `disableInstrumentation()` from that slot; do not add a conflicting legacy `agent/instrumentation.ts`. Changing content capture requires an explicit deployment review. `EVE_TELEMETRY_DISABLED` controls framework telemetry and is not a switch for these authored application audit rows.
+
+## Verification and operational limits
+
+Unit contracts cover private-field exclusion, explicit zero versus unknown usage, restored/replayed timing, missing starts, backwards clocks, invalid state and broken sinks. Signed-creation tests cover correlation tampering, ignored caller headers and old signatures. The real compiled Eve runtime verifies native discovery, signed session correlation, timing/usage, durable tool outcomes and denied-turn metadata; its existing snapshot/replay, provider-attempt caps and ownership tests continue to run on local and PostgreSQL Workflow storage. Test models are deterministic and make no paid calls.
+
+Collect `runtime_lifecycle` outcomes `failed`, `rejected`, `cancelled` and `abandoned` alongside the [application HTTP/MCP diagnostics](operations.md), distinguishing cancellation and rejection from infrastructure failure. `runtime_step_usage` with unknown cost needs ledger review, not an automatic zero settlement. A missing terminal can mean interruption or a logging loss; these rows are best-effort diagnostics, not an append-only audit ledger, exactly-once events, canonical transcripts or proof of complete capture. Sink failures are swallowed, so monitor the platform's log pipeline separately. External alert rules, full cross-service W3C propagation and hosted exporter acceptance remain open.
