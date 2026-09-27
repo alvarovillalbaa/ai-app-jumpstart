@@ -73,8 +73,8 @@ export function RecordsPanel({ credential, headingLevel = 1 }: { credential?: ()
         event.preventDefault(); const feedback = captureFeedback();void action(async current => {
           await api("", "POST", { title, content });
           if (!current()) return;
-          feedback();
           setTitle(""); setContent(""); await load(current);
+          if (current()) feedback();
         });
       }}>
         <label className="block">Title<input className={inputClass} value={title} onChange={e => setTitle(e.target.value)} required maxLength={200} /></label>
