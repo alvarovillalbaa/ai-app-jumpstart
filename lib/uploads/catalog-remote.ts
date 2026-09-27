@@ -1,3 +1,4 @@
+import { uploadReview,uploadReviewDecision,uploadReviewResult } from "./review-contract";
 import { createClient } from "@supabase/supabase-js";
 import { Pool } from "pg";
 import { z } from "zod";
@@ -17,6 +18,8 @@ function adapter(call: (command: string, input: object) => Promise<unknown>, lis
     },
     async markStored(owner,id) { return z.boolean().parse(await call("markStored",{ ...owned(owner),id: uploadId.parse(id) })); },
     async recordScan(owner,id,decision) { return z.boolean().parse(await call("recordScan",{ ...owned(owner),id: uploadId.parse(id),decision: uploadScanDecision.parse(decision) })); },
+    async getReview(owner,id) { return uploadReview.nullable().parse(await call("getReview",{ ...owned(owner),id: uploadId.parse(id) })); },
+    async recordReview(owner,id,decision) { return uploadReviewResult.parse(await call("recordReview",{ ...owned(owner),id: uploadId.parse(id),decision: uploadReviewDecision.parse(decision) })); },
     async get(owner,id) { return uploadEntry.nullable().parse(await call("get",{ ...owned(owner),id: uploadId.parse(id) })); },
     async list(owner) { return uploadList.parse(await list(owned(owner))); },
     async beginDelete(owner,id) { return z.boolean().parse(await call("beginDelete",{ ...owned(owner),id: uploadId.parse(id) })); },
@@ -32,7 +35,7 @@ export function postgresUploadCatalog(connectionString: string): UploadCatalog {
   const pool = new Pool({ connectionString,max: 5,connectionTimeoutMillis: 5000,idleTimeoutMillis: 10_000,statement_timeout: 10_000 });
   pool.on("error", () => console.error(JSON.stringify({ event: "upload_catalog_pool_error" })));
   return adapter(async (command,input) => {
-    const fn = ["get","recordScan","markStored","beginDelete"].includes(command) ? "app_upload_scan_command" : "app_upload_command";
+    const fn = ["getReview","recordReview"].includes(command) ? "app_upload_review_command" : ["get","recordScan","markStored","beginDelete"].includes(command) ? "app_upload_scan_command" : "app_upload_command";
     return (await pool.query(`SELECT public.${fn}($1,$2::jsonb) AS result`,[command === "recordScan" ? "record" : command,JSON.stringify(input)])).rows[0].result;
   },async owner => (await pool.query("SELECT public.app_upload_scan_command('list',$1::jsonb) AS result",[JSON.stringify(owner)])).rows[0].result,
     async (owner,rawId,rawCutoff) => {
@@ -56,7 +59,7 @@ export function supabaseUploadCatalog(url: string, secret: string): UploadCatalo
     fetch: (input,init) => fetch(input,{ ...init,redirect: "error",signal: AbortSignal.timeout(10_000) }),
   } });
   return adapter(async (command,input) => {
-    const fn = ["get","recordScan","markStored","beginDelete"].includes(command) ? "app_upload_scan_command" : "app_upload_command";
+    const fn = ["getReview","recordReview"].includes(command) ? "app_upload_review_command" : ["get","recordScan","markStored","beginDelete"].includes(command) ? "app_upload_scan_command" : "app_upload_command";
     const { data,error } = await client.rpc(fn,{ command: command === "recordScan" ? "record" : command,input: z.json().parse(input) });
     if (error) throw error;
     return data;

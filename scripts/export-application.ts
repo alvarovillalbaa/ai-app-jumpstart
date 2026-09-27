@@ -13,6 +13,7 @@ import { accountProfile } from "../lib/auth/profile";
 import { ledgerPage, ownerCorrectionPage } from "../lib/budgets/contract";
 import { usageView } from "../lib/budgets/usage";
 import { recordId, recordInput } from "../lib/data/contract";
+import { uploadReview } from "../lib/uploads/review-contract";
 import { uploadPage } from "../lib/uploads/catalog-contract";
 
 type Mode = "records" | "application" | "source-events";
@@ -39,7 +40,7 @@ export async function exportApplication(mode: Mode, output: string, call: Call, 
   const temporary = join(directory, `${randomUUID()}.ndjson`);
   let file: Awaited<ReturnType<typeof open>> | undefined;
   const digest = createHash("sha256");
-  const counts = { profile: 0, preferences: 0, records: 0, conversations: 0, projections: 0, runs: 0, artifacts: 0, artifactVersions: 0, uploads: 0, uploadUsage: 0, reservations: 0, corrections: 0, usage: 0 };
+  const counts = { profile: 0, preferences: 0, records: 0, conversations: 0, projections: 0, runs: 0, artifacts: 0, artifactVersions: 0, uploads: 0, uploadReviews: 0, uploadUsage: 0, reservations: 0, corrections: 0, usage: 0 };
   async function write(type: string, value: unknown) {
     if (!file) throw new Error("Export file is unavailable.");
     const line = `${JSON.stringify({ type, value })}\n`;
@@ -96,7 +97,7 @@ export async function exportApplication(mode: Mode, output: string, call: Call, 
       throw new Error("Export exceeded 10,000 source event pages.");
     }
     await write("manifest", {
-      format: "ai-app-jumpstart-visible-data-v8", mode, exportedAt: new Date().toISOString(),
+      format: "ai-app-jumpstart-visible-data-v9", mode, exportedAt: new Date().toISOString(),
       consistency: "paged-live-reads; concurrent changes may appear or be missed",
       exclusions: mode === "application" ? [
         "Auth credentials, sessions, MFA factors, linked identity details and provider logs; profile is selected fields only",
@@ -104,7 +105,7 @@ export async function exportApplication(mode: Mode, output: string, call: Call, 
         "Budget model-attempt IDs, operator correction notes/evidence and historical daily aggregate rows; owner-visible reservation and correction histories are included",
         "Deleted artifact tombstones and database backups",
         "Conversation projections and run summaries are selected events, not a canonical transcript; private run cache facts are omitted",
-        "Private upload object bytes, deleted upload tombstones and retained scan decisions, and derived data",
+        "Private upload object bytes and extracted text, deleted upload tombstones and retained scan decisions, and derived data",
         "Record creation keys, request hashes and retained deletion fences",
       ] : ["Conversation, artifact, upload, usage, Auth, Eve and budget data","Record creation keys, request hashes and retained deletion fences"],
     });
@@ -148,7 +149,10 @@ export async function exportApplication(mode: Mode, output: string, call: Call, 
         },
       );
       const uploads = uploadPage.parse(await call("/api/v1/uploads"));
-      for (const item of uploads.items) { await write("upload", item); counts.uploads++; }
+      for (const item of uploads.items) {
+        await write("upload", item); counts.uploads++;
+        await write("upload_review",uploadReview.parse(await call(`/api/v1/uploads/${item.id}/review`)));counts.uploadReviews++;
+      }
       await write("upload_usage", uploads.usage); counts.uploadUsage = 1;
       await walk(
         (cursor: string | null) => `/api/v1/usage/reservations?${new URLSearchParams({ limit: "100",...(cursor ? { cursor } : {}) })}`,

@@ -17,7 +17,7 @@ test("browser, REST, CLI and MCP agree on durable clean and rejected upload deci
     const actual = Date.now.bind(Date);
     Date.now = () => actual()+300_000;
   });
-  const name = `scan-${crypto.randomUUID()}.txt`,payload = "Private browser scan fixture";
+  const name = `scan-${crypto.randomUUID()}.txt`,payload = "Private browser scan fixture 📝\n<script>window.reviewLeaked = true</script>";
   await page.goto("/uploads");
   await page.getByLabel("Access token").fill(token("owner"));
   await page.getByRole("button",{ name: "Connect" }).click();
@@ -60,10 +60,40 @@ test("browser, REST, CLI and MCP agree on durable clean and rejected upload deci
       const actual = Date.now;
       try {
         Date.now = () => actual()+300_000;
-        expect(await run(["uploads","download-link",file,output],environment)).toMatchObject({ size: payload.length });
+        expect(await run(["uploads","download-link",file,output],environment)).toMatchObject({ size: Buffer.byteLength(payload,"utf8") });
       } finally { Date.now = actual; }
       expect(await readFile(output,"utf8")).toBe(payload);
     } finally { await rm(directory,{ recursive: true,force: true }); }
+    const currentMetadata = await (await request.get(url,{ headers })).json();
+    expect((await request.get(`${url}/text`,{ headers })).status()).toBe(409);
+    expect((await request.get(`${url}/review`,{ headers: { authorization: `Bearer ${token("other")}` } })).status()).toBe(404);
+    expect((await request.get(`${url}/text`,{ headers: { authorization: `Bearer ${token("metadata")}` } })).status()).toBe(403);
+    expect((await request.put(`${url}/review`,{ headers,data: { revision: 0,sha256: currentMetadata.sha256,approved: true,checkedAt: 1 } })).status()).toBe(400);
+    await row.getByRole("button",{ name: "View processing review" }).click();
+    await expect(row).toContainText("Processing unreviewed");
+    page.once("dialog",dialog => dialog.accept());
+    await row.getByRole("button",{ name: "Approve processing",exact: true }).click();
+    await expect(row).toContainText("Processing approved");
+    await row.getByRole("button",{ name: "Read approved text",exact: true }).click();
+    await expect(row.getByText(payload,{ exact: true })).toBeVisible();
+    expect(await page.evaluate(() => "reviewLeaked" in window)).toBe(false);
+    await auditAccessibility(page,"approved file text review");
+    expect(await run(["uploads","review",id],environment)).toMatchObject({ status: "approved",revision: 1,sha256: currentMetadata.sha256 });
+    expect(await run(["uploads","text",id],environment)).toMatchObject({ text: payload,reviewRevision: 1,trust: "untrusted-user-content" });
+    const extracted = await client.callTool({ name: "uploads_extract_text",arguments: { id } });
+    expect(extracted.isError).not.toBe(true);
+    expect(JSON.parse((extracted.content as { text: string }[])[0].text)).toMatchObject({ text: payload,sha256: currentMetadata.sha256 });
+    const revoked = await client.callTool({ name: "uploads_review_update",arguments: { id,revision: 1,sha256: currentMetadata.sha256,approved: false } });
+    expect(revoked.isError).not.toBe(true);
+    expect((await request.get(`${url}/text`,{ headers })).status()).toBe(409);
+    await row.getByRole("button",{ name: "Read approved text",exact: true }).click();
+    await expect(row.getByText(payload,{ exact: true })).toHaveCount(0);
+    await expect(row.getByRole("alert")).toContainText("Approve this file");
+    await row.getByRole("button",{ name: "Refresh review",exact: true }).click();
+    await expect(row).toContainText("Processing revoked");
+    page.once("dialog",dialog => dialog.accept());
+    await row.getByRole("button",{ name: "Approve processing",exact: true }).click();
+    await expect(row).toContainText("Processing approved");
     const downloadPromise = page.waitForEvent("download");
     const downloadRequest = page.waitForRequest(request => request.url().includes(`${url}/download?grant=`));
     await row.getByRole("button",{ name: "Download after scan" }).click();
@@ -84,6 +114,8 @@ test("browser, REST, CLI and MCP agree on durable clean and rejected upload deci
     expect((await request.get(link.url,{ headers })).status()).toBe(422);
     expect((await client.callTool({ name: "uploads_scan",arguments: { id } })).isError).toBe(true);
     expect(await run(["uploads","get",id],environment)).toMatchObject({ state: "rejected",scan: { status: "rejected",reason: "malware" } });
+    expect(await run(["uploads","review",id],environment)).toMatchObject({ status: "revoked",approvedAt: null,checkedAt: null });
+    expect((await client.callTool({ name: "uploads_extract_text",arguments: { id } })).isError).toBe(true);
   } finally { await client.close(); }
   await page.reload();
   await page.getByLabel("Access token").fill(token("owner"));

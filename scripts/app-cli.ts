@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { uploadReview,uploadReviewInput,extractedUploadText } from "../lib/uploads/review-contract";
 import { readFile,stat } from "node:fs/promises";
 import { basename } from "node:path";
 import { historyOptions, historyPatch, operationId } from "../lib/agent-access/contract";
@@ -30,7 +31,7 @@ export async function run(args: string[], env: Record<string, string | undefined
     seed: "npm run app -- seed [--allow-remote] (two idempotent, owner-scoped example records)",
     conversations: "npm run app -- conversations <list [--archived] [--limit N] [--cursor CURSOR] | get OPERATION_UUID | events OPERATION_UUID [AFTER_INGESTION_INDEX] | runs OPERATION_UUID [AFTER_INGESTION_INDEX] | source-events OPERATION_UUID [START_SOURCE_INDEX] | reconcile OPERATION_UUID [START_SOURCE_INDEX] | update OPERATION_UUID JSON_FILE>",
     artifacts: "npm run app -- artifacts <list [--limit N] [--cursor CURSOR] | get ARTIFACT_UUID | update ARTIFACT_UUID patch.json | versions ARTIFACT_UUID [--limit N] [--before N] | delete ARTIFACT_UUID>",
-    uploads: "npm run app -- uploads <list | get UPLOAD_UUID | put FILE | scan UPLOAD_UUID | link UPLOAD_UUID | download UPLOAD_UUID OUTPUT_FILE | download-link LINK_JSON_FILE OUTPUT_FILE | delete UPLOAD_UUID> (scan/download/link require uploads:download and an enabled scan-on-read policy)",
+    uploads: "npm run app -- uploads <list | get UPLOAD_UUID | review UPLOAD_UUID | review-update UPLOAD_UUID decision.json | text UPLOAD_UUID | put FILE | scan UPLOAD_UUID | link UPLOAD_UUID | download UPLOAD_UUID OUTPUT_FILE | download-link LINK_JSON_FILE OUTPUT_FILE | delete UPLOAD_UUID> (scan/download/link/text require uploads:download and scan-on-read; processing approval also requires uploads:write)",
     account: "npm run app -- account <profile | preferences | preferences update JSON_FILE> (current registered-user token required)",
     usage: "npm run app -- usage [reservations|corrections [--limit N] [--cursor CURSOR]] (verified user token required)",
     export: "npm run app -- export <records OUTPUT.ndjson | application OUTPUT.ndjson | source-events OPERATION_UUID OUTPUT.ndjson | verify FILE.ndjson> (private, no-clobber; verification works offline)",
@@ -123,6 +124,13 @@ export async function run(args: string[], env: Record<string, string | undefined
   if (command === "uploads") {
     const [action,...options] = rest;
     if (action === "list" && options.length === 0) return call("/api/v1/uploads");
+    if (action === "review" && options.length === 1) return uploadReview.parse(await call(`/api/v1/uploads/${uploadId.parse(options[0])}/review`));
+    if (action === "text" && options.length === 1) return extractedUploadText.parse(await call(`/api/v1/uploads/${uploadId.parse(options[0])}/text`));
+    if (action === "review-update" && options.length === 2) {
+      const info = await stat(options[1]);if (!info.isFile() || info.size > 4096) throw new Error("Use a review JSON file of at most 4 KiB.");
+      const input = uploadReviewInput.parse(JSON.parse(await readFile(options[1],"utf8")));
+      return uploadReview.parse(await call(`/api/v1/uploads/${uploadId.parse(options[0])}/review`,"PUT",JSON.stringify(input)));
+    }
     if (action === "scan" && options.length === 1) return call(`/api/v1/uploads/${uploadId.parse(options[0])}/scan`,"POST","{}");
     if (action === "link" && options.length === 1) return uploadDownloadLink.parse(await call(`/api/v1/uploads/${uploadId.parse(options[0])}/download-link`,"POST","{}"));
     if (action === "download-link" && options.length === 2) {

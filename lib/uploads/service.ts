@@ -1,3 +1,4 @@
+import { uploadReviewInput, extractedUploadText, MAX_EXTRACTED_TEXT_BYTES } from "./review-contract";
 import type { Principal } from "../data/service";
 import { AppError } from "../http/errors";
 import { uploadId } from "./schema";
@@ -87,6 +88,38 @@ export class UploadService {
       if (grant) assertDownloadGrantLive(grant);
       return { row: current,bytes: checked.bytes };
     });
+  }
+  async review(rawId: string) {
+    const result = await this.catalog.getReview(this.owner("uploads:read"),uploadId.parse(rawId));
+    if (!result) throw new AppError(404,"not_found","Upload not found.");
+    return result;
+  }
+  async decideReview(rawId: string,input: unknown) {
+    const owner = this.owner("uploads:write"),id = uploadId.parse(rawId),decision = uploadReviewInput.parse(input);
+    const before = await this.catalog.getReview(owner,id);
+    if (!before) throw new AppError(404,"not_found","Upload not found.");
+    if (before.sha256 !== decision.sha256 || before.revision !== decision.revision) throw new AppError(409,"upload_review_conflict","Upload review changed. Refresh before deciding again.");
+    const scanned = decision.approved ? await this.scanned(id) : null;
+    const result = await this.catalog.recordReview(owner,id,{ ...decision,at: Date.now(),...(scanned ? { checkedAt: scanned.row.scan!.checkedAt } : {}) });
+    if (result.status === "unavailable") throw new AppError(404,"not_found","Upload not found.");
+    if (result.status === "conflict") throw new AppError(409,"upload_review_conflict","Upload review changed. Refresh before deciding again.");
+    if (result.status === "busy") throw new AppError(409,"upload_busy","Upload changed during review. Refresh its status.");
+    return result.review;
+  }
+  async extractText(rawId: string) {
+    const owner = this.owner("uploads:download"),id = uploadId.parse(rawId);
+    const before = await this.catalog.getReview(owner,id);
+    if (!before) throw new AppError(404,"not_found","Upload not found.");
+    if (before.status !== "approved") throw new AppError(409,"upload_review_required","Approve this file for processing before extracting its text.");
+    const row = await this.catalog.get(owner,id);
+    if (!row || row.mediaType !== "text/plain") throw new AppError(415,"upload_extraction_unsupported","Text extraction supports UTF-8 .txt files on this host.");
+    if (row.size > MAX_EXTRACTED_TEXT_BYTES) throw new AppError(413,"upload_extraction_too_large","Text extraction is limited to 32 KiB. Upload a smaller text file.");
+    const scanned = await this.scanned(id);
+    const after = await this.catalog.getReview(owner,id);
+    if (!after || after.status !== "approved" || after.revision !== before.revision || after.sha256 !== scanned.row.sha256) throw new AppError(409,"upload_review_conflict","Upload review changed during extraction. No text was released.");
+    const text = new TextDecoder("utf-8",{ fatal: true }).decode(scanned.bytes);
+    if (!text.length) throw new AppError(422,"invalid_upload","Upload contains no extractable text.");
+    return extractedUploadText.parse({ id,sha256: after.sha256,reviewRevision: after.revision,mediaType: "text/plain",text,trust: "untrusted-user-content" });
   }
   async download(rawId: string,grant?: string) {
     const verified = grant === undefined ? undefined : verifyUploadDownload(this.owner("uploads:download"),rawId,grant);

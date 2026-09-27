@@ -1,5 +1,6 @@
 "use client";
 
+import { UploadReviewPanel } from "./upload-review";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { browserAuth } from "@/lib/auth/browser";
@@ -50,6 +51,7 @@ export function UploadQuarantine({ settings, userId, downloadEnabled = false,dow
   const [acting, setActing] = useState<{ id: string;kind: "scan" | "download" | "delete" } | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [reviewEpoch,setReviewEpoch] = useState(0);
 
   const credential = useCallback(async () => {
     if (!client) return token;
@@ -75,7 +77,7 @@ export function UploadQuarantine({ settings, userId, downloadEnabled = false,dow
       const body: unknown = await response.json().catch(() => null);
       if (!response.ok) throw new Error(messageFrom(body, `Uploads are unavailable (${response.status}).`));
       const result = uploadPage.parse(body);
-      if (current === generation.current && !controller.signal.aborted) { setPage(result); setConnected(true); }
+      if (current === generation.current && !controller.signal.aborted) { setPage(result); setConnected(true);setReviewEpoch(value => value+1); }
     } catch (cause) {
       if (current === generation.current && !controller.signal.aborted) setError(cause instanceof Error ? cause.message : "Uploads are unavailable.");
     } finally { if (current === generation.current && !controller.signal.aborted) setBusy(false); }
@@ -244,11 +246,12 @@ export function UploadQuarantine({ settings, userId, downloadEnabled = false,dow
     }
   }
 
+  const reviewGeneration = generation.current;
   if (!signedIn) return <main className="p-8"><p role="alert">Your account changed or your session ended.</p><Link href="/login?next=/uploads">Sign in again</Link></main>;
   return <main className="mx-auto max-w-3xl space-y-6 p-6 sm:p-8">
     <h1 className="text-3xl font-medium">Private uploads</h1>
     <p className="text-muted-foreground">{downloadEnabled
-      ? "Store files in private quarantine. Owner downloads require a fresh clean scan; files cannot be previewed or used by the agent."
+      ? "Store files in private quarantine. Owner downloads require a fresh clean scan. Approved UTF-8 text can be read here or through authenticated tools; files are not sent to the agent."
       : "Store files in private quarantine. Files cannot be downloaded, previewed or used by the agent until scanning and release are available."}</p>
     {!connected ? <form className="space-y-3" onSubmit={event => { event.preventDefault(); void load(); }}>
       <label className="block">Access token<input className="mt-1 w-full rounded border bg-background p-2" type="password" autoComplete="off" value={token} onChange={event => setToken(event.target.value)} minLength={32} required /></label>
@@ -270,6 +273,7 @@ export function UploadQuarantine({ settings, userId, downloadEnabled = false,dow
         {!page.items.length ? <p>No uploads yet.</p> : <ul className="divide-y">{page.items.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 py-4">
           <div className="min-w-0"><h3 className="break-words font-medium">{item.name}</h3><p className="text-sm text-muted-foreground">{item.state === "clean" ? downloadEnabled ? "Last scan passed · each download is scanned again" : "Last scan passed · downloads disabled on this host" : item.state === "rejected" ? item.scan?.status === "rejected" && item.scan.reason === "integrity" ? "Rejected · stored bytes failed validation" : "Rejected · malware scan failed" : item.state === "quarantined" ? downloadEnabled ? "Quarantined · scan required for each owner download" : "Quarantined · unavailable for download or agent use" : item.state === "deleting" ? "Deletion pending · retry deletion" : "Storage pending · unavailable for use"} · {(item.size / 1024).toFixed(1)} KiB · {new Date(item.createdAt).toLocaleString()}</p>
             {item.scan && <p className="text-sm text-muted-foreground">Last checked {new Date(item.scan.checkedAt).toLocaleString()}</p>}</div>
+          {downloadEnabled && <UploadReviewPanel key={`${item.id}:${reviewEpoch}`} item={item} credential={credential} isCurrent={() => generation.current === reviewGeneration && (!settings || identity.current === userId)} disabled={uploading || acting !== null} />}
           <div className="flex flex-wrap gap-2">{downloadEnabled && (item.state === "quarantined" || item.state === "clean") && <>
             <button className={buttonClass} disabled={uploading || acting !== null} onClick={() => void scan(item)}>{item.state === "clean" ? "Scan again" : "Scan file"}</button>
             <button className={buttonClass} disabled={uploading || acting !== null} onClick={() => void download(item)}>Download after scan</button></>}

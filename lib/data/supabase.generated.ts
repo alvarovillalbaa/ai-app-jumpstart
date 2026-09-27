@@ -441,6 +441,38 @@ export type Database = {
         }
         Relationships: []
       }
+      app_upload_reviews: {
+        Row: {
+          approved_at: number | null
+          approved_sha256: string | null
+          checked_at: number | null
+          revision: number
+          upload_id: string
+        }
+        Insert: {
+          approved_at?: number | null
+          approved_sha256?: string | null
+          checked_at?: number | null
+          revision: number
+          upload_id: string
+        }
+        Update: {
+          approved_at?: number | null
+          approved_sha256?: string | null
+          checked_at?: number | null
+          revision?: number
+          upload_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "app_upload_reviews_upload_id_fkey"
+            columns: ["upload_id"]
+            isOneToOne: true
+            referencedRelation: "app_uploads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       app_upload_scans: {
         Row: {
           checked_at: number
@@ -637,6 +669,10 @@ export type Database = {
         Returns: Json
       }
       app_upload_list: { Args: { input: Json }; Returns: Json }
+      app_upload_review_command: {
+        Args: { command: string; input: Json }
+        Returns: Json
+      }
       app_upload_scan_command: {
         Args: { command: string; input: Json }
         Returns: Json

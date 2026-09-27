@@ -1,3 +1,4 @@
+import { uploadReviewDecision, uploadReview, uploadReviewResult, type UploadReviewDecision } from "./review-contract";
 import { z } from "zod";
 import { accessOwner, type AccessOwner } from "../agent-access/contract";
 import { uploadId, uploadName, uploadMediaType } from "./schema";
@@ -48,6 +49,8 @@ export interface UploadCatalog {
   reserve(owner: AccessOwner, input: UploadReservation, quota: UploadQuota): Promise<z.infer<typeof uploadReserveResult>>;
   markStored(owner: AccessOwner, id: string): Promise<boolean>;
   recordScan(owner: AccessOwner,id: string,decision: UploadScanDecision): Promise<boolean>;
+  getReview(owner: AccessOwner,id: string): Promise<z.infer<typeof uploadReview> | null>;
+  recordReview(owner: AccessOwner,id: string,decision: UploadReviewDecision): Promise<z.infer<typeof uploadReviewResult>>;
   get(owner: AccessOwner, id: string): Promise<UploadEntry | null>;
   list(owner: AccessOwner): Promise<UploadEntry[]>;
   beginDelete(owner: AccessOwner, id: string): Promise<boolean>;
@@ -62,6 +65,8 @@ export const uploadCatalogCommand = z.discriminatedUnion("operation", [
   accessOwner.extend({ operation: z.literal("upload.reserve"), input: uploadReservation, quota: uploadQuota }).strict(),
   accessOwner.extend({ operation: z.literal("upload.markStored"), id: uploadId }).strict(),
   accessOwner.extend({ operation: z.literal("upload.recordScan"),id: uploadId,decision: uploadScanDecision }).strict(),
+  accessOwner.extend({ operation: z.literal("upload.getReview"),id: uploadId }).strict(),
+  accessOwner.extend({ operation: z.literal("upload.recordReview"),id: uploadId,decision: uploadReviewDecision }).strict(),
   accessOwner.extend({ operation: z.literal("upload.get"), id: uploadId }).strict(),
   accessOwner.extend({ operation: z.literal("upload.list") }).strict(),
   accessOwner.extend({ operation: z.literal("upload.beginDelete"), id: uploadId }).strict(),

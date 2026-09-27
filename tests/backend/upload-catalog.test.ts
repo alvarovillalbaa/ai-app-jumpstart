@@ -36,15 +36,23 @@ it("upgrades the legacy SQLite state constraint and retains decisions across res
   try {
     expect(await catalog.get(owner,id)).toMatchObject({ name: "legacy.txt",state: "quarantined" });
     expect(await catalog.get(owner,deleted)).toMatchObject({ state: "deleted" });
+    expect(await catalog.getReview(owner,id)).toMatchObject({ status: "unreviewed",revision: 0 });
+    expect(await catalog.getReview(owner,deleted)).toBeNull();
     const decision = { status: "clean" as const,sha256: "a".repeat(64),checkedAt: 2000,policyVersion: 1 as const };
     expect(await catalog.recordScan(owner,id,decision)).toBe(true);
+    expect(await catalog.recordReview(owner,id,{ sha256: decision.sha256,revision: 0,approved: true,at: 2100,checkedAt: 2000 })).toMatchObject({ status: "updated",review: { status: "approved",revision: 1 } });
     await catalog.close();catalog = sqliteUploadCatalog(path);
     expect(await catalog.get(owner,id)).toMatchObject({ state: "clean",scan: decision });
+    expect(await catalog.getReview(owner,id)).toMatchObject({ status: "approved",revision: 1,approvedAt: 2100,checkedAt: 2000 });
     const rejected = { ...decision,status: "rejected" as const,reason: "malware" as const,checkedAt: 3000 };
     expect(await catalog.recordScan(owner,id,rejected)).toBe(true);
     await catalog.close();catalog = sqliteUploadCatalog(path);
     expect(await catalog.recordScan(owner,id,{ ...decision,checkedAt: 4000 })).toBe(false);
     expect(await catalog.get(owner,id)).toMatchObject({ state: "rejected",scan: rejected });
+    expect(await catalog.getReview(owner,id)).toMatchObject({ status: "revoked",revision: 2,approvedAt: null,checkedAt: null });
+    const raw = new DatabaseSync(path);
+    try { expect(raw.prepare("SELECT approved_sha256,approved_at,checked_at FROM app_upload_reviews WHERE upload_id=?").get(id)).toEqual({ approved_sha256: null,approved_at: null,checked_at: null }); }
+    finally { raw.close(); }
     expect(await catalog.usage(owner)).toEqual({ files: 1,bytes: 6 });
   } finally { await catalog.close();await rm(root,{ recursive: true,force: true }); }
 });

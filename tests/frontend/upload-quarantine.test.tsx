@@ -20,6 +20,40 @@ const item = {
 };
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
+it("clears approved extracted text on refresh and suppresses a late read after account change",async () => {
+  const review = { id: item.id,sha256: item.sha256,revision: 1,status: "approved",approvedAt: 1,checkedAt: 1,policyVersion: 1 };
+  const text = "Alice's private extracted text";
+  let pending = false,resolveText: ((response: Response) => void) | undefined,signal: AbortSignal | undefined;
+  vi.stubGlobal("fetch",vi.fn<typeof fetch>(async (input,init) => {
+    if (String(input).endsWith("/review")) return Response.json(review);
+    if (String(input).endsWith("/text")) {
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer fresh-token");
+      if (pending) {
+        signal = init?.signal ?? undefined;
+        return new Promise<Response>(resolve => { resolveText = resolve; });
+      }
+      return Response.json({ id: item.id,sha256: item.sha256,reviewRevision: 1,mediaType: "text/plain",text,trust: "untrusted-user-content" });
+    }
+    return Response.json({ items: [item],usage: { files: 1,bytes: item.size } });
+  }));
+  render(<UploadQuarantine settings={settings} userId="alice" downloadEnabled />);
+  fireEvent.click(await screen.findByRole("button",{ name: "View processing review" }));
+  fireEvent.click(await screen.findByRole("button",{ name: "Read approved text" }));
+  expect(await screen.findByText(text)).toBeVisible();
+  fireEvent.click(screen.getByRole("button",{ name: /^Refresh$/ }));
+  await waitFor(() => expect(screen.queryByText(text)).not.toBeInTheDocument());
+  fireEvent.click(await screen.findByRole("button",{ name: "View processing review" }));
+  pending = true;
+  fireEvent.click(await screen.findByRole("button",{ name: "Read approved text" }));
+  await waitFor(() => expect(signal).toBeDefined());
+  act(() => auth.listener("SIGNED_OUT",null));
+  expect(signal?.aborted).toBe(true);
+  await act(async () => resolveText?.(Response.json({ id: item.id,sha256: item.sha256,reviewRevision: 1,mediaType: "text/plain",text,trust: "untrusted-user-content" })));
+  expect(screen.queryByText(text)).not.toBeInTheDocument();
+  expect(screen.queryByText(item.name)).not.toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent("Your account changed");
+});
+
 it("refreshes durable clean and rejected decisions after an authenticated scan",async () => {
   let row = { ...item } as Record<string,unknown>;
   let infected = false;

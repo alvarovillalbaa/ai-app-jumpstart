@@ -1,5 +1,6 @@
+import { reviewOfUpload,uploadReviewDecision } from "../lib/uploads/review-contract";
 import { v } from "convex/values";
-import { internalMutation, internalQuery, type QueryCtx } from "./_generated/server";
+import { internalMutation, internalQuery, type QueryCtx,type MutationCtx } from "./_generated/server";
 import { accessOwner, type AccessOwner } from "../lib/agent-access/contract";
 import { uploadCleanupCandidates, uploadCleanupLimit, withUploadScan, uploadScanDecision, uploadList, uploadQuota, uploadReservation, uploadUsage, staleUploadCutoff } from "../lib/uploads/catalog-contract";
 import { uploadId } from "../lib/uploads/schema";
@@ -20,6 +21,32 @@ async function activeRows(ctx: QueryCtx, owner: AccessOwner) {
 const publicEntry = (row: { id: string;name: string;mediaType: string;size: number;sha256: string;createdAt: number;state: string;scan?: unknown }) =>
   withUploadScan({ id: row.id,name: row.name,mediaType: row.mediaType,size: row.size,sha256: row.sha256,createdAt: row.createdAt,state: row.state },row.scan);
 
+async function invalidateReview(ctx: MutationCtx,id: string) {
+  const receipt = await ctx.db.query("uploadReviews").withIndex("by_upload",q => q.eq("uploadId",id)).unique();
+  if (receipt) await ctx.db.patch(receipt._id,{ revision: Math.min(receipt.revision+1,2_147_483_647),approvedSha256: null,approvedAt: null,checkedAt: null });
+}
+export const getReview = internalQuery({
+  args: { ...ownerFields,id: v.string() },
+  handler: async (ctx,args) => {
+    const row = await ownedRow(ctx,args,args.id);
+    if (!row || row.state === "deleted") return null;
+    const receipt = await ctx.db.query("uploadReviews").withIndex("by_upload",q => q.eq("uploadId",row.id)).unique();
+    return reviewOfUpload(row,receipt ?? undefined);
+  },
+});
+export const recordReview = internalMutation({
+  args: { ...ownerFields,id: v.string(),decision: v.any() },
+  handler: async (ctx,args) => {
+    const d = uploadReviewDecision.parse(args.decision),row = await ownedRow(ctx,args,args.id);
+    if (!row || row.state === "deleted") return { status: "unavailable" as const };
+    const receipt = await ctx.db.query("uploadReviews").withIndex("by_upload",q => q.eq("uploadId",row.id)).unique();
+    if (row.sha256 !== d.sha256 || (receipt?.revision ?? 0) !== d.revision) return { status: "conflict" as const };
+    if (d.approved && (row.state !== "clean" || row.scan?.status !== "clean" || row.scan.sha256 !== row.sha256 || row.scan.checkedAt !== d.checkedAt)) return { status: "busy" as const };
+    const changes = { uploadId: row.id,revision: d.revision+1,approvedSha256: d.approved ? row.sha256 : null,approvedAt: d.approved ? d.at : null,checkedAt: d.approved ? d.checkedAt! : null };
+    if (receipt) await ctx.db.patch(receipt._id,changes);else await ctx.db.insert("uploadReviews",changes);
+    return { status: "updated" as const,review: reviewOfUpload(row,changes) };
+  },
+});
 export const reserve = internalMutation({
   args: { ...ownerFields,input: v.any(),quota: v.any() },
   handler: async (ctx,args) => {
@@ -53,6 +80,7 @@ export const recordScan = internalMutation({
     const decision = uploadScanDecision.parse(args.decision),row = await ownedRow(ctx,args,args.id);
     if (!row || row.state !== "quarantined" && row.state !== "clean" || row.sha256 !== decision.sha256 || row.scan?.status === "rejected" ||
         decision.status === "clean" && row.scan && row.scan.checkedAt > decision.checkedAt) return false;
+    if (decision.status === "rejected") await invalidateReview(ctx,row.id);
     await ctx.db.patch(row._id,{ state: decision.status,scan: decision });
     return true;
   },
@@ -81,7 +109,7 @@ export const beginDelete = internalMutation({
   handler: async (ctx,args) => {
     const row = await ownedRow(ctx,args,args.id);
     if (!row) return false;
-    if (["pending","quarantined","clean","rejected"].includes(row.state)) { await ctx.db.patch(row._id,{ state: "deleting" });return true; }
+    if (["pending","quarantined","clean","rejected"].includes(row.state)) { await invalidateReview(ctx,row.id);await ctx.db.patch(row._id,{ state: "deleting" });return true; }
     return row.state === "deleting";
   },
 });
@@ -90,6 +118,7 @@ export const claimStalePending = internalMutation({
   handler: async (ctx,args) => {
     const cutoff = staleUploadCutoff.parse(args.cutoff),row = await ownedRow(ctx,args,args.id);
     if (!row || row.state !== "pending" || row.createdAt > cutoff) return false;
+    await invalidateReview(ctx,row.id);
     await ctx.db.patch(row._id,{ state: "deleting" });
     return true;
   },
@@ -99,7 +128,7 @@ export const finishDelete = internalMutation({
   handler: async (ctx,args) => {
     const row = await ownedRow(ctx,args,args.id);
     if (!row) return false;
-    if (row.state === "deleting") { await ctx.db.patch(row._id,{ state: "deleted" });return true; }
+    if (row.state === "deleting") { await invalidateReview(ctx,row.id);await ctx.db.patch(row._id,{ state: "deleted" });return true; }
     return row.state === "deleted";
   },
 });

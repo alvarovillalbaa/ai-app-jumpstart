@@ -10,7 +10,7 @@ const codes = new Set([
   "invalid_json", "invalid_upload", "not_found", "origin_rejected", "preferences_changed",
   "projection_recovery_failed", "projection_unavailable", "record_deleted", "request_failed",
   "scanner_unavailable", "source_events_unavailable", "storage_contract_error", "storage_unavailable",
-  "unauthorized", "unsupported_media_type", "upload_busy", "upload_conflict", "upload_download_busy",
+  "unauthorized", "unsupported_media_type", "upload_busy", "upload_review_conflict", "upload_review_required", "upload_extraction_unsupported", "upload_extraction_too_large", "upload_conflict", "upload_download_busy",
   "upload_download_disabled", "upload_integrity_failed", "upload_quota", "upload_rejected",
   "upload_storage_unavailable", "write_conflict",
 ]);

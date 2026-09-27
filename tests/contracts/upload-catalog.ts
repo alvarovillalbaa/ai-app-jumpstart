@@ -12,6 +12,55 @@ export function uploadCatalogContract(name: string, factory: () => Promise<Uploa
     beforeEach(async () => { catalog = await factory();owner = { tenant: randomUUID(),subject: "alice" }; });
     afterEach(async () => { await catalog?.close(); });
 
+    it("binds review to owner, digest, current scan and an optimistic revision",async () => {
+      const row = input(),other = { ...owner,subject: "bob" };
+      expect(await catalog.getReview(owner,row.id)).toBeNull();
+      await catalog.reserve(owner,row,quota);await catalog.markStored(owner,row.id);
+      expect(await catalog.getReview(owner,row.id)).toEqual({ id: row.id,sha256: row.sha256,revision: 0,status: "unreviewed",approvedAt: null,checkedAt: null,policyVersion: 1 });
+      const approval = { sha256: row.sha256,revision: 0,approved: true,at: 20,checkedAt: 10 };
+      expect(await catalog.recordReview(owner,row.id,approval)).toEqual({ status: "busy" });
+      await catalog.recordScan(owner,row.id,{ sha256: row.sha256,status: "clean",checkedAt: 10,policyVersion: 1 });
+      expect(await catalog.getReview(other,row.id)).toBeNull();
+      expect(await catalog.recordReview(other,row.id,approval)).toEqual({ status: "unavailable" });
+      expect(await catalog.recordReview(owner,row.id,{ ...approval,sha256: "b".repeat(64) })).toEqual({ status: "conflict" });
+      expect(await catalog.recordReview(owner,row.id,{ ...approval,checkedAt: 9 })).toEqual({ status: "busy" });
+      const results = await Promise.all([20,21,22].map(at => catalog.recordReview(owner,row.id,{ ...approval,at })));
+      expect(results.filter(result => result.status === "updated")).toHaveLength(1);
+      expect(results.filter(result => result.status === "conflict")).toHaveLength(2);
+      expect(await catalog.getReview(owner,row.id)).toMatchObject({ revision: 1,status: "approved",checkedAt: 10 });
+      expect(await catalog.usage(owner)).toEqual({ files: 1,bytes: row.size });
+      await catalog.recordScan(owner,row.id,{ sha256: row.sha256,status: "clean",checkedAt: 30,policyVersion: 1 });
+      expect(await catalog.getReview(owner,row.id)).toMatchObject({ revision: 1,status: "approved",checkedAt: 10 });
+    });
+    it("revocation fences an in-flight first approval even before a receipt exists",async () => {
+      const row = input();await catalog.reserve(owner,row,quota);await catalog.markStored(owner,row.id);
+      const approval = { sha256: row.sha256,revision: 0,approved: true,at: 20,checkedAt: 10 };
+      expect(await catalog.recordReview(owner,row.id,{ sha256: row.sha256,revision: 0,approved: false,at: 15 })).toMatchObject({ status: "updated",review: { revision: 1,status: "revoked",approvedAt: null } });
+      await catalog.recordScan(owner,row.id,{ sha256: row.sha256,status: "clean",checkedAt: 10,policyVersion: 1 });
+      expect(await catalog.recordReview(owner,row.id,approval)).toEqual({ status: "conflict" });
+      expect(await catalog.recordReview(owner,row.id,{ ...approval,revision: 1 })).toMatchObject({ status: "updated",review: { revision: 2,status: "approved" } });
+      expect(await catalog.recordReview(owner,row.id,{ sha256: row.sha256,revision: 2,approved: false,at: 21 })).toMatchObject({ status: "updated",review: { revision: 3,status: "revoked",checkedAt: null } });
+    });
+    it("rejection and deletion clear approval and cannot be undone by a stale decision",async () => {
+      for (const state of ["rejected","deleted"] as const) {
+        const row = input(4);await catalog.reserve(owner,row,quota);await catalog.markStored(owner,row.id);
+        await catalog.recordScan(owner,row.id,{ sha256: row.sha256,status: "clean",checkedAt: 10,policyVersion: 1 });
+        const approval = { sha256: row.sha256,revision: 0,approved: true,at: 20,checkedAt: 10 };
+        expect((await catalog.recordReview(owner,row.id,approval)).status).toBe("updated");
+        if (state === "rejected") {
+          await catalog.recordScan(owner,row.id,{ sha256: row.sha256,status: "rejected",reason: "malware",checkedAt: 30,policyVersion: 1 });
+          expect(await catalog.getReview(owner,row.id)).toMatchObject({ status: "revoked",revision: 2,approvedAt: null,checkedAt: null });
+          expect((await catalog.recordReview(owner,row.id,{ ...approval,revision: 2 })).status).toBe("busy");
+        } else {
+          await catalog.beginDelete(owner,row.id);
+          expect(await catalog.getReview(owner,row.id)).toMatchObject({ status: "revoked",revision: 2 });
+          expect((await catalog.recordReview(owner,row.id,{ ...approval,revision: 2 })).status).toBe("busy");
+          await catalog.finishDelete(owner,row.id);
+          expect(await catalog.getReview(owner,row.id)).toBeNull();
+          expect(await catalog.recordReview(owner,row.id,approval)).toEqual({ status: "unavailable" });
+        }
+      }
+    });
     it("reserves atomically within owner byte and file quotas", async () => {
       const entries = [input(6),input(6),input(6)];
       const results = await Promise.all(entries.map(entry => catalog.reserve(owner,entry,quota)));

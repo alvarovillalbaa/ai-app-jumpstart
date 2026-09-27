@@ -6,6 +6,8 @@ export default defineSchema({
   userPreferences: defineTable({ tenant: v.string(),subject: v.string(),theme: v.union(v.literal("system"),v.literal("light"),v.literal("dark")),soundEnabled: v.boolean(),soundVolume: v.number(),revision: v.number(),updatedAt: v.string() }).index("by_owner",["tenant","subject"]),
   recordCreates: defineTable({ tenant: v.string(),subject: v.string(),key: v.string(),hash: v.string(),id: v.string(),createdAt: v.string() })
     .index("by_owner_key",["tenant","subject","key"]),
+  uploadReviews: defineTable({ uploadId: v.string(),revision: v.number(),approvedSha256: v.union(v.string(),v.null()),approvedAt: v.union(v.number(),v.null()),checkedAt: v.union(v.number(),v.null()) })
+    .index("by_upload",["uploadId"]),
   uploads: defineTable({ id: v.string(),tenant: v.string(),subject: v.string(),name: v.string(),mediaType: v.string(),
     size: v.number(),sha256: v.string(),createdAt: v.number(),state: v.union(v.literal("pending"),v.literal("quarantined"),v.literal("clean"),v.literal("rejected"),v.literal("deleting"),v.literal("deleted")),
     scan: v.optional(v.object({ sha256: v.string(),status: v.union(v.literal("clean"),v.literal("rejected")),checkedAt: v.number(),policyVersion: v.literal(1),reason: v.optional(v.union(v.literal("malware"),v.literal("integrity"))) })) })

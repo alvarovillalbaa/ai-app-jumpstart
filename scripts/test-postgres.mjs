@@ -133,10 +133,16 @@ async function rehearseUpgrade() {
       ])).rows[0].result;
       assert.deepEqual((await probe.query("SELECT id,state FROM app_uploads WHERE id IN ($1,$2) ORDER BY created_at",[uploadId,deletedUploadId])).rows,
         [{ id: uploadId,state: "quarantined" },{ id: deletedUploadId,state: "deleted" }]);
+      assert.equal((await probe.query("SELECT app_upload_review_command('getReview',$1) AS result",[owner])).rows[0].result.status,"unreviewed");
+      assert.equal((await probe.query("SELECT count(*)::int AS count FROM app_upload_reviews WHERE upload_id=$1",[uploadId])).rows[0].count,0,"A readonly review query created a consent row");
       assert.equal(await scan("clean",10),true);
+      assert.equal((await probe.query("SELECT app_upload_review_command('recordReview',$1) AS result",[{ ...owner,decision: { revision: 0,sha256: "a".repeat(64),approved: true,at: 11,checkedAt: 10 } }])).rows[0].result.review.status,"approved");
       // An older binary reads the persisted new state and denies release.
       assert.equal((await probe.query("SELECT app_upload_command('get',$1) AS result",[owner])).rows[0].result.state,"clean");
       assert.equal(await scan("rejected",11,"malware"),true);
+      assert.deepEqual((await probe.query("SELECT approved_sha256,approved_at,checked_at FROM app_upload_reviews WHERE upload_id=$1",[uploadId])).rows[0],
+        { approved_sha256: null,approved_at: null,checked_at: null });
+      assert.equal((await probe.query("SELECT app_upload_review_command('getReview',$1) AS result",[owner])).rows[0].result.status,"revoked");
       assert.equal(await scan("clean",12),false);
       assert.equal((await probe.query("SELECT app_upload_scan_command('get',$1) AS result",[owner])).rows[0].result.state,"rejected");
       assert.deepEqual((await probe.query("SELECT app_upload_command('usage',$1) AS result",[owner])).rows[0].result,{ files: 1,bytes: 10 });

@@ -1,3 +1,4 @@
+import { reviewOfUpload,uploadReviewDecision } from "./review-contract";
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -38,6 +39,14 @@ export function sqliteUploadCatalog(path: string): UploadCatalog {
     CREATE TABLE IF NOT EXISTS app_upload_scans (
       upload_id TEXT PRIMARY KEY,sha256 TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('clean','rejected')),
       reason TEXT,checked_at INTEGER NOT NULL,policy_version INTEGER NOT NULL CHECK(policy_version=1));`);
+  db.exec(`CREATE TABLE IF NOT EXISTS app_upload_reviews (upload_id TEXT PRIMARY KEY REFERENCES app_uploads(id),
+    revision INTEGER NOT NULL CHECK(revision BETWEEN 1 AND 2147483647),approved_sha256 TEXT,approved_at INTEGER,checked_at INTEGER);
+    CREATE TRIGGER IF NOT EXISTS upload_review_invalidate AFTER UPDATE OF state ON app_uploads
+      WHEN NEW.state IN ('rejected','deleting','deleted') AND NEW.state != OLD.state BEGIN
+      UPDATE app_upload_reviews SET revision=MIN(revision+1,2147483647),approved_sha256=NULL,approved_at=NULL,checked_at=NULL WHERE upload_id=NEW.id;
+    END;`);
+  const reviewById = db.prepare("SELECT revision,approved_sha256 AS approvedSha256,approved_at AS approvedAt,checked_at AS checkedAt FROM app_upload_reviews WHERE upload_id=?");
+  type Receipt = { revision: number;approvedSha256: string|null;approvedAt: number|null;checkedAt: number|null };
   const byId = db.prepare("SELECT * FROM app_uploads WHERE id=?");
   const owned = db.prepare("SELECT * FROM app_uploads WHERE tenant=? AND subject=? AND id=?");
   const usage = db.prepare("SELECT COUNT(*) AS files,COALESCE(SUM(size),0) AS bytes FROM app_uploads WHERE tenant=? AND subject=? AND state!='deleted'");
@@ -94,6 +103,32 @@ export function sqliteUploadCatalog(path: string): UploadCatalog {
           .run(id,decision.sha256,decision.status,decision.status === "rejected" ? decision.reason : null,decision.checkedAt,decision.policyVersion);
         db.prepare("UPDATE app_uploads SET state=? WHERE id=?").run(decision.status,id);
         db.exec("COMMIT");return true;
+      } catch (error) { db.exec("ROLLBACK");throw error; }
+    },
+    async getReview(owner,rawId) {
+      const checked = accessOwner.parse(owner),id = uploadId.parse(rawId),row = owned.get(checked.tenant,checked.subject,id) as Row | undefined;
+      return row && row.state !== "deleted" ? reviewOfUpload(row,reviewById.get(id) as Receipt | undefined) : null;
+    },
+    async recordReview(owner,rawId,rawDecision) {
+      const checked = accessOwner.parse(owner),id = uploadId.parse(rawId),decision = uploadReviewDecision.parse(rawDecision);
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        const row = owned.get(checked.tenant,checked.subject,id) as Row | undefined;
+        const receipt = reviewById.get(id) as Receipt | undefined;
+        let result;
+        if (!row || row.state === "deleted") result = { status: "unavailable" as const };
+        else if (row.sha256 !== decision.sha256 || (receipt?.revision ?? 0) !== decision.revision) result = { status: "conflict" as const };
+        else {
+          const scan = scanById.get(id) as { status: string;sha256: string;checkedAt: number } | undefined;
+          if (decision.approved && (row.state !== "clean" || scan?.status !== "clean" || scan.sha256 !== row.sha256 || scan.checkedAt !== decision.checkedAt)) result = { status: "busy" as const };
+          else {
+            db.prepare(`INSERT INTO app_upload_reviews VALUES(?,?,?,?,?) ON CONFLICT(upload_id) DO UPDATE SET
+              revision=excluded.revision,approved_sha256=excluded.approved_sha256,approved_at=excluded.approved_at,checked_at=excluded.checked_at`)
+              .run(id,decision.revision+1,decision.approved ? row.sha256 : null,decision.approved ? decision.at : null,decision.approved ? decision.checkedAt! : null);
+            result = { status: "updated" as const,review: reviewOfUpload(row,reviewById.get(id) as Receipt) };
+          }
+        }
+        db.exec("COMMIT");return result;
       } catch (error) { db.exec("ROLLBACK");throw error; }
     },
     async get(owner,rawId) {
