@@ -6,12 +6,13 @@ import { currentUser } from "@/lib/auth/server";
 import { authSettings } from "@/lib/auth/settings";
 import { uploadDownloadConfigured } from "@/lib/uploads/download-capability";
 import { uploadReaderEnabled } from "@/lib/uploads/agent-reader";
+import { uploadStorageEnabled } from "@/lib/uploads/provider";
 
 export const metadata = { title: "Uploads" };
 
 export default async function UploadsPage() {
   await connection();
-  if (!["local", "supabase"].includes(process.env.UPLOAD_STORAGE_PROVIDER ?? "")) {
+  if (!uploadStorageEnabled(process.env.UPLOAD_STORAGE_PROVIDER)) {
     return <main className="p-8"><h1>Uploads are not enabled</h1><p>Configure a private upload storage provider to use this workspace.</p><Link href="/records">Open records</Link></main>;
   }
   const settings = authSettings();

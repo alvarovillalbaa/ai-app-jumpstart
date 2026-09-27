@@ -1,6 +1,7 @@
 import { accessOwner,operationId,sessionId,type SessionAccessStore,type AccessOwner } from "../agent-access/contract";
 import { AppError } from "../http/errors";
 import { uploadDownloadConfigured } from "./download-capability";
+import { uploadStorageEnabled } from "./provider";
 import { agentUploadReference,extractedUploadText,type AgentUploadReference } from "./review-contract";
 import type { UploadService } from "./service";
 
@@ -12,7 +13,7 @@ export type UploadReaderSession = { id: string;auth: {
 export function uploadReaderEnabled(env: Record<string,string | undefined> = process.env) {
   if (!env.UPLOAD_AGENT_POLICY || env.UPLOAD_AGENT_POLICY === "off") return false;
   if (env.UPLOAD_AGENT_POLICY !== "reviewed-text" || !uploadDownloadConfigured(env) ||
-      !["local","supabase"].includes(env.UPLOAD_STORAGE_PROVIDER ?? "") ||
+      !uploadStorageEnabled(env.UPLOAD_STORAGE_PROVIDER) ||
       !["clamd","remote"].includes(env.UPLOAD_SCANNER_PROVIDER ?? "")) {
     throw new AppError(503,"configuration_error","Reviewed agent uploads require private storage and scan-on-read.");
   }

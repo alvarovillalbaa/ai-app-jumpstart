@@ -42,6 +42,8 @@ Before submitting a filled definition, run `npm run check:cloud-config -- --prov
 
 ## AWS ECS/Fargate
 
+Private uploads can use the [AWS S3 adapter](uploads.md#aws-s3-private-object-storage) instead of a host volume or Supabase Storage. Grant its bucket/object actions to the **task role**, separate from the execution role that pulls images and reads selected runtime secrets. [The example task policy](../deploy/aws/upload-task-policy.example.json) scopes object actions to `uploads/v1/*`; replace its bucket placeholder, review it with your security team and attach it to the task role. Set `UPLOAD_STORAGE_PROVIDER=aws-s3`, `UPLOAD_S3_REGION` and `UPLOAD_S3_BUCKET` on the application container, then run the read-only `check:upload-s3` preflight. The repository does not provision the bucket or IAM policy; review these resources and test them in a disposable AWS account before enabling uploads.
+
 Start from `deploy/aws/task-definition.example.json`. Provision the cluster, VPC/subnets, egress to the databases/providers, security groups, log group, TLS ALB and an IP target group on port 8080. Restrict the task security group to accept load-balancer traffic on 8080, not app/Eve ports. The execution role needs image-pull, log-write and selected secret-read permissions; use a separate least-privilege task role. The app container health check and the ALB target both use `/api/health/ready`, which checks application data and the co-located Eve process in this image; configure an idle timeout suitable for SSE and connection draining for replacement. These are required resources, not created by the task definition.
 
 ```sh

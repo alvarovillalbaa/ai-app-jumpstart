@@ -18,5 +18,10 @@ export async function createUploadObjects(env: Record<string,string | undefined>
     const { supabaseUploadObjects,uploadStorageClient } = await import("./supabase");
     return supabaseUploadObjects(uploadStorageClient(env.SUPABASE_URL,env.SUPABASE_SECRET_KEY).storage);
   }
+  if (env.UPLOAD_STORAGE_PROVIDER === "aws-s3") {
+    const { awsS3Client,awsS3Settings,awsS3UploadObjects } = await import("./aws-s3");
+    const { region,bucket } = awsS3Settings(env);
+    return awsS3UploadObjects(awsS3Client(region),bucket);
+  }
   throw new AppError(503,"upload_storage_unavailable","Configure UPLOAD_STORAGE_PROVIDER before accepting uploads.");
 }
