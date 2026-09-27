@@ -1,4 +1,6 @@
 import { preferenceContract } from "../contracts/preferences";
+import { requestLimitContract } from "../contracts/request-limits";
+import { convexRequestLimitStore } from "../../lib/request-limits/remote";
 import { convexPreferenceStore } from "../../lib/preferences/convex";
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -16,8 +18,9 @@ afterEach(() => vi.unstubAllEnvs());
 function fixture() {
   const backend = convexTest(schema, modules);
   const request: typeof fetch = (url, init) => backend.fetch(new URL(url instanceof Request ? url.url : url).pathname, init);
-  return { backend,preferences: convexPreferenceStore("https://test.convex.site",secret,request), repository: new ConvexRepository("https://test.convex.site", secret, request), access: convexAccessStore("https://test.convex.site",secret,request) };
+  return { backend,limits: convexRequestLimitStore("https://test.convex.site",secret,request),preferences: convexPreferenceStore("https://test.convex.site",secret,request), repository: new ConvexRepository("https://test.convex.site", secret, request), access: convexAccessStore("https://test.convex.site",secret,request) };
 }
+requestLimitContract("Convex HTTP + function emulator",async () => fixture().limits);
 preferenceContract("Convex HTTP + function emulator",async () => fixture().preferences);
 recordContract("Convex HTTP + function emulator", async () => fixture().repository);
 sessionAccessContract("Convex HTTP + function emulator",async () => fixture().access);

@@ -1,6 +1,6 @@
 import { handle, readJson } from "@/lib/http/handler";
 import { requireChatSettings } from "@/lib/agent-access/settings";
-import { chatIdentity } from "@/lib/agent-access/identity";
+import { authenticateAccountData as chatIdentity } from "@/lib/http/authenticated-data";
 import { getSessionAccessStore } from "@/lib/agent-access/store";
 import { reconcileProjections } from "@/lib/agent-access/reconcile";
 

@@ -13,6 +13,7 @@ import type * as budgets from "../budgets.js";
 import type * as http from "../http.js";
 import type * as preferences from "../preferences.js";
 import type * as records from "../records.js";
+import type * as requestLimits from "../requestLimits.js";
 import type * as uploads from "../uploads.js";
 
 import type {
@@ -27,6 +28,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   preferences: typeof preferences;
   records: typeof records;
+  requestLimits: typeof requestLimits;
   uploads: typeof uploads;
 }>;
 

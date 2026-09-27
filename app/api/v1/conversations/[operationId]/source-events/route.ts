@@ -1,5 +1,5 @@
 import { readSourceEvents, sourceEventOptions } from "@/lib/agent-access/source-events";
-import { chatIdentity } from "@/lib/agent-access/identity";
+import { authenticateAccountData as chatIdentity } from "@/lib/http/authenticated-data";
 import { requireChatSettings } from "@/lib/agent-access/settings";
 import { getSessionAccessStore } from "@/lib/agent-access/store";
 import { bearerToken } from "@/lib/http/auth";

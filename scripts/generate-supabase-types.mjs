@@ -7,8 +7,8 @@ const destination = fileURLToPath(new URL("../lib/data/supabase.generated.ts", i
 const args = process.argv.slice(2);
 const check = args.includes("--check");
 const localDatabaseUrl = args.includes("--local-db-url");
-if (args.some(arg => !["--check", "--local-db-url"].includes(arg)) || new Set(args).size !== args.length || (localDatabaseUrl && !check)) {
-  throw new Error("Usage: npm run db:types [-- --check [--local-db-url]]");
+if (args.some(arg => !["--check", "--local-db-url"].includes(arg)) || new Set(args).size !== args.length) {
+  throw new Error("Usage: npm run db:types [-- --check] [--local-db-url]");
 }
 
 function supabase(args) {

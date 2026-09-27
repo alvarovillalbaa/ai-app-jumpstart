@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AppError } from "./http/errors";
 import { trustedHttpOrigin } from "./security/origin";
+import { requestsPerMinute } from "./request-limits/settings";
 
 const schema = z.object({
   DATA_PROVIDER: z.enum(["sqlite", "postgres", "supabase", "convex"]).default("sqlite"),
@@ -13,6 +14,7 @@ const schema = z.object({
   APP_ORIGIN: z.string().optional(),
 });
 export function config(env: NodeJS.ProcessEnv = process.env) {
+  requestsPerMinute(env);
   const result = schema.safeParse(env);
   if (!result.success) throw new AppError(503, "configuration_error", "Invalid application configuration. Check .env.example.");
   const c = result.data;

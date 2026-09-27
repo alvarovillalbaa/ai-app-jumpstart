@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { health } = vi.hoisted(() => ({ health: vi.fn() }));
+const { health,limitHealth } = vi.hoisted(() => ({ health: vi.fn(),limitHealth: vi.fn() }));
 vi.mock("@/lib/data/repository", () => ({ getRepository: async () => ({ health }) }));
+vi.mock("@/lib/request-limits/store",() => ({ getRequestLimitStore: async () => ({ health: limitHealth }) }));
 
 import { GET } from "@/app/api/health/ready/route";
 
 describe("readiness", () => {
-  beforeEach(() => { health.mockReset().mockResolvedValue(undefined); });
+  beforeEach(() => { health.mockReset().mockResolvedValue(undefined);limitHealth.mockReset().mockResolvedValue(undefined);vi.stubEnv("APP_REQUESTS_PER_MINUTE","0"); });
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
   it("reports application data readiness when Eve is hosted separately", async () => {
@@ -17,6 +18,17 @@ describe("readiness", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ status: "ready", checks: { data: "ok" } });
     expect(fetchAgent).not.toHaveBeenCalled();
+    expect(limitHealth).not.toHaveBeenCalled();
+  });
+
+  it("requires read-only request limiter readiness only when configured",async () => {
+    vi.stubEnv("APP_AGENT_READINESS","external");vi.stubEnv("APP_REQUESTS_PER_MINUTE","120");
+    expect((await GET()).status).toBe(200);expect(limitHealth).toHaveBeenCalledOnce();
+    limitHealth.mockRejectedValue(new Error("private database connection"));
+    const response = await GET();expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ status: "unavailable",checks: { data: "failed" } });
+    vi.stubEnv("APP_REQUESTS_PER_MINUTE","invalid");limitHealth.mockClear();
+    expect((await GET()).status).toBe(503);expect(limitHealth).not.toHaveBeenCalled();
   });
 
   it("requires the co-located agent to report ready", async () => {

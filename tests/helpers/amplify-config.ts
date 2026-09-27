@@ -8,7 +8,7 @@ export function filledAmplifyConfig(): AmplifyConfig {
     originGuardSecretArn: "arn:aws:secretsmanager:eu-west-1:123456789012:secret:origin-fixture-Abcdef",
     dataProvider: "supabase", supabaseAuthUrl: "https://fixture.supabase.co",
     supabasePublishableKey: "sb_publishable_fixture_public_only_12345678",
-    supabaseUrl: "https://fixture.supabase.co", chatEnabled: false,
+    supabaseUrl: "https://fixture.supabase.co", chatEnabled: false, requestsPerMinute: 120,
     secrets: {
       SUPABASE_SECRET_KEY: "arn:aws:secretsmanager:eu-west-1:123456789012:secret:backend-fixture-Abcdef",
       CRON_SECRET: "arn:aws:secretsmanager:eu-west-1:123456789012:secret:cron-fixture-Abcdef",

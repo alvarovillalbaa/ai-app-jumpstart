@@ -38,7 +38,9 @@ export async function handle(request: Request, operation: () => Promise<Response
         code: known ? error.code : status === 400 ? "invalid_input" : "internal_error",
         message: known ? error.message : status === 400 ? "Input does not match the contract." : "The request could not be completed.",
         requestId,
-      } }, { status, headers: status === 401 ? { "www-authenticate": 'Bearer realm="app"' } : {} });
+      } }, { status, headers: { ...(status === 401 ? { "www-authenticate": 'Bearer realm="app"' } : {}),
+        ...(known && status === 429 && typeof error.retryAfterSeconds === "number" && Number.isInteger(error.retryAfterSeconds) && error.retryAfterSeconds>=1 && error.retryAfterSeconds<=60
+          ? { "retry-after": String(error.retryAfterSeconds) } : {}) } });
     }
     response.headers.set("cache-control", "no-store");
     response.headers.set("x-request-id", requestId);

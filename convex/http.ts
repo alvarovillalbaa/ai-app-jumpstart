@@ -1,4 +1,5 @@
 import { preferenceCommand } from "../lib/preferences/contract";
+import { limitCommand } from "../lib/request-limits/contract";
 import { httpRouter } from "convex/server";
 import { z } from "zod";
 import { httpAction } from "./_generated/server";
@@ -55,11 +56,13 @@ http.route({ path: "/app/records", method: "POST", handler: httpAction(async (ct
     raw = JSON.parse(text);
   } catch { return json({ error: "invalid_input" }, 400); }
   finally { reader.releaseLock(); }
-  const parsed = z.union([command, accessCommand, budgetCommand, uploadCatalogCommand,preferenceCommand]).safeParse(raw);
+  const parsed = z.union([command, accessCommand, budgetCommand, uploadCatalogCommand,preferenceCommand,limitCommand]).safeParse(raw);
   if (!parsed.success) return json({ error: "invalid_input" }, 400);
   try {
     // Narrow each command before dispatch; Convex argument validators also run.
     switch (parsed.data.operation) {
+      case "limit.health": return json(await ctx.runQuery(internal.requestLimits.health,{}));
+      case "limit.claim": { const { operation: _,...input } = parsed.data;void _;return json(await ctx.runMutation(internal.requestLimits.claim,input)); }
       case "preferences.get": { const { operation: _,...input } = parsed.data;void _;return json(await ctx.runQuery(internal.preferences.get,input)); }
       case "preferences.update": { const { operation: _,...input } = parsed.data;void _;return json(await ctx.runMutation(internal.preferences.update,input)); }
       case "upload.reserve": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.uploads.reserve,input)); }

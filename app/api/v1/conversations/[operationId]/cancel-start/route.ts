@@ -5,6 +5,7 @@ import { requireChatSettings } from "@/lib/agent-access/settings";
 import { handle } from "@/lib/http/handler";
 
 export const runtime = "nodejs";
+// Pending-start cancellation remains available when the data quota is spent.
 export async function POST(request: Request, context: { params: Promise<{ operationId: string }> }) {
   return handle(request, async () => {
     const settings = requireChatSettings();

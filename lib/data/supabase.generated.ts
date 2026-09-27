@@ -382,6 +382,27 @@ export type Database = {
         }
         Relationships: []
       }
+      app_request_limits: {
+        Row: {
+          bucket: number
+          counter: number
+          subject: string
+          tenant: string
+        }
+        Insert: {
+          bucket: number
+          counter: number
+          subject: string
+          tenant: string
+        }
+        Update: {
+          bucket?: number
+          counter?: number
+          subject?: string
+          tenant?: string
+        }
+        Relationships: []
+      }
       app_upload_scans: {
         Row: {
           checked_at: number
@@ -543,6 +564,8 @@ export type Database = {
         Args: { command: string; input: Json }
         Returns: Json
       }
+      app_request_limit: { Args: { input: Json }; Returns: Json }
+      app_request_limits_ready: { Args: never; Returns: boolean }
       app_run_cache: { Args: { p_facts: Json }; Returns: string }
       app_save_artifact: {
         Args: {

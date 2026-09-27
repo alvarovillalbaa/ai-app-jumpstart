@@ -48,6 +48,21 @@ it("accepts PostgreSQL and Convex application data with unchanged Supabase ident
   }
 });
 
+it("requires a canonical literal request limit and permits explicit disabling or legacy omission",() => {
+  for (const provider of providers) {
+    const manifest = filled(provider),application = app(provider,manifest);
+    const values = provider === "aws" ? application.environment : application.env;
+    const row = values.find(item => item.name === "APP_REQUESTS_PER_MINUTE")!;
+    row.value = "0";expect(() => validateCloudManifest(provider,manifest)).not.toThrow();
+    for (const value of ["-1","1.5","10001","01", "private-quota-value"]) {
+      row.value = value;
+      try { validateCloudManifest(provider,manifest);throw new Error("Expected rejection."); }
+      catch (error) { expect(String(error)).toContain("APP_REQUESTS_PER_MINUTE");expect(String(error)).not.toContain(value); }
+    }
+    values.splice(values.indexOf(row),1);expect(() => validateCloudManifest(provider,manifest)).not.toThrow();
+  }
+});
+
 it("requires a managed secret reference for the optional upload download keyring",() => {
   for (const provider of providers) {
     const manifest = filled(provider),application = app(provider,manifest);

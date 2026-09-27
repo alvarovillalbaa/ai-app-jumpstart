@@ -1,5 +1,5 @@
 import { chatApplication } from "@/lib/agent-access/application";
-import { chatIdentity } from "@/lib/agent-access/identity";
+import { authenticateAccountData as chatIdentity } from "@/lib/http/authenticated-data";
 import { requireChatSettings } from "@/lib/agent-access/settings";
 import { handle, readJson } from "@/lib/http/handler";
 import { conversationHandlers } from "@/lib/http/conversations";

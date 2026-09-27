@@ -38,6 +38,7 @@
             { "name": "DATA_PROVIDER", "value": "supabase" },
             { "name": "AUTH_PROVIDER", "value": "supabase" },
             { "name": "AI_CHAT_ENABLED", "value": "true" },
+            { "name": "APP_REQUESTS_PER_MINUTE", "value": "120" },
             { "name": "APP_AGENT_READINESS", "value": "local" },
             { "name": "AI_RUNTIME_ORIGIN", "value": "http://127.0.0.1:4274" },
             { "name": "WORKFLOW_EXPECTED_PROVIDER", "value": "postgres" },

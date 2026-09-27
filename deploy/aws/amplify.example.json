@@ -11,6 +11,7 @@
   "supabasePublishableKey": "REPLACE_WITH_PUBLIC_PUBLISHABLE_KEY",
   "supabaseUrl": "https://REPLACE_PROJECT.supabase.co",
   "chatEnabled": false,
+  "requestsPerMinute": 120,
   "secrets": {
     "SUPABASE_SECRET_KEY": "REPLACE_WITH_BACKEND_COMPLETE_SECRET_ARN",
     "CRON_SECRET": "REPLACE_WITH_CLEANUP_COMPLETE_SECRET_ARN"

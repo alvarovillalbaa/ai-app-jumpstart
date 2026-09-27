@@ -37,6 +37,8 @@ async function command(args, options = {}) {
 try {
   await cp(join(root, "convex"), join(directory, "convex"), { recursive: true });
   await cp(join(root, "convex.json"), join(directory, "convex.json"));
+  await mkdir(join(directory,"lib/request-limits"),{ recursive: true });
+  await cp(join(root,"lib/request-limits/contract.ts"),join(directory,"lib/request-limits/contract.ts"));
   await mkdir(join(directory,"lib/preferences"),{ recursive: true });
   await cp(join(root,"lib/preferences/contract.ts"),join(directory,"lib/preferences/contract.ts"));
   await mkdir(join(directory, "lib/data"), { recursive: true });

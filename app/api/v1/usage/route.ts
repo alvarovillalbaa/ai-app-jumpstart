@@ -1,5 +1,5 @@
 import { getBudgetStore } from "@/lib/budgets/store";
-import { chatIdentity } from "@/lib/agent-access/identity";
+import { authenticateAccountData as chatIdentity } from "@/lib/http/authenticated-data";
 import { requireChatSettings } from "@/lib/agent-access/settings";
 import { handle } from "@/lib/http/handler";
 import { UsageService } from "@/lib/budgets/usage";

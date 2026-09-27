@@ -2,7 +2,7 @@ import { z } from "zod";
 import { getBudgetStore } from "@/lib/budgets/store";
 import { outstandingCursor } from "@/lib/budgets/contract";
 import { UsageService } from "@/lib/budgets/usage";
-import { chatIdentity } from "@/lib/agent-access/identity";
+import { authenticateAccountData as chatIdentity } from "@/lib/http/authenticated-data";
 import { requireChatSettings } from "@/lib/agent-access/settings";
 import { handle } from "@/lib/http/handler";
 

@@ -6,7 +6,8 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { z } from "zod";
 import { recordInput, recordUpdate, recordCreationKey } from "./data/contract";
 import { RecordService } from "./data/service";
-import { authenticate, bearerToken } from "./http/auth";
+import { bearerToken } from "./http/auth";
+import { authenticateDataRequest as authenticate } from "./http/authenticated-data";
 import { AppError } from "./http/errors";
 import { handle, readJson } from "./http/handler";
 import { getRepository } from "./data/repository";

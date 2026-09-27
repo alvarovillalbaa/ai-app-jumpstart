@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { ArtifactService } from "../agent-access/artifacts";
-import { chatIdentity } from "../agent-access/identity";
+import { authenticateAccountData as chatIdentity } from "./authenticated-data";
 import { requireChatSettings } from "../agent-access/settings";
 import { getSessionAccessStore } from "../agent-access/store";
 import type { SessionAccessStore } from "../agent-access/contract";

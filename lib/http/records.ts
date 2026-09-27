@@ -1,4 +1,4 @@
-import { authenticate } from "./auth";
+import { authenticateDataRequest as authenticate } from "./authenticated-data";
 import { handle, readJson } from "./handler";
 import { getRepository } from "../data/repository";
 import { RecordService } from "../data/service";

@@ -1,4 +1,6 @@
 import { getRepository } from "@/lib/data/repository";
+import { getRequestLimitStore } from "@/lib/request-limits/store";
+import { requestsPerMinute } from "@/lib/request-limits/settings";
 export const runtime = "nodejs";
 
 async function localAgentReady() {
@@ -16,7 +18,11 @@ async function localAgentReady() {
 export async function GET() {
   const checkAgent = process.env.APP_AGENT_READINESS === "local";
   const [dataReady, agentReady] = await Promise.all([
-    Promise.resolve().then(async () => { await (await getRepository()).health(); return true; }).catch(() => false),
+    Promise.resolve().then(async () => {
+      await (await getRepository()).health();
+      if (requestsPerMinute()) await (await getRequestLimitStore()).health();
+      return true;
+    }).catch(() => false),
     checkAgent ? localAgentReady() : Promise.resolve(null),
   ]);
   const ready = dataReady && agentReady !== false;

@@ -1,4 +1,4 @@
-import { authenticate } from "./auth";
+import { authenticateDataRequest as authenticate } from "./authenticated-data";
 import { AppError } from "./errors";
 import { handle,readJson } from "./handler";
 import { z } from "zod";

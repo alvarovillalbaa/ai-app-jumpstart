@@ -73,6 +73,8 @@ Before a managed Vercel release, set `AI_CHAT_ENABLED` explicitly and run `npm r
 | Account settings unavailable or login returns 503 | Verify `AUTH_PROVIDER=supabase`, API URL and publishable key, then restart the app after editing `.env.local`. |
 | Email link fails or returns to the wrong host | Match `APP_ORIGIN`, the Supabase Site URL and the exact `/auth/callback?next=...` allowlist; use the same browser for default PKCE links. |
 | PostgREST reports a missing table/function | Apply the repository's pending `db:migrate` files to the database behind that API URL. |
+| Authenticated data returns `429` / `request_limit` | Honor `Retry-After`; the default example allows 120 requests per owner per UTC minute. See [request limits](request-limits.md) for tuning and scope. |
+| Readiness fails after enabling `APP_REQUESTS_PER_MINUTE` | Apply the limiter SQL migration or deploy updated Convex functions before activation; provider admission failures return `503` without doing the operation. |
 | Migration runner rejects an unknown applied migration | Stop and use the checkout that owns that migration; do not edit the ledger or run an older release over a newer schema. |
 | Chat fails although records work | Check the separate [account chat](account-chat.md) and [workflow storage](workflow-storage.md) settings and readiness endpoints. |
 

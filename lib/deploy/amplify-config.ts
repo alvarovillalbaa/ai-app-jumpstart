@@ -24,6 +24,7 @@ const schema = z.object({
   supabaseUrl: httpsOrigin.optional(),
   convexSiteUrl: httpsOrigin.optional(),
   chatEnabled: z.boolean(),
+  requestsPerMinute: z.number().int().min(0).max(10000).default(120),
   secrets: z.partialRecord(z.enum(secretNames), z.string()),
 }).strict();
 export type AmplifyConfig = z.infer<typeof schema>;
@@ -60,6 +61,7 @@ export function amplifyEnvironment(config: AmplifyConfig): Record<string, string
     APP_ORIGIN: config.appOrigin, AUTH_PROVIDER: "supabase", DATA_PROVIDER: config.dataProvider,
     SUPABASE_AUTH_URL: config.supabaseAuthUrl, SUPABASE_PUBLISHABLE_KEY: config.supabasePublishableKey,
     AI_CHAT_ENABLED: String(config.chatEnabled),
+    APP_REQUESTS_PER_MINUTE: String(config.requestsPerMinute),
     // Server-to-server SDK calls use the same CloudFront routes as the browser;
     // the distribution supplies the private worker-origin guard on their behalf.
     ...(config.chatEnabled ? { AI_RUNTIME_ORIGIN: config.appOrigin } : {}),

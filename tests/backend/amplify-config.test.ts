@@ -24,6 +24,14 @@ it("accepts each remote data adapter with only its matching backend locator", ()
   }
 });
 
+it("defaults older Amplify authoring files to 120 requests and accepts an explicit opt-out", () => {
+  const legacy = { ...filledAmplifyConfig() };Reflect.deleteProperty(legacy,"requestsPerMinute");
+  expect(amplifyEnvironment(amplifyConfig(legacy)).APP_REQUESTS_PER_MINUTE).toBe("120");
+  expect(amplifyEnvironment(amplifyConfig({ ...legacy, requestsPerMinute: 0 })).APP_REQUESTS_PER_MINUTE).toBe("0");
+  for (const requestsPerMinute of [-1, 1.5, 10001, "120"])
+    expect(() => amplifyConfig({ ...legacy, requestsPerMinute })).toThrow("Invalid Amplify");
+});
+
 it("rejects plaintext credentials and unknown environment keys without echoing their values", () => {
   for (const secrets of [{ SUPABASE_SECRET_KEY: "private-credential-value" }, { AI_GATEWAY_API_KEY: "private-credential-value" }]) {
     try { amplifyConfig({ ...filledAmplifyConfig(), secrets }); throw new Error("Expected rejection"); }
