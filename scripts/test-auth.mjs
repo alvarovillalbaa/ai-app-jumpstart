@@ -5,26 +5,31 @@ import { join } from "node:path";
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { existsSync } from "node:fs";
 import { SignJWT } from "jose";
 import { startChatFixture } from "./helpers/eve-chat-fixture.mjs";
 import { testCommand } from "./helpers/test-command.mjs";
 import { uploadScannerFixture } from "./helpers/upload-scanner-fixture.mjs";
+import { startSupabaseDataFixture } from "./helpers/supabase-data-fixture.mjs";
 
+const chat = process.argv.includes("--chat");
+const containerMode = process.argv.includes("--container");
+const uploads = process.argv.includes("--uploads");
+const supabaseData = process.argv.includes("--supabase");
+if (containerMode && !chat) throw new Error("Container mode requires --chat.");
+if (uploads && (!chat || containerMode)) throw new Error("Reviewed uploads require host --chat mode.");
+if (supabaseData && containerMode) throw new Error("Supabase Auth/data mode requires the host browser harness; do not combine --supabase with --container.");
 // Real isolated Supabase Auth, PostgreSQL and SMTP delivery. No hosted account.
 const name = `jumpstart-auth-${randomBytes(5).toString("hex")}`;
 const directory = await mkdtemp(join(tmpdir(), `${name}-`));
 const password = randomBytes(24).toString("base64url");
 const jwtSecret = randomBytes(32).toString("base64url");
+const redactions = [jwtSecret,password];
 const containers = [];
-const chat = process.argv.includes("--chat");
-const containerMode = process.argv.includes("--container");
-const uploads = process.argv.includes("--uploads");
-if (containerMode && !chat) throw new Error("Container mode requires --chat.");
-if (uploads && (!chat || containerMode)) throw new Error("Reviewed uploads require host --chat mode.");
 const image = process.env.TEST_CONTAINER_IMAGE ?? "ai-app-jumpstart:test";
-let web, proxy, runtime, scanner, imageManifest, failed = false, webOutput = "";
+let web, proxy, runtime, scanner, dataFixture, imageManifest, failed = false, webOutput = "";
 async function command(executable, args, options = {}) {
-  return testCommand(executable,args,options,[jwtSecret,password]);
+  return testCommand(executable,args,options,redactions);
 }
 const docker = (...args) => command("docker", args);
 async function runContainer(suffix, image, vars, extra = [], args = []) {
@@ -58,7 +63,7 @@ try {
     imageManifest = JSON.parse(await docker("run", "--rm", "--entrypoint", "cat", image, "/app/.next/routes-manifest.json"));
   }
   await docker("network", "create", name);
-  await runContainer("postgres", "postgres:17-bookworm", { POSTGRES_PASSWORD: password, POSTGRES_USER: "auth_test", POSTGRES_DB: "auth_test" });
+  await runContainer("postgres", "postgres:17-bookworm", { POSTGRES_PASSWORD: password, POSTGRES_USER: "auth_test", POSTGRES_DB: "auth_test" },supabaseData ? ["--publish","127.0.0.1::5432"] : []);
   // TCP readiness excludes the image's temporary socket-only bootstrap server.
   await waitFor(async () => (await docker("exec", `${name}-postgres`, "pg_isready", "-h", "127.0.0.1", "-U", "auth_test", "-d", "auth_test")).includes("accepting"), "PostgreSQL", async () => {
     if (await docker("inspect", "--format", "{{.State.Running}}", `${name}-postgres`) === "true") return true;
@@ -66,6 +71,11 @@ try {
     throw new Error(`PostgreSQL startup failed: ${logs.replaceAll(password,"[redacted]").slice(-1200)}`);
   });
   await docker("exec", `${name}-postgres`, "psql", "-U", "auth_test", "-d", "auth_test", "-v", "ON_ERROR_STOP=1", "-c", "CREATE ROLE postgres NOLOGIN; CREATE SCHEMA auth AUTHORIZATION auth_test; ALTER ROLE auth_test SET search_path = auth, public;");
+  if (supabaseData) {
+    await docker("exec",`${name}-postgres`,"psql","-U","auth_test","-d","auth_test","-v","ON_ERROR_STOP=1","-c","CREATE DATABASE app_data_test;");
+    dataFixture = await startSupabaseDataFixture({ directory,jwtSecret,
+      databaseUrl: `postgresql://auth_test:${password}@127.0.0.1:${await portOf(`${name}-postgres`,5432)}/app_data_test` });
+  }
   const mail = await runContainer("mail", "axllent/mailpit:v1.31.2", {}, ["--publish", "127.0.0.1::8025"]);
   const mailOrigin = `http://127.0.0.1:${await portOf(mail, 8025)}`;
   let authOrigin;
@@ -76,12 +86,14 @@ try {
     res.setHeader("access-control-allow-headers", "authorization,apikey,content-type,x-client-info,x-supabase-api-version");
     res.setHeader("access-control-allow-methods", "GET,POST,PUT,DELETE,OPTIONS");
     if (req.method === "OPTIONS") { res.writeHead(204).end(); return; }
-    if (!req.url?.startsWith("/auth/v1/")) { res.writeHead(404).end(); return; }
+    const upstreamUrl = req.url?.startsWith("/auth/v1/") ? `${authOrigin}${req.url.slice("/auth/v1".length)}`
+      : dataFixture && req.url?.startsWith("/rest/v1/") ? `${dataFixture.origin}${req.url.slice("/rest/v1".length)}` : null;
+    if (!upstreamUrl) { res.writeHead(404).end(); return; }
     try {
       const chunks = []; for await (const chunk of req) chunks.push(chunk);
       const headers = new Headers();
-      for (const [key, value] of Object.entries(req.headers)) if (value && !["host", "connection", "content-length"].includes(key)) headers.set(key, Array.isArray(value) ? value.join(", ") : value);
-      const upstream = await fetch(`${authOrigin}${req.url.slice("/auth/v1".length)}`, { method: req.method, headers, body: chunks.length ? Buffer.concat(chunks) : undefined, redirect: "manual", signal: AbortSignal.timeout(15_000) });
+      for (const [key, value] of Object.entries(req.headers)) if (value && !["host", "connection", "content-length","transfer-encoding"].includes(key)) headers.set(key, Array.isArray(value) ? value.join(", ") : value);
+      const upstream = await fetch(upstreamUrl, { method: req.method, headers, body: chunks.length ? Buffer.concat(chunks) : undefined, redirect: "manual", signal: AbortSignal.timeout(15_000) });
       upstream.headers.forEach((value, key) => { if (!["content-encoding", "content-length", "transfer-encoding", "access-control-allow-origin"].includes(key)) res.setHeader(key, value); });
       res.writeHead(upstream.status).end(Buffer.from(await upstream.arrayBuffer()));
     } catch { res.writeHead(502).end(); }
@@ -108,7 +120,9 @@ try {
   const key = new TextEncoder().encode(jwtSecret);
   const anon = await new SignJWT({ role: "anon" }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("1h").sign(key);
   const admin = await new SignJWT({ role: "service_role" }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("1h").sign(key);
+  redactions.push(anon,admin);
   const env = { ...process.env, NODE_ENV: "production", AUTH_PROVIDER: "supabase", SUPABASE_AUTH_URL: publicAuthOrigin, SUPABASE_PUBLISHABLE_KEY: anon, APP_API_KEYS: "[]", APP_ORIGIN: appOrigin, DATA_PROVIDER: "sqlite", SQLITE_PATH: join(directory, "records.sqlite"), UPLOAD_STORAGE_PROVIDER: "local", UPLOAD_LOCAL_ROOT: join(directory, "uploads") };
+  if (supabaseData) { env.DATA_PROVIDER = "supabase";env.SUPABASE_URL = publicAuthOrigin;env.SUPABASE_SECRET_KEY = admin; }
   env.APP_REQUESTS_PER_MINUTE = "10000";
   env.AI_CHAT_ENABLED = chat ? "true" : "false";
   env.UPLOAD_AGENT_POLICY = uploads ? "reviewed-text" : "off";
@@ -161,13 +175,17 @@ try {
   await waitFor(async () => {
     return (await fetch(`${appOrigin}/api/health/live`, { signal: AbortSignal.timeout(1000) })).ok;
   }, "Production application", async () => web.exitCode === null && web.signalCode === null);
-  await command(process.execPath, ["node_modules/@playwright/test/cli.js", "test", "--config", "playwright.auth.config.ts", ...process.argv.slice(2).filter(arg => !["--chat","--container","--uploads"].includes(arg))], { env: { ...env, TEST_CHAT: chat ? "1" : "", TEST_CHAT_UPLOADS: uploads ? "1" : "", TEST_AUTH_ORIGIN: publicAuthOrigin, TEST_AUTH_ADMIN_KEY: admin, TEST_MAIL_ORIGIN: mailOrigin,
+  await command(process.execPath, ["node_modules/@playwright/test/cli.js", "test", "--config", "playwright.auth.config.ts", ...process.argv.slice(2).filter(arg => !["--chat","--container","--uploads","--supabase"].includes(arg))], { env: { ...env, TEST_CHAT: chat ? "1" : "", TEST_CHAT_UPLOADS: uploads ? "1" : "", TEST_AUTH_ORIGIN: publicAuthOrigin, TEST_AUTH_ADMIN_KEY: admin, TEST_MAIL_ORIGIN: mailOrigin,
     TEST_RECEIPT_GATE_HOST: chat ? join(directory, "gate") : "", TEST_MODEL_RECEIPTS_HOST: chat ? join(directory, "models.txt") : "",
     TEST_FAILURE_RECEIPTS_HOST: chat ? join(directory, "failures.txt") : "", TEST_CHAT_CONTAINER: containerMode ? `${name}-app` : "" }, stdio: "inherit" });
-  console.log(containerMode ? "Account chat browser contract passed through the production container." : chat ? "Account chat browser contract passed with real Auth and compiled Eve." : "Real Supabase Auth browser contract passed.");
+  if (supabaseData && existsSync(env.SQLITE_PATH)) throw new Error("Supabase mode created an unexpected SQLite application database.");
+  console.log(supabaseData ? `Real Supabase Auth and migrated PostgREST ${uploads ? "reviewed-upload" : chat ? "account-chat" : "account"} browser contract passed (local private objects).`
+    : containerMode ? "Account chat browser contract passed through the production container." : chat ? "Account chat browser contract passed with real Auth and compiled Eve." : "Real Supabase Auth browser contract passed.");
 } catch (error) {
   failed = true;
-  console.error(error instanceof Error ? error.message : "Auth integration failed.");
+  let diagnostic = error instanceof Error ? error.message : "Auth integration failed.";
+  for (const secret of redactions) diagnostic = diagnostic.replaceAll(secret,"[redacted]");
+  console.error(diagnostic);
   console.error(webOutput);
   // Only SQL diagnostics, never raw request logs or verification links.
   const logs = await docker("logs", "--tail", "100", `${name}-auth`).catch(() => "");
@@ -186,6 +204,7 @@ try {
   proxy?.closeAllConnections(); if (proxy) await new Promise(resolve => proxy.close(resolve));
   await runtime?.stop();
   await scanner?.stop();
+  await dataFixture?.stop();
   for (const container of containers.reverse()) await docker("rm", "--force", "--volumes", container).catch(() => {});
   await docker("network", "rm", name).catch(() => {});
   await rm(directory, { recursive: true, force: true });

@@ -13,6 +13,8 @@ import { runPage } from "../../lib/agent-access/run-contract";
 import { projectionPage } from "../../lib/agent-access/projection-contract";
 import { auditAccessibility } from "../helpers/accessibility";
 import { runHostedSmoke } from "../../scripts/smoke-hosted.mjs";
+import { createBudgetStore } from "../../lib/budgets/store";
+import { parseRuntimeBudgetSettings } from "../../lib/budgets/runtime";
 
 const auth = process.env.TEST_AUTH_ORIGIN!;
 const password = "Fixture-only-password-42!";
@@ -58,8 +60,16 @@ async function runtimeReceipts(kind: "models" | "failures") {
     : await readFile(process.env[kind === "models" ? "TEST_MODEL_RECEIPTS_HOST" : "TEST_FAILURE_RECEIPTS_HOST"]!, "utf8").catch(() => "");
   return output.trim().split("\n").filter(Boolean);
 }
-function seedBudgetOnly(subject: string, operationId: string, message: string) {
+async function seedBudgetOnly(subject: string, operationId: string, message: string) {
   const hash = requestHash(creationBody({ message,operationId }).body);
+  if (!process.env.TEST_CHAT_CONTAINER) {
+    const store = await createBudgetStore(),settings = parseRuntimeBudgetSettings(JSON.parse(process.env.AI_BUDGET_POLICY_JSON!));
+    try {
+      expect(await store.reserve({ tenant: `supabase:${auth}`,subject,operationId,requestHash: hash,
+        policy: settings.policy,estimateMicros: settings.estimateMicros,now: Date.now() })).toMatchObject({ status: "reserved",created: true });
+    } finally { await store.close(); }
+    return;
+  }
   const script = `import { DatabaseSync } from "node:sqlite";
     const [path,tenant,subject,operationId,hash] = process.argv.slice(1);
     const db = new DatabaseSync(path);
@@ -73,8 +83,20 @@ function seedBudgetOnly(subject: string, operationId: string, message: string) {
   if (container) execFileSync("docker",["exec",container,"node",...args]);
   else execFileSync(process.execPath,args);
 }
-function seedBudgetCorrection(subject: string) {
+async function seedBudgetCorrection(subject: string) {
   const operationId = randomUUID(),correctionId = randomUUID();
+  if (!process.env.TEST_CHAT_CONTAINER) {
+    const store = await createBudgetStore(),settings = parseRuntimeBudgetSettings(JSON.parse(process.env.AI_BUDGET_POLICY_JSON!));
+    const owner = { tenant: `supabase:${auth}`,subject };
+    try {
+      expect(await store.reserve({ ...owner,operationId,requestHash: "a".repeat(64),policy: settings.policy,
+        estimateMicros: settings.estimateMicros,now: Date.now() })).toMatchObject({ status: "reserved",created: true });
+      expect(await store.settle({ ...owner,operationId,actualMicros: 20 })).toBe(true);
+      expect(await store.correctSettlement({ ...owner,operationId,correctionId,expectedActualMicros: 20,correctedActualMicros: 7,
+        actor: "private-operator",reason: "Private operator invoice analysis",evidenceRef: "private-evidence-reference" })).toBe("applied");
+    } finally { await store.close(); }
+    return { operationId,correctionId };
+  }
   const script = `import { DatabaseSync } from "node:sqlite";
     const [path,tenant,subject,operationId,correctionId] = process.argv.slice(1);
     const db = new DatabaseSync(path);
@@ -99,7 +121,7 @@ function seedBudgetCorrection(subject: string) {
 test("a stored cost correction is owner-scoped across API, CLI, MCP and export",async ({ request }) => {
   const alice = await user(request),bob = await user(request);
   expect((await request.get("/api/v1/usage",{ headers: { authorization: `Bearer ${alice.token}` } })).status()).toBe(200);
-  const { operationId,correctionId } = seedBudgetCorrection(alice.id);
+  const { operationId,correctionId } = await seedBudgetCorrection(alice.id);
   const env = { APP_API_URL: process.env.APP_ORIGIN!,APP_API_TOKEN: alice.token };
   const response = await request.get("/api/v1/usage/corrections?limit=1",{ headers: { authorization: `Bearer ${alice.token}` } });
   expect(response.status()).toBe(200);
@@ -356,7 +378,7 @@ test("a verified owner fences budget admission lost before conversation reservat
   const alice = await user(request), bob = await user(request), operationId = randomUUID(),message = "Budget-only crash";
   await login(page,alice.email);
   expect((await request.get("/api/v1/usage",{ headers: { authorization: `Bearer ${alice.token}` } })).status()).toBe(200);
-  seedBudgetOnly(alice.id,operationId,message);
+  await seedBudgetOnly(alice.id,operationId,message);
   expect((await request.get(`/api/v1/conversations/${operationId}`,{ headers: { authorization: `Bearer ${alice.token}` } })).status()).toBe(404);
   expect((await request.post(`/api/v1/conversations/${operationId}/cancel-start`,{ headers: { authorization: `Bearer ${bob.token}` } })).status()).toBe(404);
   await page.goto(`/s/${operationId}`);

@@ -9,8 +9,9 @@ import { auditAccessibility } from "../helpers/accessibility";
 import { run as runCli } from "../../scripts/app-cli";
 import { preferences,defaultPreferences } from "../../lib/preferences/contract";
 import { runHostedSmoke } from "../../scripts/smoke-hosted.mjs";
-import { sqliteAccessStore } from "../../lib/agent-access/sqlite";
-import { sqliteBudgetStore } from "../../lib/budgets/sqlite";
+import { createSessionAccessStore } from "../../lib/agent-access/store";
+import { createBudgetStore } from "../../lib/budgets/store";
+import { createClient } from "@supabase/supabase-js";
 import type { ProjectionEntry } from "../../lib/agent-access/projection-contract";
 
 const auth = process.env.TEST_AUTH_ORIGIN!;
@@ -51,6 +52,38 @@ async function emailLink(request: APIRequestContext, email: string) {
   return link;
 }
 
+// This suite is explicitly selected by --supabase; other modes keep their own
+// SQLite contracts. No hosted account or optional credential enables this case.
+if (process.env.DATA_PROVIDER === "supabase") test("real Auth user tokens cannot read tables or invoke backend RPCs directly",async ({ request }) => {
+  const alice = `sql-alice-${randomUUID()}@example.test`,bob = `sql-bob-${randomUUID()}@example.test`;
+  await confirmedUser(request,alice);await confirmedUser(request,bob);
+  const token = await tokenFor(request,alice),other = await tokenFor(request,bob);
+  const profile = await (await request.get("/api/v1/account/profile",{ headers: { authorization: `Bearer ${token}` } })).json();
+  const created = await request.post("/api/v1/records",{ headers: { authorization: `Bearer ${token}` },data: { title: "Actual Supabase row",content: "Only the current account" } });
+  expect(created.status()).toBe(201);const row = await created.json();
+  const url = process.env.SUPABASE_URL!,secret = process.env.SUPABASE_SECRET_KEY!;
+  if (!url || !secret) throw new Error("The Supabase fixture must provide its disposable backend connection.");
+  const admin = createClient(url,secret,{ auth: { persistSession: false,autoRefreshToken: false } });
+  const stored = await admin.from("app_records").select("id,title,tenant,subject").eq("id",row.id).single();
+  expect(stored.error).toBeNull();expect(stored.data).toEqual({ id: row.id,title: row.title,tenant: `supabase:${auth}`,subject: profile.id });
+  for (const bearer of [process.env.SUPABASE_PUBLISHABLE_KEY!,token,other]) {
+    const client = createClient(url,process.env.SUPABASE_PUBLISHABLE_KEY!,{ auth: { persistSession: false,autoRefreshToken: false },global: { headers: { authorization: `Bearer ${bearer}` } } });
+    for (const table of ["app_records","app_record_creates","app_conversations","app_conversation_events","app_conversation_runs",
+      "app_artifacts","app_artifact_versions","app_budget_accounts","app_budget_reservations","app_budget_attempts","app_budget_corrections",
+      "app_uploads","app_upload_scans","app_upload_reviews","app_user_preferences","app_request_limits","app_internal_nonces"]) {
+      expect((await client.from(table).select("*").limit(1)).error?.code,table).toBe("42501");
+    }
+    expect((await client.from("app_records").insert({ id: randomUUID(),tenant: `supabase:${auth}`,subject: profile.id,title: "Forged",content: "Forbidden" })).error?.code).toBe("42501");
+    const input = { tenant: `supabase:${auth}`,subject: profile.id,now: Date.now() };
+    expect((await client.rpc("app_budget_command",{ command: "snapshot",input })).error?.code).toBe("42501");
+    expect((await client.rpc("app_preferences_command",{ command: "update",input: { ...input,patch: { revision: 0,theme: "dark" } } })).error?.code).toBe("42501");
+    expect((await client.rpc("app_request_limit",{ input: { ...input,limit: 100 } })).error?.code).toBe("42501");
+    expect((await client.rpc("app_upload_review_command",{ command: "getReview",input: { ...input,id: randomUUID() } })).error?.code).toBe("42501");
+  }
+  expect((await request.get(`/api/v1/records/${row.id}`,{ headers: { authorization: `Bearer ${token}` } })).status()).toBe(200);
+  expect((await request.get(`/api/v1/records/${row.id}`,{ headers: { authorization: `Bearer ${other}` } })).status()).toBe(404);
+});
+
 test("portable account-browser smoke verifies login, records, reload and logout with chat disabled",async ({ request }) => {
   const alice = `smoke-alice-${randomUUID()}@example.test`,bob = `smoke-bob-${randomUUID()}@example.test`;
   await confirmedUser(request,alice);await confirmedUser(request,bob);
@@ -67,7 +100,7 @@ test("paused chat retains private history, artifacts, usage and application expo
   const headers = { authorization: `Bearer ${token}` },foreign = { authorization: `Bearer ${other}` };
   const profile = await (await request.get("/api/v1/account/profile",{ headers })).json();
   const owner = { tenant: `supabase:${process.env.SUPABASE_AUTH_URL}`,subject: profile.id },operation = randomUUID(),session = `stored-${randomUUID()}`;
-  const store = sqliteAccessStore(process.env.SQLITE_PATH!);
+  const store = await createSessionAccessStore();
   let artifactId = "";
   // Seed retained application data only: this is not an executed model turn.
   try {
@@ -86,7 +119,7 @@ test("paused chat retains private history, artifacts, usage and application expo
     artifactId = saved.artifact.id;
   } finally { await store.close(); }
   const otherProfile = await (await request.get("/api/v1/account/profile",{ headers: foreign })).json();
-  const budget = sqliteBudgetStore(process.env.SQLITE_PATH!);
+  const budget = await createBudgetStore();
   const correction = randomUUID(),pending = randomUUID();
   try {
     const policy = { id: "retained-fixture",dailyMicros: 100,maxActive: 10,maxPerMinute: 20 };
