@@ -2,6 +2,12 @@ import { createServer } from "node:http";
 
 createServer(async (request, response) => {
   const url = new URL(request.url, "http://localhost");
+  if (url.pathname === "/eve/v1/headers") {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ originGuardForwarded: !!request.headers["x-jumpstart-origin"],
+      forwardedHost: request.headers["x-forwarded-host"], forwardedProto: request.headers["x-forwarded-proto"] }));
+    return;
+  }
   if (url.pathname === "/eve/v1/health") {
     response.writeHead(200, { "content-type": "application/json", "cache-control": "public, max-age=60" });
     response.end(JSON.stringify({ status: "ready", query: url.searchParams.get("probe") }));

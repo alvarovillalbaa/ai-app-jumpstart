@@ -19,6 +19,9 @@ node_modules/
 
 # production
 /build
+/.open-next/
+/.amplify-build/
+/cdk.out/
 
 # misc
 .DS_Store

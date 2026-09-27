@@ -45,6 +45,9 @@
     "node_modules",
     "my-agent",
     "**/.output/**",
-    "**/.eve/**"
+    "**/.eve/**",
+    ".open-next",
+    ".amplify-build",
+    "cdk.out"
   ]
 }

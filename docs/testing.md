@@ -1,5 +1,7 @@
 # Testing
 
+`npm run test:amplify-build` builds the native Amplify self-managed adapter, checks its real CloudFormation graph offline and invokes its generated Node 24 streaming handler against disposable PostgreSQL. It reuses two-owner REST/CLI/MCP and seven public browser/accessibility/CSP contracts, and verifies the protected cleanup route. `npm run test:amplify-ingress` requires Docker and checks the actual guarded Eve ingress, readiness and incremental SSE. These fixtures do not emulate AWS or prove hosted registered-user chat, Workflow recovery or a paid production-model turn; see [the Amplify recipe](amplify-self-managed.md).
+
 | Command | Coverage | Requirements |
 | --- | --- | --- |
 | `npm test` | SQLite, Convex emulator, HTTP isolation/errors, SDK MCP, CLI CRUD/seed and private paged export, upload byte validation, private blob semantics, atomic SQLite quota/intake, bounded authenticated upload HTTP, ClamAV Unix-socket protocol and fail-closed scan-before-storage using a daemon fixture, CLI/MCP metadata and deletion, DOM behavior, ANSI compatibility, arithmetic validation | No external services |

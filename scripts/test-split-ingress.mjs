@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -9,8 +9,16 @@ const suffix = randomUUID().slice(0, 12);
 const caddyImage = `jumpstart-ingress-test:${suffix}`;
 const app = `jumpstart-app-${suffix}`;
 const ingress = `jumpstart-ingress-${suffix}`;
-const docker = (...args) => execFileSync("docker", args, { encoding: "utf8", timeout: 180_000 }).trim();
+const docker = (...args) => {
+  try { return execFileSync("docker", args, { encoding: "utf8", timeout: 180_000 }).trim(); }
+  catch (error) { throw Object.assign(new Error(String(error).replaceAll(guard, "[redacted]")), { exitStatus: error.status }); }
+};
 const cleanup = (...args) => { try { docker(...args); } catch { /* best effort for disposable resources */ } };
+if (process.argv.length > 3 || (process.argv[2] && process.argv[2] !== "--amplify")) throw new Error("Supported option: --amplify");
+const amplify = process.argv.includes("--amplify");
+const guard = randomBytes(32).toString("hex");
+const invoke = (url, options = {}) => fetch(url, { ...options,
+  headers: { ...options.headers, ...(amplify ? { "X-Jumpstart-Origin": guard } : {}) } });
 
 const readManifest = path => JSON.parse(readFileSync(resolve(path), "utf8"));
 const aws = readManifest("deploy/aws/task-definition.example.json");
@@ -34,21 +42,29 @@ assert.equal(aws.containerDefinitions.find(c => c.name === "ingress").dependsOn[
 assert.deepEqual(JSON.parse(gcp.spec.template.metadata.annotations["run.googleapis.com/container-dependencies"]), { ingress: ["app"] });
 
 try {
-  docker("build", "--file", "deploy/ingress.Dockerfile", "--tag", caddyImage, ".");
+  docker("build", "--file", amplify ? "deploy/amplify-eve.Dockerfile" : "deploy/ingress.Dockerfile", "--tag", caddyImage, ".");
+  if (amplify) {
+    for (const value of [undefined, "", "invalid-guard", "a".repeat(63), '"malformed"']) {
+      let refused = false;
+      try { docker("run", "--rm", ...(value === undefined ? [] : ["--env", `ORIGIN_GUARD=${value}`]), caddyImage); }
+      catch (error) { assert.equal(error.exitStatus, 1, "Guard refusal must be an application exit, not a Docker error or timeout"); refused = true; }
+      assert.equal(refused, true, "Missing or malformed origin guards must refuse startup");
+    }
+  }
   docker("run", "--detach", "--rm", "--name", app, "--publish", "127.0.0.1::8080",
     "--volume", `${resolve("scripts/fixtures/split-eve-upstream.mjs")}:/eve.mjs:ro`,
     "--volume", `${resolve("scripts/fixtures/split-next-upstream.mjs")}:/next.mjs:ro`,
     nodeImage, "node", "--input-type=module", "-e", "await import('/eve.mjs'); await import('/next.mjs')");
   docker("run", "--detach", "--rm", "--network", `container:${app}`, "--name", ingress,
     "--user", "1000:1000", "--env", "EVE_UPSTREAM=127.0.0.1:4274", "--env", "NEXT_UPSTREAM=127.0.0.1:3000",
-    caddyImage);
+    ...(amplify ? ["--env", `ORIGIN_GUARD=${guard}`] : []), caddyImage);
 
   const mapped = docker("port", app, "8080/tcp");
   assert.match(mapped, /^127\.0\.0\.1:\d+$/);
   const origin = `http://${mapped}`;
   let health;
   for (let attempt = 0; attempt < 40; attempt++) {
-    health = await fetch(`${origin}/eve/v1/health?probe=route`, { signal: AbortSignal.timeout(2_000) }).catch(() => null);
+    health = await invoke(`${origin}/eve/v1/health?probe=route`, { signal: AbortSignal.timeout(2_000) }).catch(() => null);
     if (health?.ok) break;
     await new Promise(resolve => setTimeout(resolve, 250));
   }
@@ -56,12 +72,12 @@ try {
   assert.deepEqual(await health.json(), { status: "ready", query: "route" });
   for (const [name, value] of Object.entries({
     "x-content-type-options": "nosniff", "referrer-policy": "no-referrer",
-    "x-frame-options": "DENY", "permissions-policy": "camera=(), geolocation=(), microphone=()",
+    "x-frame-options": "DENY", ...(!amplify ? { "permissions-policy": "camera=(), geolocation=(), microphone=()" } : {}),
     "content-security-policy": "base-uri 'self'; object-src 'none'; frame-ancestors 'none'",
     "cache-control": "no-store",
   })) assert.equal(health.headers.get(name), value, `Eve response missing ${name}`);
 
-  const callback = await fetch(`${origin}/.well-known/workflow/v1/flow?probe=callback`, {
+  const callback = await invoke(`${origin}/.well-known/workflow/v1/flow?probe=callback`, {
     method: "POST", body: "workflow-body", headers: {
       authorization: "Bearer probe-only-token", cookie: "probe_session=opaque",
     }, signal: AbortSignal.timeout(5_000),
@@ -71,16 +87,28 @@ try {
     authorizationForwarded: true, cookieForwarded: true });
   assert.equal(callback.headers.get("cache-control"), "no-store");
   assert.equal(callback.headers.get("x-content-type-options"), "nosniff");
-  const page = await fetch(`${origin}/records?probe=next`);
-  assert.equal(page.status, 200);
-  assert.deepEqual(await page.json(), { next: true, path: "/records?probe=next" });
-  assert.equal(page.headers.get("content-security-policy"), "script-src 'nonce-next-fixture'",
-    "the ingress must preserve Next's request-specific CSP");
-  assert.equal(page.headers.get("x-content-type-options"), "nosniff");
-  const api = await fetch(`${origin}/api/v1/records`);
-  assert.deepEqual(await api.json(), { next: true, path: "/api/v1/records" });
+  if (amplify) {
+    for (const path of ["/eve/v1/health", "/.well-known/workflow/v1/flow"]) {
+      assert.equal((await fetch(`${origin}${path}`)).status, 403);
+      assert.equal((await fetch(`${origin}${path}`, { headers: { "X-Jumpstart-Origin": "b".repeat(64) } })).status, 403);
+    }
+    assert.equal((await fetch(`${origin}/api/health/ready`)).status, 200);
+    assert.equal((await invoke(`${origin}/records`)).status, 404);
+    assert.equal((await invoke(`${origin}/api/v1/records`)).status, 404);
+    const forwarded = await invoke(`${origin}/eve/v1/headers`, { headers: { "X-Forwarded-Host": "app.fixture.dev" } });
+    assert.deepEqual(await forwarded.json(), { originGuardForwarded: false, forwardedHost: "app.fixture.dev", forwardedProto: "https" });
+  } else {
+    const page = await invoke(`${origin}/records?probe=next`);
+    assert.equal(page.status, 200);
+    assert.deepEqual(await page.json(), { next: true, path: "/records?probe=next" });
+    assert.equal(page.headers.get("content-security-policy"), "script-src 'nonce-next-fixture'",
+      "the ingress must preserve Next's request-specific CSP");
+    assert.equal(page.headers.get("x-content-type-options"), "nosniff");
+    const api = await invoke(`${origin}/api/v1/records`);
+    assert.deepEqual(await api.json(), { next: true, path: "/api/v1/records" });
+  }
 
-  const stream = await fetch(`${origin}/eve/v1/session/probe/stream`, { signal: AbortSignal.timeout(5_000) });
+  const stream = await invoke(`${origin}/eve/v1/session/probe/stream`, { signal: AbortSignal.timeout(5_000) });
   assert.equal(stream.status, 200);
   assert.match(stream.headers.get("content-type") ?? "", /text\/event-stream/);
   assert.equal(stream.headers.get("cache-control"), "no-store");
@@ -92,7 +120,8 @@ try {
   assert.equal(new TextDecoder().decode(second.value), "data: second\n\n");
   assert.ok(secondAt - firstAt >= 250, "the ingress must stream before Eve finishes");
   await reader.cancel();
-  console.log("Split ingress passed: Next/Eve routes, Workflow callback, security headers and live SSE.");
+  console.log(amplify ? "Amplify worker ingress passed: required private guard, public readiness, blocked web routes, authenticated Workflow forwarding and live SSE."
+    : "Split ingress passed: Next/Eve routes, Workflow callback, security headers and live SSE.");
 } finally {
   cleanup("rm", "--force", ingress);
   cleanup("rm", "--force", app);

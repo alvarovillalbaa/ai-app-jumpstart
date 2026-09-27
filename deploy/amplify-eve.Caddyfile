@@ -1,0 +1,38 @@
+# TLS terminates at the worker's HTTPS load balancer. Publish only port 8080;
+# its target application and Eve ports stay private on this task's loopback.
+:8080 {
+  header ?X-Content-Type-Options nosniff
+  header ?Referrer-Policy no-referrer
+  header ?X-Frame-Options DENY
+  header ?Content-Security-Policy "base-uri 'self'; object-src 'none'; frame-ancestors 'none'"
+  header >Cache-Control no-store
+  @health path /api/health/live /api/health/ready
+  @denied not header X-Jumpstart-Origin {$ORIGIN_GUARD}
+
+  # route preserves this security ordering before path-specific handles.
+  route {
+    handle @health {
+      reverse_proxy {$NEXT_UPSTREAM}
+    }
+    handle @denied {
+      respond "Forbidden" 403
+    }
+    handle /eve/* {
+      reverse_proxy {$EVE_UPSTREAM} {
+        header_up -X-Jumpstart-Origin
+        header_up X-Forwarded-Host {http.request.header.X-Forwarded-Host}
+        header_up X-Forwarded-Proto https
+      }
+    }
+    handle /.well-known/workflow/* {
+      reverse_proxy {$EVE_UPSTREAM} {
+        header_up -X-Jumpstart-Origin
+        header_up X-Forwarded-Host {http.request.header.X-Forwarded-Host}
+        header_up X-Forwarded-Proto https
+      }
+    }
+    handle {
+      respond "Not Found" 404
+    }
+  }
+}
