@@ -7,7 +7,7 @@ import { artifactPage, type Artifact } from "@/lib/agent-access/artifact-contrac
 import { browserAuth } from "@/lib/auth/browser";
 import type { PublicAuthSettings } from "@/lib/auth/settings";
 
-export function ArtifactLibrary({ settings,userId }: { settings: PublicAuthSettings;userId: string }) {
+export function ArtifactLibrary({ settings,userId,runtimeEnabled = true }: { settings: PublicAuthSettings;userId: string;runtimeEnabled?: boolean }) {
   const client = browserAuth(settings);
   const identity = useRef(userId);
   const controller = useRef<AbortController | null>(null);
@@ -94,7 +94,7 @@ export function ArtifactLibrary({ settings,userId }: { settings: PublicAuthSetti
     {!busy && !error && !items.length && <p>No artifacts yet.</p>}
     <ul className="divide-y">{items.map(item => <li key={item.id} className="space-y-2 py-5">
       <h2 className="font-medium break-words">{item.title}</h2>
-      <p className="text-sm text-muted-foreground">{new Date(item.createdAt).toLocaleString()} · <Link className="underline" href={`/s/${item.operationId}`}>Source conversation</Link></p>
+      <p className="text-sm text-muted-foreground">{new Date(item.createdAt).toLocaleString()} · <Link className="underline" href={runtimeEnabled ? `/s/${item.operationId}` : `/conversations/${item.operationId}/activity`}>Source conversation</Link></p>
       <details><summary className="cursor-pointer underline">View text</summary><pre className="mt-3 max-h-96 overflow-auto rounded border p-4 whitespace-pre-wrap break-words font-sans text-sm">{item.content}</pre></details>
       <ArtifactEditor key={item.id} item={item} settings={settings} userId={userId} onUpdate={updated => { if (identity.current === userId) setItems(previous => previous.map(saved => saved.id === updated.id ? updated : saved)); }} />
       <div className="flex gap-3"><button className="underline disabled:opacity-50" disabled={busy || acting !== null} onClick={() => void act(item,"download")}>Download .txt</button>

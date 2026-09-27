@@ -54,7 +54,8 @@ function value(result: Awaited<ReturnType<Client["callTool"]>>) {
   return JSON.parse((result.content as { type: "text";text: string }[])[0].text);
 }
 
-it("shares reads and edits across CLI, REST and stateless MCP with revisions",async () => {
+it.each(["true","false"])("shares reads and edits across CLI, REST and stateless MCP with chat enabled=%s",async enabled => {
+  vi.stubEnv("AI_CHAT_ENABLED",enabled);
   const client = await mcp(alice), env = { APP_API_TOKEN: alice };
   expect((await client.listTools()).tools.map(tool => tool.name)).toContain("conversations_update");
   const listed = value(await client.callTool({ name: "conversations_list",arguments: {} }));
@@ -91,7 +92,8 @@ it("allows only the artifact owner to erase it through MCP and blocks same-call 
   expect(await store.saveArtifact(owner,id,"artifact-session","artifact-call",draft)).toEqual({ status: "unavailable" });
 });
 
-it("denies foreign access and record keys even when their configured owner matches",async () => {
+it.each(["true","false"])("denies foreign access and matching-owner record keys with chat enabled=%s",async enabled => {
+  vi.stubEnv("AI_CHAT_ENABLED",enabled);
   const foreign = await mcp(bob);
   expect(value(await foreign.callTool({ name: "conversations_list",arguments: {} })).items).toEqual([]);
   for (const tool of ["conversations_get","conversations_update","conversations_runs"]) {
@@ -114,15 +116,19 @@ it("denies foreign access and record keys even when their configured owner match
   expect((await store.getDetails(owner,id))?.revision).toBe(1);
 });
 
-it("rechecks revocation and chat availability on every MCP request",async () => {
+it("retains saved-data capabilities while removing runtime tools when chat is paused, and rechecks revocation",async () => {
   const client = await mcp(alice);
   vi.stubEnv("AI_CHAT_ENABLED","false");
   const tools = (await client.listTools()).tools;
-  expect(tools).toHaveLength(9);
   expect(tools.map(tool => tool.name)).toContain("account_profile");
-  expect((await client.callTool({ name: "conversations_get",arguments: { operationId: id } })).isError).toBe(true);
-  await expect(run(["conversations","get",id],{ APP_API_TOKEN: alice },request)).rejects.toThrow("HTTP 503: chat_disabled");
-  vi.stubEnv("AI_CHAT_ENABLED","true");
+  expect(tools.map(tool => tool.name)).toContain("artifacts_get");
+  expect(tools.map(tool => tool.name)).not.toContain("conversations_source_events");
+  expect(tools.map(tool => tool.name)).not.toContain("conversations_reconcile");
+  expect(tools.map(tool => tool.name)).not.toContain("usage_get");
+  vi.stubEnv("AI_BUDGET_POLICY_JSON","invalid disabled configuration");
+  vi.stubEnv("AI_CREATION_SIGNING_JSON","");
+  expect(value(await client.callTool({ name: "conversations_get",arguments: { operationId: id } }))).toMatchObject({ title: "Initial private title" });
+  expect(await run(["conversations","get",id],{ APP_API_TOKEN: alice },request)).toMatchObject({ title: "Initial private title" });
   vi.stubGlobal("fetch",vi.fn().mockResolvedValue(Response.json({ msg: "Revoked",code: "session_not_found" },{ status: 401 })));
   await expect(client.listTools()).rejects.toThrow();
 });
@@ -140,7 +146,8 @@ it("rejects owner/control-field injection and invalid CLI arguments without writ
   expect((await store.getDetails(owner,id))?.revision).toBe(1);
 });
 
-it("shares artifact version edits through REST, CLI and MCP while fencing keys and stale owners",async () => {
+it.each(["true","false"])("shares artifact versions through REST, CLI and MCP while fencing keys and stale owners with chat enabled=%s",async enabled => {
+  vi.stubEnv("AI_CHAT_ENABLED",enabled);
   await store.bind(owner,id,"versions-session");
   const draft = { title: "Original",content: "Approved original" };
   const saved = await store.saveArtifact(owner,id,"versions-session","versions-call",draft);

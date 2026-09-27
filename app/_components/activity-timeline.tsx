@@ -28,7 +28,7 @@ function EventBody({ payload }: { payload: ProjectionEntry["payload"] }) {
   }
 }
 
-export function ActivityTimeline({ settings, userId, operationId,view = "activity" }: { settings: PublicAuthSettings; userId: string; operationId: string; view?: "activity"|"runs" }) {
+export function ActivityTimeline({ settings, userId, operationId,view = "activity",runtimeEnabled = true }: { settings: PublicAuthSettings; userId: string; operationId: string; view?: "activity"|"runs";runtimeEnabled?: boolean }) {
   const client = browserAuth(settings);
   const identity = useRef(userId);
   const controller = useRef<AbortController | null>(null);
@@ -56,7 +56,7 @@ export function ActivityTimeline({ settings, userId, operationId,view = "activit
     try {
       const { data, error: authError } = await client.auth.getSession();
       if (authError || !data.session || data.session.user.id !== userId || identity.current !== userId) throw new Error("Your account changed or your session expired. Sign in again.");
-      if (verify) {
+      if (verify && runtimeEnabled) {
         const recovery = await fetch(`/api/v1/conversations/${operationId}/reconcile`,{
           method: "POST",signal: AbortSignal.any([abort.signal,AbortSignal.timeout(25_000)]),
           headers: { authorization: `Bearer ${data.session.access_token}`,"content-type": "application/json" },body: JSON.stringify({ resume: true }),
@@ -77,7 +77,7 @@ export function ActivityTimeline({ settings, userId, operationId,view = "activit
     } catch (cause) {
       if (!abort.signal.aborted && identity.current === userId) setError(cause instanceof Error ? cause.message : "Conversation activity is unavailable.");
     } finally { if (!abort.signal.aborted) setBusy(false); }
-  }, [client, operationId, userId,view]);
+  }, [client, operationId, userId,view,runtimeEnabled]);
 
   useEffect(() => {
     const timer = setTimeout(() => { void load(); }, 0);
@@ -89,9 +89,9 @@ export function ActivityTimeline({ settings, userId, operationId,view = "activit
     <Link className="underline" href="/conversations">Conversations</Link>
     <h1 className="text-3xl font-medium">{view === "runs" ? "Run history" : "Saved activity"}</h1>
     <Link className="underline" href={`/conversations/${operationId}/${view === "runs" ? "activity" : "runs"}`}>{view === "runs" ? "Saved activity" : "Run history"}</Link>
-    <p className="text-muted-foreground">{view === "runs" ? "Some runs are still awaiting verification. Check history to look for updates." : "This is a partial event record in database ingestion order. Events may be missing or appear after later events. It does not identify which interrupted model attempt entered the final transcript."}</p>
+    <p className="text-muted-foreground">{view === "runs" ? runtimeEnabled ? "Some runs are still awaiting verification. Check history to look for updates." : "Chat is paused. These are saved run summaries; incomplete coverage remains awaiting verification." : "This is a partial event record in database ingestion order. Events may be missing or appear after later events. It does not identify which interrupted model attempt entered the final transcript."}</p>
     <button className="rounded border px-3 py-2" disabled={busy} onClick={() => void load()}>{view === "runs" ? "Refresh runs" : "Refresh activity"}</button>
-    {view === "runs" && <button className="rounded border px-3 py-2" disabled={busy} onClick={() => void load(undefined,true)}>Check history</button>}
+    {view === "runs" && runtimeEnabled && <button className="rounded border px-3 py-2" disabled={busy} onClick={() => void load(undefined,true)}>Check history</button>}
     {busy && <p role="status">{view === "runs" ? "Loading runs…" : "Loading activity…"}</p>}
     {error && <p role="alert">{error}</p>}
     {!busy && !error && !items.length && <p>{view === "runs" ? "No saved runs yet. An empty copy does not prove that the conversation has no runs." : "No saved activity yet. An empty copy does not prove that the conversation has no events."}</p>}

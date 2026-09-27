@@ -244,7 +244,7 @@ export function mcpHandler(repository: () => Promise<RecordRepository> = getRepo
     // Credential provenance is assigned by authenticate, never by claims/metadata
     // supplied by callers or by an API key configured with the same owner string.
     const settings = principal.credentialType === "user" ? chatSettings() : null;
-    const ownedStore = settings ? await accessStore() : undefined;
+    const ownedStore = principal.credentialType === "user" ? await accessStore() : undefined;
     const owner = { tenant: principal.tenant,subject: principal.subject };
     const history = ownedStore ? new ConversationHistoryService(ownedStore,owner) : undefined;
     const artifacts = ownedStore ? new ArtifactService(ownedStore,owner) : undefined;

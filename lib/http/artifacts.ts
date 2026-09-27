@@ -1,14 +1,14 @@
 import { z } from "zod";
 import { ArtifactService } from "../agent-access/artifacts";
-import { authenticateAccountData as chatIdentity } from "./authenticated-data";
-import { requireChatSettings } from "../agent-access/settings";
+import { authenticateAccountData } from "./authenticated-data";
+import { requireAuthSettings } from "../auth/settings";
 import { getSessionAccessStore } from "../agent-access/store";
 import type { SessionAccessStore } from "../agent-access/contract";
 import { handle, readJson } from "./handler";
 
 export function artifactHandlers(store: () => Promise<SessionAccessStore> = getSessionAccessStore) {
   async function service(request: Request) {
-    const settings = requireChatSettings(),owner = await chatIdentity(request,settings.auth);
+    const owner = await authenticateAccountData(request,requireAuthSettings());
     return new ArtifactService(await store(),owner);
   }
   return {

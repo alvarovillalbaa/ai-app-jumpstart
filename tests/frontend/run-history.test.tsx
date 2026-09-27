@@ -22,6 +22,16 @@ const run: z.infer<typeof runView> = { turnId: "private-turn",firstIndex: 1,stat
 const page = (items = [run],nextCursor: number|null = null) => Response.json({ schemaVersion: 1,source: "eve-run-boundaries",items,nextCursor });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); auth.token = "fresh-token"; });
 
+it("reads saved run summaries without offering runtime verification while chat is paused",async () => {
+  const fetcher = vi.fn().mockResolvedValue(page());vi.stubGlobal("fetch",fetcher);
+  render(<ActivityTimeline settings={settings} userId="alice" operationId={operation} view="runs" runtimeEnabled={false} />);
+  await screen.findByRole("heading",{ name: "Awaiting verification" });
+  expect(screen.queryByRole("button",{ name: "Check history" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button",{ name: "Refresh runs" }));
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+  expect(fetcher.mock.calls.every(([path]) => String(path).includes("/runs?"))).toBe(true);
+});
+
 it("clears run metadata on account change and ignores a delayed page",async () => {
   let resolve!: (value: Response) => void;
   const fetcher = vi.fn().mockResolvedValueOnce(page([run],1))

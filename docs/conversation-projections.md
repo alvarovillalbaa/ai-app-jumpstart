@@ -30,7 +30,7 @@ The live chat UI continues using Eve's reducer and replay. The conversation hist
 
 ## Read through REST, CLI or MCP
 
-Use a current registered-user bearer token with account chat enabled. Record API keys do not grant access.
+Use a current registered-user bearer token. Saved `/events` and `/runs` reads remain available with chat disabled; record API keys do not grant access. Source-event reads and reconciliation still require enabled account chat and a reachable Eve service.
 
 - REST: `GET /api/v1/conversations/OPERATION_UUID/events?limit=20&after=INGESTION_INDEX`. The limit is 1–50; omit `after` initially. The response is `{schemaVersion:1,source:"eve-stream",items,nextCursor}`. Feed a non-null `nextCursor` into `after`. For continued polling after the last page, retain the last item's `ingestionIndex` even when `nextCursor` is null. An empty page means no captured entries at that point, not an empty conversation.
 - CLI: `npm run app -- conversations events OPERATION_UUID [AFTER_INGESTION_INDEX]`. The default page size is 20.
@@ -40,7 +40,7 @@ Client bodies cannot create or edit projection entries. Neither reads nor recove
 
 ## Persisted run summaries
 
-`GET /api/v1/conversations/OPERATION_UUID/runs?limit=20&after=INGESTION_INDEX`, CLI `npm run app -- conversations runs OPERATION_UUID [AFTER_INGESTION_INDEX]`, and MCP `conversations_runs` with `{operationId,options?:{limit,after}}` share an owner-only `{schemaVersion:1,source:"eve-run-boundaries",items,nextCursor}` page. The browser links from saved activity to `/conversations/OPERATION_UUID/runs`. It shows captured model IDs, the earliest observed running timestamp, status, last boundary time and a bounded failure code. Refresh reads the application database even if Eve is unavailable. Check history attempts one bounded owner-token reconciliation before refreshing; repeat if more source pages remain.
+`GET /api/v1/conversations/OPERATION_UUID/runs?limit=20&after=INGESTION_INDEX`, CLI `npm run app -- conversations runs OPERATION_UUID [AFTER_INGESTION_INDEX]`, and MCP `conversations_runs` with `{operationId,options?:{limit,after}}` share an owner-only `{schemaVersion:1,source:"eve-run-boundaries",items,nextCursor}` page. The browser links from saved activity to `/conversations/OPERATION_UUID/runs`. It shows captured model IDs, the earliest observed running timestamp, status, last boundary time and a bounded failure code. Refresh reads the application database even if Eve is unavailable. When chat is enabled, Check history attempts one bounded owner-token reconciliation before refreshing; repeat if more source pages remain. With chat disabled, the page offers saved-data refresh only and retains explicit unverified coverage.
 
 Each turn has a private materialized cache updated in the same transaction as its immutable run/model event or source-index annotation. Fact identities deduplicate retries and retain conflicting attempts. Public summaries omit private fact IDs, owner fields and runtime session bindings. Pagination uses the earliest ingestion index for that turn, so later facts update an existing row without moving its cursor. Refresh to see updates to earlier pages. Models are observed IDs, not a claim about which attempt entered canonical history; historical rows without model facts remain unknown.
 

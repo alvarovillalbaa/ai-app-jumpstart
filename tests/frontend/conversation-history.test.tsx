@@ -17,6 +17,17 @@ const id = "939fb17a-6972-4cf2-99ae-eedbe79174fa";
 const item = { id,operationId: id,title: "Private title",createdAt: 0,archived: false,revision: 1,status: "active" };
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); auth.token = "fresh-token"; });
 
+it("opens only saved activity and hides runtime controls while chat is paused",async () => {
+  const fetcher = vi.fn().mockResolvedValue(Response.json({ items: [item,{ ...item,id: "539fb17a-6972-4cf2-99ae-eedbe79174fa",status: "starting",title: "Pending title" }],nextCursor: null }));
+  vi.stubGlobal("fetch",fetcher);
+  render(<ConversationHistory settings={settings} userId="alice" runtimeEnabled={false} />);
+  expect(await screen.findByRole("link",{ name: "Private title" })).toHaveAttribute("href",`/conversations/${id}/activity`);
+  expect(screen.getByText(/Chat is paused/)).toBeVisible();
+  expect(screen.queryByRole("button",{ name: "Cancel pending start" })).not.toBeInTheDocument();
+  expect(screen.getAllByRole("link").some(link => link.getAttribute("href")?.startsWith("/s/"))).toBe(false);
+  expect(fetcher).toHaveBeenCalledOnce();
+});
+
 it("clears history on account change and ignores an outstanding page",async () => {
   let resolve!: (value: Response) => void;
   vi.stubGlobal("fetch",vi.fn().mockResolvedValueOnce(Response.json({ items: [item],nextCursor: `0.${id}` }))

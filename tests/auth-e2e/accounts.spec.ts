@@ -6,6 +6,8 @@ import { auditAccessibility } from "../helpers/accessibility";
 import { run as runCli } from "../../scripts/app-cli";
 import { preferences,defaultPreferences } from "../../lib/preferences/contract";
 import { runHostedSmoke } from "../../scripts/smoke-hosted.mjs";
+import { sqliteAccessStore } from "../../lib/agent-access/sqlite";
+import type { ProjectionEntry } from "../../lib/agent-access/projection-contract";
 
 const auth = process.env.TEST_AUTH_ORIGIN!;
 const adminHeaders = { authorization: `Bearer ${process.env.TEST_AUTH_ADMIN_KEY!}`, apikey: process.env.SUPABASE_PUBLISHABLE_KEY! };
@@ -51,6 +53,83 @@ test("portable account-browser smoke verifies login, records, reload and logout 
   const result = await runHostedSmoke({ url: process.env.APP_ORIGIN!,token: await tokenFor(request,alice),otherToken: await tokenFor(request,bob),accountBrowser: true,
     browserAccounts: { primary: { email: alice,password },other: { email: bob,password } } });
   expect(result.accountBrowser).toBe(true);expect(result.agent).toBeUndefined();
+});
+
+test("paused chat retains private history, activity, runs and artifact access across browser, REST, CLI and MCP",async ({ page,request }) => {
+  expect(process.env.AI_CHAT_ENABLED).toBe("false");
+  const alice = `retained-alice-${randomUUID()}@example.test`,bob = `retained-bob-${randomUUID()}@example.test`;
+  await confirmedUser(request,alice);await confirmedUser(request,bob);
+  const token = await tokenFor(request,alice),other = await tokenFor(request,bob);
+  const headers = { authorization: `Bearer ${token}` },foreign = { authorization: `Bearer ${other}` };
+  const profile = await (await request.get("/api/v1/account/profile",{ headers })).json();
+  const owner = { tenant: `supabase:${process.env.SUPABASE_AUTH_URL}`,subject: profile.id },operation = randomUUID(),session = `stored-${randomUUID()}`;
+  const store = sqliteAccessStore(process.env.SQLITE_PATH!);
+  let artifactId = "";
+  // Seed retained application data only: this is not an executed model turn.
+  try {
+    expect(await store.reserve({ ...owner,id: randomUUID(),operationId: operation,requestHash: "a".repeat(64) },"Retained private conversation")).toBe(true);
+    expect(await store.bind(owner,operation,session)).toBe(true);
+    const payloads: ProjectionEntry["payload"][] = [
+      { kind: "message",role: "assistant",parts: [{ type: "text",text: "Stored assistant fixture" }] },
+      { kind: "run",state: "running" },{ kind: "run",state: "completed" },
+    ];
+    for (const [sequence,payload] of payloads.entries()) {
+      expect(await store.appendProjection(owner,operation,session,{ schemaVersion: 1,eventId: `evt_${String(sequence).padStart(26,"0")}`,
+        at: "2026-09-27T10:00:00.000Z",turnId: "retained-fixture-turn",sequence,payload },sequence)).toBe("inserted");
+    }
+    const saved = await store.saveArtifact(owner,operation,session,"retained-artifact-call",{ title: "Retained private artifact",content: "Approved stored fixture text" });
+    if (saved.status !== "created") throw new Error("Retained fixture could not be saved");
+    artifactId = saved.artifact.id;
+  } finally { await store.close(); }
+  const urls = [`/api/v1/conversations/${operation}/metadata`,`/api/v1/conversations/${operation}/events`,`/api/v1/conversations/${operation}/runs`,
+    `/api/v1/artifacts/${artifactId}`,`/api/v1/artifacts/${artifactId}/versions`,`/api/v1/artifacts/${artifactId}/download`];
+  for (const url of urls) {
+    expect((await request.get(url,{ headers })).status()).toBe(200);
+    expect((await request.get(url,{ headers: foreign })).status()).toBe(404);
+    expect((await request.get(url)).status()).toBe(401);
+  }
+  expect(await runCli(["conversations","get",operation],{ APP_API_URL: process.env.APP_ORIGIN,APP_API_TOKEN: token })).toMatchObject({ title: "Retained private conversation" });
+  expect(await runCli(["artifacts","get",artifactId],{ APP_API_URL: process.env.APP_ORIGIN,APP_API_TOKEN: token })).toMatchObject({ content: "Approved stored fixture text" });
+  const client = new Client({ name: "paused-history",version: "1" });
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${process.env.APP_ORIGIN}/api/mcp`),{ requestInit: { headers } }));
+    const tools = (await client.listTools()).tools.map(tool => tool.name);
+    expect(tools).toContain("conversations_get");expect(tools).toContain("artifacts_versions");
+    expect(tools).not.toContain("conversations_source_events");expect(tools).not.toContain("conversations_reconcile");expect(tools).not.toContain("usage_get");
+    for (const uri of [`conversations:///${operation}`,`artifacts:///${artifactId}`]) expect((await client.readResource({ uri })).contents).toHaveLength(1);
+    const edited = await client.callTool({ name: "artifacts_update",arguments: { id: artifactId,revision: 1,title: "Retained edited artifact",content: "Owner edit with chat paused" } });
+    expect(edited.isError).not.toBe(true);
+  } finally { await client.close(); }
+  expect((await request.patch(`/api/v1/conversations/${operation}`,{ headers,data: { revision: 1,title: "Retained renamed conversation" } })).status()).toBe(200);
+  expect((await request.patch(`/api/v1/artifacts/${artifactId}`,{ headers: foreign,data: { revision: 2,title: "Stolen",content: "Stolen" } })).status()).toBe(404);
+  expect((await request.post("/api/v1/conversations",{ headers,data: { operationId: randomUUID(),prompt: "Do not dispatch" } })).status()).toBe(503);
+  expect((await request.get(`/api/v1/conversations/${operation}`,{ headers })).status()).toBe(503);
+  expect((await request.post(`/api/v1/conversations/${operation}/reconcile`,{ headers,data: { resume: true } })).status()).toBe(503);
+  const runtimeRequests: string[] = [];
+  page.on("request",request => { const path = new URL(request.url()).pathname;if (path.startsWith("/eve/")) runtimeRequests.push(path); });
+  await login(page,alice);
+  const navigation = page.getByRole("navigation",{ name: "Workspace" });
+  await expect(navigation.getByRole("link",{ name: "Conversations",exact: true })).toBeVisible();
+  await expect(navigation.getByRole("link",{ name: "Artifacts",exact: true })).toBeVisible();
+  await expect(navigation.getByRole("link",{ name: "Chat",exact: true })).toHaveCount(0);
+  await page.goto("/conversations");
+  const title = page.getByRole("link",{ name: "Retained renamed conversation",exact: true });
+  await expect(title).toHaveAttribute("href",`/conversations/${operation}/activity`);await title.click();
+  await expect(page.getByText("Stored assistant fixture",{ exact: true })).toBeVisible();
+  await page.reload();await expect(page.getByText("Stored assistant fixture",{ exact: true })).toBeVisible();
+  await page.getByRole("link",{ name: "Run history",exact: true }).click();
+  await expect(page.getByRole("heading",{ name: "Awaiting verification",exact: true })).toBeVisible();
+  await expect(page.getByRole("button",{ name: "Check history",exact: true })).toHaveCount(0);
+  await auditAccessibility(page,"paused-chat run history");
+  await page.goto("/artifacts");await expect(page.getByRole("heading",{ name: "Retained edited artifact" })).toBeVisible();
+  await expect(page.getByRole("link",{ name: "Source conversation" })).toHaveAttribute("href",`/conversations/${operation}/activity`);
+  await page.reload();await expect(page.getByRole("heading",{ name: "Retained edited artifact" })).toBeVisible();
+  await auditAccessibility(page,"paused-chat artifacts");expect(runtimeRequests).toEqual([]);
+  await page.goto("/account");await page.getByRole("button",{ name: "Sign out",exact: true }).click();await atPath(page,"/login");
+  await login(page,bob);await page.goto("/artifacts");await expect(page.getByText("No artifacts yet.")).toBeVisible();
+  await page.goto(`/conversations/${operation}/activity`);await expect(page.getByRole("main").getByRole("alert")).toContainText("Conversation not found");
+  expect((await request.delete(`/api/v1/artifacts/${artifactId}`,{ headers })).status()).toBe(204);
+  expect((await request.get(`/api/v1/artifacts/${artifactId}/versions`,{ headers })).status()).toBe(404);
 });
 
 test("signup email, PKCE callback, private records, cross-user API denial and logout", async ({ page, request }) => {

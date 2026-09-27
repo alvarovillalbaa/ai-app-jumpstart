@@ -21,6 +21,13 @@ export function authSettings(env: NodeJS.ProcessEnv = process.env): PublicAuthSe
   return { url: origin, publishableKey: key };
 }
 
+/** Saved account data does not depend on model/runtime configuration. */
+export function requireAuthSettings() {
+  const settings = authSettings();
+  if (!settings) throw new AppError(503,"auth_unconfigured","Configure Supabase sign-in for account data.");
+  return settings;
+}
+
 const destinations = new Set(["/account", "/account/password", "/records", "/uploads", "/s", "/conversations"]);
 export function safeReturnPath(value: unknown, fallback = "/account") {
   return typeof value === "string" && destinations.has(value) ? value : fallback;

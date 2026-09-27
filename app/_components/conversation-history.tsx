@@ -6,7 +6,7 @@ import { browserAuth } from "@/lib/auth/browser";
 import type { PublicAuthSettings } from "@/lib/auth/settings";
 import { conversationSummary, historyPage, type ConversationSummary, type HistoryPatch } from "@/lib/agent-access/contract";
 
-export function ConversationHistory({ settings, userId }: { settings: PublicAuthSettings; userId: string }) {
+export function ConversationHistory({ settings, userId,runtimeEnabled = true }: { settings: PublicAuthSettings; userId: string;runtimeEnabled?: boolean }) {
   const client = browserAuth(settings);
   const identity = useRef(userId);
   const controller = useRef<AbortController | null>(null);
@@ -77,7 +77,7 @@ export function ConversationHistory({ settings, userId }: { settings: PublicAuth
   }
 
   async function cancelStart(item: ConversationSummary) {
-    if (busy || item.status !== "starting") return;
+    if (busy || !runtimeEnabled || item.status !== "starting") return;
     controller.current?.abort(); const abort = new AbortController(); controller.current = abort;
     setBusy(true); setError("");
     try {
@@ -93,7 +93,7 @@ export function ConversationHistory({ settings, userId }: { settings: PublicAuth
   if (!signedIn) return <main className="p-8"><p role="alert">Your account changed or your session ended.</p><Link href="/login?next=/conversations">Sign in again</Link></main>;
   return <main className="mx-auto max-w-3xl space-y-6 p-6 sm:p-8">
     <h1 className="text-3xl font-medium">Conversations</h1>
-    <p className="text-muted-foreground">Reopen a chat or organize your history. You can cancel a start before its runtime begins; archiving keeps a conversation and does not stop an active run.</p>
+    <p className="text-muted-foreground">{runtimeEnabled ? "Reopen a chat or organize your history. You can cancel a start before its runtime begins; archiving keeps a conversation and does not stop an active run." : "Chat is paused on this deployment. You can view saved activity, rename conversations and organize your history. Archiving retains the saved data."}</p>
     <div className="flex gap-4">
       <label className="flex items-center gap-2"><input type="checkbox" checked={archived} onChange={event => {
         controller.current?.abort(); setItems([]); setCursor(null); setBusy(true); setError(""); setArchived(event.target.checked);
@@ -104,8 +104,8 @@ export function ConversationHistory({ settings, userId }: { settings: PublicAuth
     {busy && <p role="status">Loading…</p>}
     {!busy && !error && !items.length && <p>No {archived ? "archived " : ""}conversations yet.</p>}
     <ul className="divide-y">{items.map(item => <li key={item.id} className="space-y-3 py-5">
-      {item.status === "revoked" ? <p className="font-medium break-words">{item.title}</p> : <Link className="font-medium underline break-words" href={`/s/${item.operationId}`}>{item.title}</Link>}
-      <p className="text-sm text-muted-foreground">{item.createdAt ? new Date(item.createdAt).toLocaleString() : "Date unavailable"} · {item.status === "active" ? "Ready to open" : item.status === "starting" ? "Awaiting confirmation" : "Unavailable"}</p>
+      {item.status === "revoked" ? <p className="font-medium break-words">{item.title}</p> : <Link className="font-medium underline break-words" href={runtimeEnabled ? `/s/${item.operationId}` : `/conversations/${item.operationId}/activity`}>{item.title}</Link>}
+      <p className="text-sm text-muted-foreground">{item.createdAt ? new Date(item.createdAt).toLocaleString() : "Date unavailable"} · {!runtimeEnabled ? "Saved history" : item.status === "active" ? "Ready to open" : item.status === "starting" ? "Awaiting confirmation" : "Unavailable"}</p>
       {editing === item.id ? <form className="flex flex-wrap gap-3" onSubmit={event => { event.preventDefault(); void update(item, { title }); }}>
         <label className="flex items-center gap-2">Title<input className="rounded border px-3 py-2" value={title} maxLength={120} required onChange={event => setTitle(event.target.value)} /></label>
         <button className="rounded border px-3 py-2" disabled={busy || !title.trim()}>Save title</button>
@@ -114,7 +114,7 @@ export function ConversationHistory({ settings, userId }: { settings: PublicAuth
         <Link className="underline" href={`/conversations/${item.operationId}/activity`}>Saved activity</Link>
         <button disabled={busy} onClick={() => { setEditing(item.id); setTitle(item.title); }}>Rename</button>
         <button disabled={busy} onClick={() => void update(item, { archived: !archived })}>{archived ? "Restore" : "Archive"}</button>
-        {item.status === "starting" && <button disabled={busy} onClick={() => void cancelStart(item)}>Cancel pending start</button>}
+        {runtimeEnabled && item.status === "starting" && <button disabled={busy} onClick={() => void cancelStart(item)}>Cancel pending start</button>}
       </div>}
     </li>)}</ul>
     {cursor && <button className="rounded border px-3 py-2" disabled={busy} onClick={() => void load(archived, cursor)}>Load more</button>}
