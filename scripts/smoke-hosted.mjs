@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Client as EveClient } from "eve/client";
+import { checkedBrowserAccounts,verifyBrowserAccounts,accountBrowserRead } from "./helpers/hosted-account-browser.mjs";
 
 function targetOrigin(value) {
   let url;
@@ -182,10 +183,14 @@ async function runAgentSmoke({ origin, token, otherToken, protection, request })
   return { operationId, sessionId: conversation.sessionId, sourceEvents, sourceIndex };
 }
 
-export async function runHostedSmoke({ url, token, otherToken, accounts = false, agent = false, browser = false }) {
+/**
+ * @param {{url: string,token: string,otherToken: string,accounts?: boolean,agent?: boolean,browser?: boolean,accountBrowser?: boolean,browserAccounts?: import("./helpers/hosted-account-browser.mjs").AccountBrowserCredentials}} options
+ */
+export async function runHostedSmoke({ url, token, otherToken, accounts = false, agent = false, browser = false,accountBrowser = false,browserAccounts }) {
   const origin = targetOrigin(url);
   if (agent && !accounts) throw new Error("Agent smoke requires the two-account mode.");
   if (!token || !otherToken || token === otherToken) throw new Error("Set distinct APP_API_TOKEN and APP_API_OTHER_TOKEN with record read/write access for different owners.");
+  const checkedAccounts = accountBrowser ? checkedBrowserAccounts(browserAccounts) : undefined;
   const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
   const protection = bypass ? { "x-vercel-protection-bypass": bypass } : {};
   const authorized = { authorization: `Bearer ${token}` };
@@ -197,6 +202,7 @@ export async function runHostedSmoke({ url, token, otherToken, accounts = false,
       headers: { ...protection, ...headers },
     });
   };
+  if (checkedAccounts) await verifyBrowserAccounts(checkedAccounts,token,otherToken,request);
   const live = await request("/api/health/live");
   assert.equal(live.status, 200, "Web liveness failed");
   const ready = await request("/api/health/ready");
@@ -253,6 +259,7 @@ export async function runHostedSmoke({ url, token, otherToken, accounts = false,
     const resource = await client.readResource({ uri: `records:///${record.id}` });
     assert.deepEqual(JSON.parse(resource.contents[0].text), record);
     if (browser) await browserRead({ origin, token, otherToken, protection, title });
+    if (checkedAccounts) await accountBrowserRead({ origin,protection,accounts: checkedAccounts,title });
   } catch (error) { failure = error; }
   finally {
     try { await client?.close(); } catch (error) { cleanupFailure = error; }
@@ -267,19 +274,21 @@ export async function runHostedSmoke({ url, token, otherToken, accounts = false,
   if (failure) throw failure;
   if (cleanupFailure) throw cleanupFailure;
   const agentResult = agent ? await runAgentSmoke({ origin, token, otherToken, protection, request }) : undefined;
-  return { origin, recordId: record.id, agent: agentResult, browser };
+  if (checkedAccounts && agentResult) await accountBrowserRead({ origin,protection,accounts: checkedAccounts,operationId: agentResult.operationId });
+  return { origin, recordId: record.id, agent: agentResult, browser,accountBrowser };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   const flags = new Set(args);
-  if (flags.size !== args.length || args.some(arg => !["--accounts", "--agent", "--browser"].includes(arg))) {
-    console.error("Supported options: --accounts (no model call), --agent (one owned model turn), --browser (Chromium UI check).");
+  if (flags.size !== args.length || args.some(arg => !["--accounts", "--agent", "--browser","--account-browser"].includes(arg))) {
+    console.error("Supported options: --accounts (no model call), --agent (one owned model turn), --browser (token records UI), --account-browser (real sign-in, reload, logout and account isolation).");
     process.exitCode = 2;
   } else {
-    const agent = flags.has("--agent"), accounts = agent || flags.has("--accounts"), browser = flags.has("--browser");
-    runHostedSmoke({ url: process.env.APP_API_URL, token: process.env.APP_API_TOKEN, otherToken: process.env.APP_API_OTHER_TOKEN, accounts, agent, browser })
-      .then(({ origin }) => console.log(`Hosted smoke passed for ${origin}: readiness, Eve, web, ${accounts ? "Supabase accounts, " : ""}REST, owner isolation, CLI and MCP${browser ? ", Chromium records UI" : ""}${agent ? ", one owned agent turn and source-stream read" : ""}.`))
+    const agent = flags.has("--agent"),accountBrowser = flags.has("--account-browser"),accounts = agent || flags.has("--accounts"), browser = flags.has("--browser");
+    runHostedSmoke({ url: process.env.APP_API_URL, token: process.env.APP_API_TOKEN, otherToken: process.env.APP_API_OTHER_TOKEN, accounts, agent, browser,accountBrowser,
+      browserAccounts: accountBrowser ? { primary: { email: process.env.APP_SMOKE_EMAIL,password: process.env.APP_SMOKE_PASSWORD },other: { email: process.env.APP_SMOKE_OTHER_EMAIL,password: process.env.APP_SMOKE_OTHER_PASSWORD } } : undefined })
+      .then(({ origin }) => console.log(`Hosted smoke passed for ${origin}: readiness, Eve, web, ${accounts ? "Supabase accounts, " : ""}REST, owner isolation, CLI and MCP${browser ? ", Chromium records UI" : ""}${agent ? ", one owned agent turn and source-stream read" : ""}${accountBrowser ? ", real account sign-in/reload/logout and browser isolation" : ""}.`))
       .catch(error => { console.error(message(error)); process.exitCode = 1; });
   }
 }

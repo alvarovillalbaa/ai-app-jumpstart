@@ -5,6 +5,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { auditAccessibility } from "../helpers/accessibility";
 import { run as runCli } from "../../scripts/app-cli";
 import { preferences,defaultPreferences } from "../../lib/preferences/contract";
+import { runHostedSmoke } from "../../scripts/smoke-hosted.mjs";
 
 const auth = process.env.TEST_AUTH_ORIGIN!;
 const adminHeaders = { authorization: `Bearer ${process.env.TEST_AUTH_ADMIN_KEY!}`, apikey: process.env.SUPABASE_PUBLISHABLE_KEY! };
@@ -43,6 +44,14 @@ async function emailLink(request: APIRequestContext, email: string) {
   if (!link || new URL(link).origin !== auth) throw new Error("Local Auth did not send an expected verification link.");
   return link;
 }
+
+test("portable account-browser smoke verifies login, records, reload and logout with chat disabled",async ({ request }) => {
+  const alice = `smoke-alice-${randomUUID()}@example.test`,bob = `smoke-bob-${randomUUID()}@example.test`;
+  await confirmedUser(request,alice);await confirmedUser(request,bob);
+  const result = await runHostedSmoke({ url: process.env.APP_ORIGIN!,token: await tokenFor(request,alice),otherToken: await tokenFor(request,bob),accountBrowser: true,
+    browserAccounts: { primary: { email: alice,password },other: { email: bob,password } } });
+  expect(result.accountBrowser).toBe(true);expect(result.agent).toBeUndefined();
+});
 
 test("signup email, PKCE callback, private records, cross-user API denial and logout", async ({ page, request }) => {
   const email = `signup-${randomUUID()}@example.test`;

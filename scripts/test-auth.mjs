@@ -123,9 +123,11 @@ try {
     env.AI_BUDGET_POLICY_JSON = JSON.stringify({ policy: { id: "fixture", dailyMicros: uploads ? 100 : 60, maxActive: 2, maxPerMinute: 20 }, estimateMicros: 20, maxModelCalls: 2, modelIds: ["model", "eve-mock/model"],
       costBasis: { sourceUrl: "https://example.test/fixture-prices", reviewedAt: "2026-09-24", maxOtherMicros: 0,
         models: ["model", "eve-mock/model"].map(id => ({ id, maxInputTokens: 1, maxOutputTokens: 1, inputMicrosPerMillion: 1_000_000, outputMicrosPerMillion: 1_000_000 })) } });
-    runtime = await startChatFixture(process.cwd(), directory, env, { buildOnly: containerMode, routesManifest: imageManifest });
-    env.AI_RUNTIME_ORIGIN = runtime.origin;
   }
+  // The portable smoke checks Eve health even when account chat is disabled.
+  // Use the same isolated compiled service; no turn is dispatched in Auth mode.
+  runtime = await startChatFixture(process.cwd(), directory, env, { buildOnly: containerMode, routesManifest: imageManifest });
+  env.AI_RUNTIME_ORIGIN = runtime.origin;
   if (containerMode) {
     const containerEnv = {
       NODE_ENV: "production", AUTH_PROVIDER: "supabase", SUPABASE_AUTH_URL: publicAuthOrigin,
@@ -151,8 +153,8 @@ try {
     await waitFor(async () => (await docker("exec", app, "node", "-e", `fetch("http://127.0.0.1:${authPort}/auth/v1/health").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))`)) === "", "Container Auth forwarder");
     web = spawn("docker", ["exec", "--user", "node", app, "node", "scripts/start-local.mjs"], { env: process.env, stdio: ["ignore", "pipe", "pipe"] });
   } else {
-    // Run the compiled web service directly. Chat mode uses the temporary Eve
-    // fixture above; neither mode opens the operator's local Workflow directory.
+    // Both modes use the temporary Eve fixture and leave the operator's local
+    // Workflow directory untouched.
     web = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "--hostname", "127.0.0.1", "--port", String(webPort)], { env, stdio: ["ignore", "pipe", "pipe"] });
   }
   const capture = chunk => { webOutput = (webOutput + chunk).slice(-10000); }; web.stdout.on("data", capture); web.stderr.on("data", capture);
