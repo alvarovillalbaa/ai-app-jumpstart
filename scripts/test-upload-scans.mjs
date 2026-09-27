@@ -1,51 +1,22 @@
 import { createHash } from "node:crypto";
-import { mkdtemp,readFile,writeFile,rm } from "node:fs/promises";
+import { mkdtemp,writeFile,rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 
-// Genuine INSTREAM framing with deterministic verdicts, not a malware engine.
-// Production has no fixture hook: only this private daemon reads the control file.
+import { uploadScannerFixture } from "./helpers/upload-scanner-fixture.mjs";
 const directory = await mkdtemp(join(tmpdir(),"jscan-"));
 const control = join(directory,"verdict"),socketPath = join(directory,"scan.sock");
-const sockets = new Set();
-let web,output = "";
-const daemon = createServer(socket => {
-  sockets.add(socket);socket.on("close",() => sockets.delete(socket));
-  socket.on("error",() => {});socket.setTimeout(5000,() => socket.destroy());
-  let frame = Buffer.alloc(0),done = false;
-  socket.on("data",async chunk => {
-    if (done) return;
-    frame = Buffer.concat([frame,chunk]);
-    if (frame.length > 5 * 1024 * 1024 + 1024) { done = true;socket.destroy();return; }
-    if (frame.equals(Buffer.from("zPING\0"))) { done = true;socket.end("PONG\0");return; }
-    if (frame.length < 10) return;
-    if (!frame.subarray(0,10).equals(Buffer.from("zINSTREAM\0"))) { done = true;socket.destroy();return; }
-    let offset = 10;
-    while (offset + 4 <= frame.length) {
-      const length = frame.readUInt32BE(offset);offset += 4;
-      if (length > 5 * 1024 * 1024) { done = true;socket.destroy();return; }
-      if (length === 0) {
-        done = true;
-        const verdict = await readFile(control,"utf8");
-        if (verdict === "outage") socket.destroy();
-        else socket.end(verdict === "infected" ? "stream: Fixture-Signature FOUND\0" : "stream: OK\0");
-        return;
-      }
-      if (offset + length > frame.length) return;
-      offset += length;
-    }
-  });
-});
+let web,scanner,output = "";
 async function freePort() {
   const server = createServer();server.listen(0,"127.0.0.1");await once(server,"listening");
   const port = server.address().port;await new Promise(resolve => server.close(resolve));return port;
 }
 try {
   await writeFile(control,"clean",{ mode: 0o600 });
-  daemon.listen(socketPath);await once(daemon,"listening");
+  scanner = await uploadScannerFixture(socketPath,control);
   const port = await freePort(),origin = `http://127.0.0.1:${port}`;
   // Allow only runtime essentials from the operator environment. Next will load
   // .env files, so explicitly override every setting relevant to these paths.
@@ -85,7 +56,6 @@ try {
     await Promise.race([once(web,"exit"),new Promise(resolve => setTimeout(resolve,3000))]);
     if (web.exitCode === null) { web.kill("SIGKILL");await once(web,"exit"); }
   }
-  for (const socket of sockets) socket.destroy();
-  if (daemon.listening) await new Promise(resolve => daemon.close(resolve));
+  await scanner?.stop();
   await rm(directory,{ recursive: true,force: true });
 }

@@ -36,10 +36,12 @@ it("clears approved extracted text on refresh and suppresses a late read after a
     }
     return Response.json({ items: [item],usage: { files: 1,bytes: item.size } });
   }));
-  render(<UploadQuarantine settings={settings} userId="alice" downloadEnabled />);
+  render(<UploadQuarantine settings={settings} userId="alice" downloadEnabled agentReadingEnabled />);
   fireEvent.click(await screen.findByRole("button",{ name: "View processing review" }));
   fireEvent.click(await screen.findByRole("button",{ name: "Read approved text" }));
   expect(await screen.findByText(text)).toBeVisible();
+  expect(screen.getByText("Use this reviewed file in chat")).toBeInTheDocument();
+  expect(screen.getByText(JSON.stringify({ id: item.id,sha256: item.sha256,reviewRevision: 1 }))).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button",{ name: /^Refresh$/ }));
   await waitFor(() => expect(screen.queryByText(text)).not.toBeInTheDocument());
   fireEvent.click(await screen.findByRole("button",{ name: "View processing review" }));

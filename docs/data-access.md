@@ -111,4 +111,4 @@ The current [AI usage view](usage-budgets.md) is readable at `/usage`, `GET /api
 
 Account theme and sound settings are available independently of account chat through authenticated REST, CLI and MCP. See [account preferences](account-preferences.md) for revision conflicts, device/server precedence, sound policy and upgrades.
 
-Owner upload review and bounded UTF-8 text extraction use the same service across REST, CLI and MCP. Approval binds the exact digest/current revision and requires a fresh scan; extracted text is private untrusted data and is not attached to Eve. See [review contracts and credential requirements](upload-review.md).
+Owner upload review and bounded UTF-8 text extraction use the same service across REST, CLI and MCP. Approval binds the exact digest/current revision and requires a fresh scan; extracted text is private untrusted data. This API does not dispatch Eve; the optional [native reader](agent-upload-reader.md) separately gates each model-facing read. See [review contracts and credential requirements](upload-review.md).

@@ -86,7 +86,8 @@
     "test:upload-scanner:compose": "tsx scripts/test-upload-scanner-compose.ts",
     "test:upload-scans": "node scripts/test-upload-scans.mjs",
     "mcp:reference": "tsx scripts/serve-reference-mcp.ts",
-    "test:reference-mcp": "tsx scripts/test-reference-mcp.ts"
+    "test:reference-mcp": "tsx scripts/test-reference-mcp.ts",
+    "test:agent-uploads": "tsx scripts/test-agent-uploads.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",

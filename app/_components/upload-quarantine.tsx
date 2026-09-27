@@ -9,7 +9,7 @@ import { DEFAULT_UPLOAD_QUOTA, uploadEntry, uploadPage, type UploadEntry } from 
 import { MAX_API_UPLOAD_BYTES, uploadName, type UploadMediaType } from "@/lib/uploads/schema";
 import { uploadDownloadLink } from "@/lib/uploads/download-link-contract";
 
-type Props = { settings?: PublicAuthSettings; userId?: string; downloadEnabled?: boolean;downloadLinksEnabled?: boolean };
+type Props = { settings?: PublicAuthSettings; userId?: string; downloadEnabled?: boolean;downloadLinksEnabled?: boolean;agentReadingEnabled?: boolean };
 type Page = ReturnType<typeof uploadPage.parse>;
 const extensions: Record<string, UploadMediaType> = {
   txt: "text/plain", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", pdf: "application/pdf",
@@ -32,7 +32,7 @@ function checkedFile(file: File): { name: string; mediaType: UploadMediaType } {
   return { name, mediaType };
 }
 
-export function UploadQuarantine({ settings, userId, downloadEnabled = false,downloadLinksEnabled = false }: Props) {
+export function UploadQuarantine({ settings, userId, downloadEnabled = false,downloadLinksEnabled = false,agentReadingEnabled = false }: Props) {
   const client = settings ? browserAuth(settings) : null;
   const identity = useRef(userId ?? "");
   const generation = useRef(0);
@@ -273,7 +273,7 @@ export function UploadQuarantine({ settings, userId, downloadEnabled = false,dow
         {!page.items.length ? <p>No uploads yet.</p> : <ul className="divide-y">{page.items.map(item => <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 py-4">
           <div className="min-w-0"><h3 className="break-words font-medium">{item.name}</h3><p className="text-sm text-muted-foreground">{item.state === "clean" ? downloadEnabled ? "Last scan passed · each download is scanned again" : "Last scan passed · downloads disabled on this host" : item.state === "rejected" ? item.scan?.status === "rejected" && item.scan.reason === "integrity" ? "Rejected · stored bytes failed validation" : "Rejected · malware scan failed" : item.state === "quarantined" ? downloadEnabled ? "Quarantined · scan required for each owner download" : "Quarantined · unavailable for download or agent use" : item.state === "deleting" ? "Deletion pending · retry deletion" : "Storage pending · unavailable for use"} · {(item.size / 1024).toFixed(1)} KiB · {new Date(item.createdAt).toLocaleString()}</p>
             {item.scan && <p className="text-sm text-muted-foreground">Last checked {new Date(item.scan.checkedAt).toLocaleString()}</p>}</div>
-          {downloadEnabled && <UploadReviewPanel key={`${item.id}:${reviewEpoch}`} item={item} credential={credential} isCurrent={() => generation.current === reviewGeneration && (!settings || identity.current === userId)} disabled={uploading || acting !== null} />}
+          {downloadEnabled && <UploadReviewPanel key={`${item.id}:${reviewEpoch}`} item={item} credential={credential} isCurrent={() => generation.current === reviewGeneration && (!settings || identity.current === userId)} disabled={uploading || acting !== null} agentReadingEnabled={agentReadingEnabled} />}
           <div className="flex flex-wrap gap-2">{downloadEnabled && (item.state === "quarantined" || item.state === "clean") && <>
             <button className={buttonClass} disabled={uploading || acting !== null} onClick={() => void scan(item)}>{item.state === "clean" ? "Scan again" : "Scan file"}</button>
             <button className={buttonClass} disabled={uploading || acting !== null} onClick={() => void download(item)}>Download after scan</button></>}

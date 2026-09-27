@@ -5,6 +5,7 @@ import { UploadQuarantine } from "@/app/_components/upload-quarantine";
 import { currentUser } from "@/lib/auth/server";
 import { authSettings } from "@/lib/auth/settings";
 import { uploadDownloadConfigured } from "@/lib/uploads/download-capability";
+import { uploadReaderEnabled } from "@/lib/uploads/agent-reader";
 
 export const metadata = { title: "Uploads" };
 
@@ -19,5 +20,5 @@ export default async function UploadsPage() {
   if (!settings) return <UploadQuarantine downloadEnabled={downloadEnabled} downloadLinksEnabled={downloadLinksEnabled} />;
   const user = await currentUser();
   if (!user) redirect("/login?next=/uploads");
-  return <UploadQuarantine key={user.id} settings={settings} userId={user.id} downloadEnabled={downloadEnabled} downloadLinksEnabled={downloadLinksEnabled} />;
+  return <UploadQuarantine key={user.id} settings={settings} userId={user.id} downloadEnabled={downloadEnabled} downloadLinksEnabled={downloadLinksEnabled} agentReadingEnabled={process.env.AI_CHAT_ENABLED === "true" && uploadReaderEnabled()} />;
 }

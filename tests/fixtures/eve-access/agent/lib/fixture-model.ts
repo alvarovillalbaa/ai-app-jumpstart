@@ -3,7 +3,7 @@ import { mockModel } from "eve/evals";
 import { customProvider, wrapLanguageModel } from "ai";
 import { defaultMaxInputBytes, inputPayloadBytes } from "../../../../../lib/budgets/input";
 
-export const fixtureModel = mockModel(async ({ lastUserMessage,toolResults }) => {
+export const fixtureModel = mockModel(async ({ lastUserMessage,toolResults,userMessages }) => {
     await appendFile(process.env.TEST_MODEL_RECEIPTS!, `${JSON.stringify({ message: lastUserMessage ?? "compaction" })}\n`);
     if (lastUserMessage?.includes("inflight-restart-test")) {
       const deadline = Date.now() + 60000;
@@ -17,6 +17,9 @@ export const fixtureModel = mockModel(async ({ lastUserMessage,toolResults }) =>
     if (lastUserMessage?.includes("artifact-fixture")) return toolResults.length === 0
       ? { toolCalls: [{ name: "create_artifact",input: { title: "Fixture artifact",content: "Exact approved plain-text payload." } }] }
       : "Artifact proposal resolved.";
+    if (lastUserMessage?.startsWith("agent-upload-fixture ")) return toolResults.length < userMessages.filter(message => message.startsWith("agent-upload-fixture ")).length
+      ? { toolCalls: [{ name: "read_upload_text",input: JSON.parse(lastUserMessage.slice("agent-upload-fixture ".length)) }] }
+      : `Reviewed source: ${JSON.stringify(toolResults.at(-1)?.output)}`;
     return "Deterministic owned response";
 });
 if (typeof fixtureModel === "string") throw new Error("Fixture requires a concrete mock model.");

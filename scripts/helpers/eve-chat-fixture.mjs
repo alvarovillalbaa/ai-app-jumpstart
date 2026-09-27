@@ -5,8 +5,14 @@ import { dirname, join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 
-/** Real compiled Eve with a deterministic model and the production auth/hooks. */
-export async function startChatFixture(root, directory, applicationEnv, { buildOnly = false, routesManifest } = {}) {
+/**
+ * Real compiled Eve with a deterministic model and the production auth/hooks.
+ * @param {string} root
+ * @param {string} directory
+ * @param {Record<string,string | undefined>} applicationEnv
+ * @param {{buildOnly?: boolean, routesManifest?: {rewrites: {beforeFiles: {source: string, destination: string}[]}}, fixtureChannel?: boolean}} options
+ */
+export async function startChatFixture(root, directory, applicationEnv, { buildOnly = false, routesManifest = undefined,fixtureChannel = false } = {}) {
   const source = join(root, "tests/fixtures/eve-access"), fixture = join(directory, "eve-app");
   const manifest = routesManifest ?? JSON.parse(await readFile(join(root, ".next/routes-manifest.json"), "utf8"));
   const rewrite = manifest.rewrites.beforeFiles.find(item => item.source === "/eve/v1/:path+");
@@ -31,7 +37,7 @@ export async function startChatFixture(root, directory, applicationEnv, { buildO
     }
   }
   await relocate("agent");
-  await writeFile(join(fixture, "agent/channels/eve.ts"), `export { default } from ${JSON.stringify(join(root, "agent/channels/eve.ts"))};\n`);
+  if (!fixtureChannel) await writeFile(join(fixture, "agent/channels/eve.ts"), `export { default } from ${JSON.stringify(join(root, "agent/channels/eve.ts"))};\n`);
   const gate = join(directory, "gate"); await writeFile(gate, "ready");
   const env = { ...applicationEnv, EVE_DEV: "", EVE_TELEMETRY_DISABLED: "1", EVE_WORKFLOW_PROVIDER: "default", NITRO_PRESET: "node-server",
     HOST: "127.0.0.1", NITRO_HOST: "127.0.0.1", PORT: String(port), NITRO_PORT: String(port),

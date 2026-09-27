@@ -17,6 +17,15 @@ const chat = {
       models: [{ id: "openai/gpt-5.6-luna-fast", maxInputTokens: 1, maxOutputTokens: 1, inputMicrosPerMillion: 1_000_000, outputMicrosPerMillion: 1_000_000 }] } }),
 };
 
+it("requires account chat, private storage and remote scan-on-read for the opt-in agent reader",() => {
+  expect(() => checkManagedConfig({ ...chat,UPLOAD_AGENT_POLICY: "reviewed-text" })).toThrow("private storage and scan-on-read");
+  const reading = { UPLOAD_AGENT_POLICY: "reviewed-text",UPLOAD_STORAGE_PROVIDER: "supabase",UPLOAD_DOWNLOAD_POLICY: "scan-on-read",
+    UPLOAD_SCANNER_PROVIDER: "remote",UPLOAD_SCANNER_URL: "https://scanner.example.test/v1/scan",UPLOAD_SCANNER_TOKEN: "r".repeat(48) };
+  expect(() => checkManagedConfig({ ...baseline,...reading })).toThrow("enabled account chat");
+  expect(checkManagedConfig({ ...chat,...reading })).toMatchObject({ accountChat: "enabled" });
+  expect(() => checkManagedConfig({ ...chat,...reading,UPLOAD_AGENT_POLICY: "arbitrary" })).toThrow("Reviewed agent uploads");
+});
+
 it("accepts an explicit records-first managed setup and a fully shaped account-chat setup", () => {
   expect(checkManagedConfig(baseline)).toEqual({ target: "vercel-supabase", origin: baseline.APP_ORIGIN, accountChat: "disabled" });
   expect(() => checkManagedConfig(baseline, true)).toThrow("Enable and configure AI_CHAT_ENABLED=true");
