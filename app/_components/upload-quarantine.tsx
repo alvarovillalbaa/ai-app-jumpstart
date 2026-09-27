@@ -251,7 +251,7 @@ export function UploadQuarantine({ settings, userId, downloadEnabled = false,dow
   return <main className="mx-auto max-w-3xl space-y-6 p-6 sm:p-8">
     <h1 className="text-3xl font-medium">Private uploads</h1>
     <p className="text-muted-foreground">{downloadEnabled
-      ? "Store files in private quarantine. Owner downloads require a fresh clean scan. Approved UTF-8 text can be read here or through authenticated tools; files are not sent to the agent."
+      ? "Store files in private quarantine. Owner downloads require a fresh clean scan. Approved UTF-8 text can be read here or through authenticated tools. Uploading does not send files to the agent."
       : "Store files in private quarantine. Files cannot be downloaded, previewed or used by the agent until scanning and release are available."}</p>
     {!connected ? <form className="space-y-3" onSubmit={event => { event.preventDefault(); void load(); }}>
       <label className="block">Access token<input className="mt-1 w-full rounded border bg-background p-2" type="password" autoComplete="off" value={token} onChange={event => setToken(event.target.value)} minLength={32} required /></label>
