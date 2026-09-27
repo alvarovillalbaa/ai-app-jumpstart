@@ -32,6 +32,8 @@ import type { UploadCatalog } from "./uploads/catalog-contract";
 import { authSettings } from "./auth/settings";
 import { verifySupabaseIdentity } from "./auth/identity";
 import { profileSnapshot, type AccountProfile } from "./auth/profile";
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
+import { failureDiagnostic } from "./observability/request";
 
 export function createMcpServer(service: RecordService, history?: ConversationHistoryService,artifacts?: ArtifactService,usage?: UsageService,uploads?: UploadService,
   profile?: () => Promise<AccountProfile>,sourceEvents?: (operationId: string,options: unknown) => Promise<unknown>,reconcile?: (operationId: string,options: unknown) => Promise<unknown>,accountPreferences?: PreferenceService) {
@@ -39,7 +41,10 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
   async function result(action: () => Promise<unknown>) {
     try { return { content: [{ type: "text" as const, text: JSON.stringify(await action()) }] }; }
     catch (error) {
-      return { isError: true, content: [{ type: "text" as const, text: error instanceof AppError ? error.message : "Operation failed. Check the input and try again." }] };
+      const diagnostic = failureDiagnostic("mcp_tool_failed", error);
+      const message = error instanceof AppError ? error.message : "Operation failed. Check the input and try again.";
+      return { isError: true, structuredContent: { error: diagnostic },
+        content: [{ type: "text" as const, text: `${message} Reference: ${diagnostic.requestId}.` }] };
     }
   }
   server.registerTool("records_list", {
@@ -74,7 +79,7 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
   }, async (uri, { id }) => {
     // Resource failures must not leak adapter messages or credentials.
     try { return { contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(await service.get(id)) }] }; }
-    catch { throw new Error("Record unavailable."); }
+    catch (error) { throw new McpError(ErrorCode.InternalError, "Record unavailable.", { requestId: failureDiagnostic("mcp_resource_failed", error).requestId }); }
   });
   if (history) {
     server.registerTool("conversations_runs",{
@@ -112,7 +117,7 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
       description: "Private conversation metadata; excludes transcripts and runtime identifiers", mimeType: "application/json",
     }, async (uri,params) => {
       try { return { contents: [{ uri: uri.href,mimeType: "application/json",text: JSON.stringify(await history.get(params.operationId)) }] }; }
-      catch { throw new Error("Conversation unavailable."); }
+      catch (error) { throw new McpError(ErrorCode.InternalError, "Conversation unavailable.", { requestId: failureDiagnostic("mcp_resource_failed", error).requestId }); }
     });
   }
   if (artifacts) {
@@ -131,7 +136,7 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
       description: "Private approved plain-text artifact",mimeType: "application/json",
     },async (uri,{ id }) => {
       try { return { contents: [{ uri: uri.href,mimeType: "application/json",text: JSON.stringify(await artifacts.get(id)) }] }; }
-      catch { throw new Error("Artifact unavailable."); }
+      catch (error) { throw new McpError(ErrorCode.InternalError, "Artifact unavailable.", { requestId: failureDiagnostic("mcp_resource_failed", error).requestId }); }
     });
   }
   if (usage) {
@@ -151,7 +156,7 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
       description: "Private current AI budget usage",mimeType: "application/json",
     },async uri => {
       try { return { contents: [{ uri: uri.href,mimeType: "application/json",text: JSON.stringify(await usage.get()) }] }; }
-      catch { throw new Error("Usage unavailable."); }
+      catch (error) { throw new McpError(ErrorCode.InternalError, "Usage unavailable.", { requestId: failureDiagnostic("mcp_resource_failed", error).requestId }); }
     });
   }
   if (uploads) {
@@ -183,7 +188,7 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
       description: "Private upload metadata; never file bytes",mimeType: "application/json",
     },async (uri,{ id }) => {
       try { return { contents: [{ uri: uri.href,mimeType: "application/json",text: JSON.stringify(await uploads.get(typeof id === "string" ? id : "")) }] }; }
-      catch { throw new Error("Upload unavailable."); }
+      catch (error) { throw new McpError(ErrorCode.InternalError, "Upload unavailable.", { requestId: failureDiagnostic("mcp_resource_failed", error).requestId }); }
     });
   }
   if (accountPreferences) {
@@ -191,7 +196,7 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
     server.registerTool("account_preferences_update",{ description: "Update the current account's preferences at their current revision. Conflicts require a fresh read.",inputSchema: preferencePatch,annotations: { readOnlyHint: false,destructiveHint: false,idempotentHint: false,openWorldHint: false } },input => result(() => accountPreferences.update(input)));
     server.registerResource("account-preferences","account:///preferences",{ description: "Current account preferences",mimeType: "application/json" },async uri => {
       try { return { contents: [{ uri: uri.href,mimeType: "application/json",text: JSON.stringify(await accountPreferences.get()) }] }; }
-      catch { throw new Error("Account preferences unavailable."); }
+      catch (error) { throw new McpError(ErrorCode.InternalError, "Account preferences unavailable.", { requestId: failureDiagnostic("mcp_resource_failed", error).requestId }); }
     });
   }
   if (profile) {
@@ -203,7 +208,7 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
       description: "Selected current account profile fields",mimeType: "application/json",
     },async uri => {
       try { return { contents: [{ uri: uri.href,mimeType: "application/json",text: JSON.stringify(await profile()) }] }; }
-      catch { throw new Error("Account profile unavailable."); }
+      catch (error) { throw new McpError(ErrorCode.InternalError, "Account profile unavailable.", { requestId: failureDiagnostic("mcp_resource_failed", error).requestId }); }
     });
   }
   return server;

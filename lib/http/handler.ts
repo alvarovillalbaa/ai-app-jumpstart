@@ -1,7 +1,7 @@
-import { randomUUID } from "node:crypto";
 import { ZodError } from "zod";
 import { AppError } from "./errors";
 import { config } from "../config";
+import { withRequestContext } from "../observability/request";
 
 export async function readJson(request: Request,maximumBytes = 131072) {
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) throw new AppError(415, "unsupported_media_type", "Use application/json.");
@@ -27,23 +27,25 @@ export function validateOrigin(request: Request) {
 }
 
 export async function handle(request: Request, operation: () => Promise<Response>) {
-  const requestId = randomUUID();
-  const start = Date.now();
-  let response: Response;
-  try { validateOrigin(request); response = await operation(); }
-  catch (error) {
-    const known = error instanceof AppError;
-    const status = known ? error.status : error instanceof ZodError ? 400 : 500;
-    response = Response.json({ error: {
-      code: known ? error.code : status === 400 ? "invalid_input" : "internal_error",
-      message: known ? error.message : status === 400 ? "Input does not match the contract." : "The request could not be completed.",
-      requestId,
-    } }, { status, headers: status === 401 ? { "www-authenticate": 'Bearer realm="app"' } : {} });
-  }
-  response.headers.set("cache-control", "no-store");
-  response.headers.set("x-request-id", requestId);
-  response.headers.set("x-content-type-options", "nosniff");
-  // Deliberately exclude URL/query, prompts, input bodies, identities and credentials.
-  console.info(JSON.stringify({ event: "http_request", requestId, method: request.method, status: response.status, durationMs: Date.now() - start }));
-  return response;
+  return withRequestContext(async requestId => {
+    const start = Date.now();
+    let response: Response;
+    try { validateOrigin(request); response = await operation(); }
+    catch (error) {
+      const known = error instanceof AppError;
+      const status = known ? error.status : error instanceof ZodError ? 400 : 500;
+      response = Response.json({ error: {
+        code: known ? error.code : status === 400 ? "invalid_input" : "internal_error",
+        message: known ? error.message : status === 400 ? "Input does not match the contract." : "The request could not be completed.",
+        requestId,
+      } }, { status, headers: status === 401 ? { "www-authenticate": 'Bearer realm="app"' } : {} });
+    }
+    response.headers.set("cache-control", "no-store");
+    response.headers.set("x-request-id", requestId);
+    response.headers.set("x-content-type-options", "nosniff");
+    // Deliberately exclude URL/query, prompts, input bodies, identities and credentials.
+    const method = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"].includes(request.method) ? request.method : "OTHER";
+    console.info(JSON.stringify({ event: "http_request", requestId, method, status: response.status, durationMs: Math.max(0, Date.now() - start) }));
+    return response;
+  });
 }

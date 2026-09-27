@@ -16,6 +16,7 @@ import { z } from "zod";
 import { MAX_API_UPLOAD_BYTES } from "../lib/uploads/validation";
 import { uploadId } from "../lib/uploads/schema";
 import { uploadDownloadLink } from "../lib/uploads/download-link-contract";
+import { readPublicFailure } from "../lib/http/public-failure";
 
 const seedPage = z.object({
   items: z.array(recordInput.extend({ id: recordId }).passthrough()),
@@ -52,8 +53,8 @@ export async function run(args: string[], env: Record<string, string | undefined
     });
     if (!response.ok) {
       // Display only the public application error; do not echo a proxy HTML page.
-      const result = await response.json().catch(() => null);
-      throw new Error(`HTTP ${response.status}: ${result?.error?.code ?? "request_failed"}`);
+      const failure = await readPublicFailure(response);
+      throw new Error(`HTTP ${response.status}: ${failure.code}${failure.requestId ? ` (reference: ${failure.requestId})` : ""}`);
     }
     return response;
   };

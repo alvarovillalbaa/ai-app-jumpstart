@@ -3,6 +3,7 @@ import { z } from "zod";
 import { AppError } from "../http/errors";
 import { accessOwner, conversation, sessionId, type AccessOwner, type SessionAccessStore } from "./contract";
 import { creationBody, requestHash, signCreation, type SigningSettings } from "./signing";
+import { failureDiagnostic } from "../observability/request";
 
 const accepted = z.object({ ok: z.literal(true), sessionId, status: z.literal("accepted") });
 export type CreationResult = { conversationId: string; operationId: string } & (
@@ -52,9 +53,10 @@ export class ConversationBroker {
     const won = await this.store.reserve({ ...owner, id: randomUUID(), operationId: requested.operationId, requestHash: hash }, title);
     if (won) {
       try { sessionId.parse(await this.dispatch(body, owner)); }
-      catch {
+      catch (error) {
         // A timeout/connection error says nothing about whether Eve accepted it.
         // Do not log the body, credentials or the underlying provider exception.
+        failureDiagnostic("runtime_creation_unacknowledged", error);
         return this.read(owner, requested.operationId, hash);
       }
       // HTTP acceptance can name a noncanonical candidate. Only the winning
