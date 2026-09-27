@@ -88,6 +88,7 @@ npm run test:chat:uploads
 npm run test:auth:supabase
 npm run test:chat:supabase
 npm run test:chat:uploads:supabase
+npm run test:managed-quickstart
 npm run test:workflow-compose
 npm run test:workflow-retention
 ```

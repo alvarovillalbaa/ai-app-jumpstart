@@ -2,6 +2,8 @@
 
 Use Node 24.15.0 or newer 24.x and `npm ci`. The checked-in `.nvmrc` selects the tested version with `nvm use`, and `.npmrc` makes `npm ci` fail on an unsupported Node version instead of continuing after an engine warning. Check `node --version` in the new checkout before installing, especially if your shell does not switch versions automatically. Keep `.env.local` private; `.env.example` lists all supported settings. The root application includes Next and Eve in one install. These steps leave account chat disabled so records and account access can be checked before model costs or workflow storage are configured.
 
+To rehearse the managed path from committed source without hosted credentials, start Docker and run `npx playwright install chromium` followed by `npm run test:managed-quickstart`. The command makes another clean local clone, uses a private npm configuration/cache, builds production Eve and Next, then runs real disposable Supabase Auth/SMTP, PostgreSQL/PostgREST and private Storage account, chat and reviewed-file suites. It removes its temporary checkout and services. This validates the portable onboarding path locally; it does not deploy to Vercel or your Supabase project.
+
 ## Local Supabase
 
 Docker must be running. The repository pins the Supabase CLI and includes a local Auth, PostgREST, PostgreSQL and email-inbox configuration. Run:

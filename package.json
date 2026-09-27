@@ -57,6 +57,7 @@
     "build:local": "npm run build:eve && node scripts/workflow-build-policy.mjs --write && npm run build",
     "test:e2e": "playwright test",
     "test:quickstart": "node scripts/test-quickstart.mjs",
+    "test:managed-quickstart": "node scripts/test-managed-quickstart.mjs",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:postgres": "node scripts/test-postgres.mjs",
     "test:postgres-backup": "node scripts/test-postgres.mjs --backup-only",

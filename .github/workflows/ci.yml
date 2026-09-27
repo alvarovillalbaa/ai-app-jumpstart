@@ -72,13 +72,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm run build:local
-      - name: Real Auth, private Storage and account contracts
-        run: npm run test:auth:supabase
-      - name: Real Supabase account chat
-        run: npm run test:chat:supabase
-      - name: Reviewed files through real Storage and native reader
-        run: npm run test:chat:uploads:supabase
+      - name: Fresh-clone managed onboarding and real account contracts
+        run: npm run test:managed-quickstart
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
