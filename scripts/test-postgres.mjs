@@ -15,6 +15,7 @@ import { installPostgrest } from "./testing/postgrest.mjs";
 import { backupPostgresApplication, backupPostgresWorkflow } from "./backup-postgres.mjs";
 import { createPostgresDatabaseSet, restorePostgresUploadSnapshot, verifyPostgresDatabaseSet } from "./backup-postgres-databases.mjs";
 import { checkSnapshotUploadCatalog, describeUploadSnapshot } from "./private-upload-snapshot.mjs";
+import { accountOrphanCountQueries,accountOwnerCountQueries } from "./account-data-inventory.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const withSupabase = process.argv.includes("--supabase");
@@ -107,6 +108,27 @@ async function rehearseUpgrade() {
     await run(["scripts/migrate.ts"], 0, upgradeEnv);
     await run(["scripts/migrate.ts", "--dry-run"], 0, upgradeEnv);
     assert.equal((await probe.query("SELECT count(*)::int AS count FROM app_migrations")).rows[0].count, names.length);
+    await probe.query("INSERT INTO app_records(id,tenant,subject,title,content) VALUES($1,$2,$3,$4,$5)",
+      [randomUUID(),"upgrade-tenant","other-owner","Other owner","Private to them"]);
+    async function ownerCounts(subject) {
+      const counts = [];
+      for (const query of accountOwnerCountQueries("sql"))
+        counts.push([query.entity,Number((await probe.query(query.sql,["upgrade-tenant",subject])).rows[0].count)]);
+      return Object.fromEntries(counts);
+    }
+    const retainedCounts = await ownerCounts("upgrade-owner");
+    assert.deepEqual({
+      records: retainedCounts.records,conversations: retainedCounts.conversations,
+      artifacts: retainedCounts.artifacts,artifactVersions: retainedCounts.artifactVersions,
+      uploads: retainedCounts.uploads,
+    },{ records: 1,conversations: 1,artifacts: 2,artifactVersions: 1,uploads: 2 },
+    "Owner inventory omitted retained SQL rows or tombstones");
+    const foreignCounts = await ownerCounts("other-owner");
+    assert.equal(foreignCounts.records,1);
+    assert.ok(Object.entries(foreignCounts).filter(([entity]) => entity !== "records").every(([,count]) => count === 0),
+      "Owner inventory crossed SQL accounts");
+    for (const query of accountOrphanCountQueries("sql"))
+      assert.equal(Number((await probe.query(query.sql)).rows[0].count),0,`Unattributable ${query.entity} rows in the migrated schema`);
     assert.deepEqual((await probe.query("SELECT revision,title,content,updated_at FROM app_artifact_versions WHERE artifact_id=$1",[artifactId])).rows,
       [{ revision: 1,title: "Before upgrade",content: "Retained approved text",updated_at: "10" }]);
     assert.equal((await probe.query("SELECT count(*)::int AS count FROM app_artifact_versions WHERE artifact_id=$1",[deletedArtifactId])).rows[0].count,0);

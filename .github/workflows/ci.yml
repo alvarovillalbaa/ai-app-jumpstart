@@ -23,6 +23,7 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run check:cloud-templates
+      - run: npm run check:account-data-inventory
       - run: npm run test:ai
       - run: npm run test:reference-mcp
       - run: npm run test:session-runtime

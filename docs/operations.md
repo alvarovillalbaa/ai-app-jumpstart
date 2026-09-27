@@ -50,4 +50,6 @@ Record code commit, schema version, image digest and provider for releases. Use 
 
 Never commit `.env.local`, `.data`, `.eve`, generated `.output`, real credentials or production traces. Public template release still requires the acceptance audit in `IMPLEMENTATION.md`, dependency review and another clean-clone rehearsal of the final release revision. The original template code uses MIT; preserve [third-party notices](../THIRD_PARTY_NOTICES.md) for copied components.
 
+Run the [account data inventory check](account-data-inventory.md) when changing a migration, SQLite table or Convex schema. It fails if an application table lacks an owner/expiration classification. It is a source and local provider test gate, not a hosted account-erasure command.
+
 For custom agents that can tolerate unreadable completed output, the [runtime retention guide](runtime-retention.md) describes the build-time native purge-on-finish option and production supervisor checks. Registered account chat requires default retention. Session/turn payload purging preserves operational metadata, auxiliary timeout runs, application data and external copies, and does not complete account erasure. Monitor native purge failures; the runtime does not provide a durable purge retry queue.
