@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { currentUser } from "@/lib/auth/server";
 import { chatSettings } from "@/lib/agent-access/settings";
 import { operationId } from "@/lib/agent-access/contract";
+import { uploadReaderEnabled } from "@/lib/uploads/agent-reader";
 import { AgentChat } from "./agent-chat";
 import { OwnedChat } from "./owned-chat";
 
@@ -18,5 +19,5 @@ export async function ChatPage({ locator, sessionless = false }: { locator?: str
   const user = await currentUser();
   if (!user) redirect("/login?next=/s");
   if (locator && !operationId.safeParse(locator).success) return <main className="p-8"><p role="alert">Conversation not found.</p><Link href="/s">New chat</Link></main>;
-  return <OwnedChat key={`${user.id}:${locator ?? "new"}`} settings={settings.auth} userId={user.id} initialOperationId={locator} uploadsEnabled={uploadsEnabled} />;
+  return <OwnedChat key={`${user.id}:${locator ?? "new"}`} settings={settings.auth} userId={user.id} initialOperationId={locator} uploadsEnabled={uploadsEnabled} agentReadingEnabled={uploadReaderEnabled()} />;
 }

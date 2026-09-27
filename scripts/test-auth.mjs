@@ -8,6 +8,7 @@ import { once } from "node:events";
 import { SignJWT } from "jose";
 import { startChatFixture } from "./helpers/eve-chat-fixture.mjs";
 import { testCommand } from "./helpers/test-command.mjs";
+import { uploadScannerFixture } from "./helpers/upload-scanner-fixture.mjs";
 
 // Real isolated Supabase Auth, PostgreSQL and SMTP delivery. No hosted account.
 const name = `jumpstart-auth-${randomBytes(5).toString("hex")}`;
@@ -17,9 +18,11 @@ const jwtSecret = randomBytes(32).toString("base64url");
 const containers = [];
 const chat = process.argv.includes("--chat");
 const containerMode = process.argv.includes("--container");
+const uploads = process.argv.includes("--uploads");
 if (containerMode && !chat) throw new Error("Container mode requires --chat.");
+if (uploads && (!chat || containerMode)) throw new Error("Reviewed uploads require host --chat mode.");
 const image = process.env.TEST_CONTAINER_IMAGE ?? "ai-app-jumpstart:test";
-let web, proxy, runtime, imageManifest, failed = false, webOutput = "";
+let web, proxy, runtime, scanner, imageManifest, failed = false, webOutput = "";
 async function command(executable, args, options = {}) {
   return testCommand(executable,args,options,[jwtSecret,password]);
 }
@@ -108,9 +111,16 @@ try {
   const env = { ...process.env, NODE_ENV: "production", AUTH_PROVIDER: "supabase", SUPABASE_AUTH_URL: publicAuthOrigin, SUPABASE_PUBLISHABLE_KEY: anon, APP_API_KEYS: "[]", APP_ORIGIN: appOrigin, DATA_PROVIDER: "sqlite", SQLITE_PATH: join(directory, "records.sqlite"), UPLOAD_STORAGE_PROVIDER: "local", UPLOAD_LOCAL_ROOT: join(directory, "uploads") };
   env.APP_REQUESTS_PER_MINUTE = "10000";
   env.AI_CHAT_ENABLED = chat ? "true" : "false";
+  env.UPLOAD_AGENT_POLICY = uploads ? "reviewed-text" : "off";
+  if (uploads) {
+    const control = join(directory,"scanner-control");await writeFile(control,"clean");
+    const socket = join(directory,"s");scanner = await uploadScannerFixture(socket,control);
+    env.UPLOAD_DOWNLOAD_POLICY = "scan-on-read";env.UPLOAD_SCANNER_PROVIDER = "clamd";env.UPLOAD_CLAMD_SOCKET = socket;
+    env.UPLOAD_SCANNER_URL = "";env.UPLOAD_SCANNER_TOKEN = "";env.VERCEL = "";env.AWS_LAMBDA_FUNCTION_NAME = "";
+  }
   if (chat) {
     env.AI_CREATION_SIGNING_JSON = JSON.stringify({ audience: name, activeKey: "fixture", keys: { fixture: randomBytes(32).toString("hex") } });
-    env.AI_BUDGET_POLICY_JSON = JSON.stringify({ policy: { id: "fixture", dailyMicros: 60, maxActive: 2, maxPerMinute: 20 }, estimateMicros: 20, maxModelCalls: 2, modelIds: ["model", "eve-mock/model"],
+    env.AI_BUDGET_POLICY_JSON = JSON.stringify({ policy: { id: "fixture", dailyMicros: uploads ? 100 : 60, maxActive: 2, maxPerMinute: 20 }, estimateMicros: 20, maxModelCalls: 2, modelIds: ["model", "eve-mock/model"],
       costBasis: { sourceUrl: "https://example.test/fixture-prices", reviewedAt: "2026-09-24", maxOtherMicros: 0,
         models: ["model", "eve-mock/model"].map(id => ({ id, maxInputTokens: 1, maxOutputTokens: 1, inputMicrosPerMillion: 1_000_000, outputMicrosPerMillion: 1_000_000 })) } });
     runtime = await startChatFixture(process.cwd(), directory, env, { buildOnly: containerMode, routesManifest: imageManifest });
@@ -149,7 +159,7 @@ try {
   await waitFor(async () => {
     return (await fetch(`${appOrigin}/api/health/live`, { signal: AbortSignal.timeout(1000) })).ok;
   }, "Production application", async () => web.exitCode === null && web.signalCode === null);
-  await command(process.execPath, ["node_modules/@playwright/test/cli.js", "test", "--config", "playwright.auth.config.ts", ...process.argv.slice(2).filter(arg => arg !== "--chat" && arg !== "--container")], { env: { ...env, TEST_CHAT: chat ? "1" : "", TEST_AUTH_ORIGIN: publicAuthOrigin, TEST_AUTH_ADMIN_KEY: admin, TEST_MAIL_ORIGIN: mailOrigin,
+  await command(process.execPath, ["node_modules/@playwright/test/cli.js", "test", "--config", "playwright.auth.config.ts", ...process.argv.slice(2).filter(arg => !["--chat","--container","--uploads"].includes(arg))], { env: { ...env, TEST_CHAT: chat ? "1" : "", TEST_CHAT_UPLOADS: uploads ? "1" : "", TEST_AUTH_ORIGIN: publicAuthOrigin, TEST_AUTH_ADMIN_KEY: admin, TEST_MAIL_ORIGIN: mailOrigin,
     TEST_RECEIPT_GATE_HOST: chat ? join(directory, "gate") : "", TEST_MODEL_RECEIPTS_HOST: chat ? join(directory, "models.txt") : "",
     TEST_FAILURE_RECEIPTS_HOST: chat ? join(directory, "failures.txt") : "", TEST_CHAT_CONTAINER: containerMode ? `${name}-app` : "" }, stdio: "inherit" });
   console.log(containerMode ? "Account chat browser contract passed through the production container." : chat ? "Account chat browser contract passed with real Auth and compiled Eve." : "Real Supabase Auth browser contract passed.");
@@ -173,6 +183,7 @@ try {
   }
   proxy?.closeAllConnections(); if (proxy) await new Promise(resolve => proxy.close(resolve));
   await runtime?.stop();
+  await scanner?.stop();
   for (const container of containers.reverse()) await docker("rm", "--force", "--volumes", container).catch(() => {});
   await docker("network", "rm", name).catch(() => {});
   await rm(directory, { recursive: true, force: true });

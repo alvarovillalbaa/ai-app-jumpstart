@@ -10,6 +10,10 @@ export const uploadReview = z.object({ id: uploadId,sha256: uploadReviewInput.sh
   checkedAt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(),policyVersion: z.literal(1),
 }).strict().refine(row => row.status === "approved" ? row.approvedAt !== null && row.checkedAt !== null && row.revision > 0 : row.approvedAt === null && row.checkedAt === null,"Review does not match its status.");
 export type UploadReview = z.infer<typeof uploadReview>;
+/** A reference identifies a reviewed version; it never grants access by itself. */
+export const agentUploadReference = z.object({ id: uploadId,sha256: uploadReviewInput.shape.sha256,
+  reviewRevision: z.number().int().min(1).max(2_147_483_647) }).strict();
+export type AgentUploadReference = z.infer<typeof agentUploadReference>;
 export const uploadReviewResult = z.discriminatedUnion("status",[
   z.object({ status: z.literal("updated"),review: uploadReview }).strict(),
   z.object({ status: z.literal("conflict") }).strict(),

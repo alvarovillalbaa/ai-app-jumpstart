@@ -2,6 +2,7 @@ import { access, appendFile } from "node:fs/promises";
 import { mockModel } from "eve/evals";
 import { customProvider, wrapLanguageModel } from "ai";
 import { defaultMaxInputBytes, inputPayloadBytes } from "../../../../../lib/budgets/input";
+import { parseReviewedUploadMessage } from "../../../../../lib/uploads/chat-reference";
 
 export const fixtureModel = mockModel(async ({ lastUserMessage,toolResults,userMessages }) => {
     await appendFile(process.env.TEST_MODEL_RECEIPTS!, `${JSON.stringify({ message: lastUserMessage ?? "compaction" })}\n`);
@@ -20,6 +21,13 @@ export const fixtureModel = mockModel(async ({ lastUserMessage,toolResults,userM
     if (lastUserMessage?.startsWith("agent-upload-fixture ")) return toolResults.length < userMessages.filter(message => message.startsWith("agent-upload-fixture ")).length
       ? { toolCalls: [{ name: "read_upload_text",input: JSON.parse(lastUserMessage.slice("agent-upload-fixture ".length)) }] }
       : `Reviewed source: ${JSON.stringify(toolResults.at(-1)?.output)}`;
+    const uploadMessage = lastUserMessage ? parseReviewedUploadMessage(lastUserMessage) : null;
+    if (uploadMessage) {
+      const { id,sha256,reviewRevision } = uploadMessage.upload;
+      return toolResults.length < userMessages.filter(message => parseReviewedUploadMessage(message)).length
+        ? { toolCalls: [{ name: "read_upload_text",input: { id,sha256,reviewRevision } }] }
+        : `Reviewed source: ${JSON.stringify(toolResults.at(-1)?.output)}`;
+    }
     return "Deterministic owned response";
 });
 if (typeof fixtureModel === "string") throw new Error("Fixture requires a concrete mock model.");

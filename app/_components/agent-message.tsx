@@ -40,6 +40,7 @@ import {
 } from "@/components/ai-elements/tool";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { parseReviewedUploadMessage } from "@/lib/uploads/chat-reference";
 
 export type AgentInputResponse = {
   readonly optionId?: string;
@@ -81,6 +82,7 @@ export function AgentMessage({
               key={partKey(part, index)}
               onInputResponses={onInputResponses}
               part={part}
+              userMessage={message.role === "user"}
               showCaret={isStreaming && message.role === "assistant" && index === lastTextIndex}
             />
           ),
@@ -95,21 +97,32 @@ function AgentMessagePart({
   onInputResponses,
   part,
   showCaret,
+  userMessage,
 }: {
   readonly canRespond: boolean;
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
   readonly part: EveMessagePart;
   readonly showCaret: boolean;
+  readonly userMessage: boolean;
 }) {
   switch (part.type) {
     case "step-start":
       return null;
-    case "text":
+    case "text": {
+      const reference = userMessage ? parseReviewedUploadMessage(part.text) : null;
+      if (reference) return <div className="space-y-2">
+        <MessageResponse>{reference.text}</MessageResponse>
+        <p className="flex items-center gap-2 rounded border px-3 py-2 text-sm" aria-label="Referenced file">
+          <FileIcon className="size-4 shrink-0" aria-hidden="true" />
+          <span className="break-all">{reference.upload.name} · Review {reference.upload.reviewRevision}</span>
+        </p>
+      </div>;
       return (
         <MessageResponse caret="block" isAnimating={showCaret}>
           {part.text}
         </MessageResponse>
       );
+    }
     case "reasoning":
       return (
         <Reasoning defaultOpen isStreaming={part.state === "streaming"}>
@@ -136,6 +149,9 @@ function AgentMessagePart({
 
       return (
         <Tool
+          // A streamed tool can mount before approval metadata arrives. Open the
+          // new request once; keep its response/result under the same stable key.
+          key={part.toolMetadata?.eve?.inputRequest?.requestId ?? "tool"}
           defaultOpen={part.state === "approval-requested" || part.state === "approval-responded"}
         >
           <ToolHeader

@@ -4,6 +4,7 @@ import { AppError } from "../http/errors";
 import { accessOwner, conversation, sessionId, type AccessOwner, type SessionAccessStore } from "./contract";
 import { creationBody, requestHash, signCreation, type SigningSettings } from "./signing";
 import { failureDiagnostic } from "../observability/request";
+import { parseReviewedUploadMessage } from "../uploads/chat-reference";
 
 const accepted = z.object({ ok: z.literal(true), sessionId, status: z.literal("accepted") });
 export type CreationResult = { conversationId: string; operationId: string } & (
@@ -48,7 +49,7 @@ export class ConversationBroker {
 
   async create(ownerInput: AccessOwner, input: unknown): Promise<CreationResult> {
     const owner = accessOwner.parse(ownerInput), { requested,body } = creationBody(input),hash = requestHash(body);
-    const title = Array.from(requested.message, char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127 ? " " : char)
+    const title = Array.from(parseReviewedUploadMessage(requested.message)?.text ?? requested.message, char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127 ? " " : char)
       .join("").replace(/\s+/g," ").trim().slice(0,120).toWellFormed() || "New conversation";
     const won = await this.store.reserve({ ...owner, id: randomUUID(), operationId: requested.operationId, requestHash: hash }, title);
     if (won) {

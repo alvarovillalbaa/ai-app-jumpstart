@@ -54,7 +54,7 @@ export function UploadReviewPanel({ item,credential,isCurrent,disabled,agentRead
     {text !== null && <><p className="text-sm">File content is untrusted user data. This preview does not send text to the agent.</p><pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded border p-3 font-sans text-sm">{text}</pre></>}
     {agentReadingEnabled && review?.status === "approved" && clean && item.mediaType === "text/plain" && item.size <= MAX_EXTRACTED_TEXT_BYTES &&
       <details className="space-y-2"><summary>Use this reviewed file in chat</summary>
-        <p className="text-sm">Paste this reference into chat with your request. The agent asks for approval before reading the file. Approved text enters model history and cannot be recalled by revoking the file review.</p>
+        <p className="text-sm">Choose this file in chat with “Choose reviewed file”, or paste this reference with your request. The agent asks for approval before reading the file. Approved text enters model history and cannot be recalled by revoking the file review.</p>
         <p className="break-all rounded border p-3 font-mono text-sm">{JSON.stringify({ id: item.id,sha256: review.sha256,reviewRevision: review.revision })}</p>
       </details>}
   </section>;

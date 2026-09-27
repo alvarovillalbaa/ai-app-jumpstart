@@ -4,7 +4,7 @@ import type { UserContent } from "ai";
 import Link from "next/link";
 import { useEveAgent } from "eve/react";
 import { AlertCircleIcon, BrainIcon, PlusIcon, SquareIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect,useRef,useState } from "react";
 import {
   Conversation,
   ConversationContent,
@@ -15,6 +15,7 @@ import { Message, MessageContent } from "@/components/ai-elements/message";
 import {
   PromptInput,
   PromptInputButton,
+  PromptInputProvider,
   type PromptInputMessage,
   PromptInputSubmit,
   PromptInputTextarea,
@@ -25,6 +26,8 @@ import { cn } from "@/lib/utils";
 import { AgentMessage } from "./agent-message";
 import { WorkspaceMenu } from "./workspace-navigation";
 import { appConfig } from "@/app.config";
+import { encodeReviewedUploadMessage,type ChatUploadReference } from "@/lib/uploads/chat-reference";
+import { ReviewedUploadPicker,validateChatUpload } from "./reviewed-upload-picker";
 
 const AGENT_NAME = appConfig.name;
 
@@ -35,6 +38,7 @@ export function AgentChat({
   onCreate,
   managed = false,
   uploadsEnabled = false,
+  agentReadingEnabled = false,
 }: {
   readonly sessionId?: string;
   readonly sessionless?: boolean;
@@ -42,9 +46,14 @@ export function AgentChat({
   readonly onCreate?: (message: string) => Promise<void>;
   readonly managed?: boolean;
   readonly uploadsEnabled?: boolean;
+  readonly agentReadingEnabled?: boolean;
 }) {
   const [cancellationError, setCancellationError] = useState<string>();
   const [hasInputText, setHasInputText] = useState(false);
+  const [fileReference,setFileReference] = useState<ChatUploadReference | null>(null);
+  const [preparing,setPreparing] = useState(false);
+  const preparation = useRef<AbortController | null>(null);
+  useEffect(() => () => preparation.current?.abort(),[]);
   const agent = useEveAgent({
     auth: credential ? { bearer: credential } : undefined,
     initialSession:
@@ -92,24 +101,37 @@ export function AgentChat({
   };
 
   const handleSubmit = async (message: PromptInputMessage) => {
-    const text = message.text.trim();
-    if ((text.length === 0 && message.files.length === 0) || isResuming) return;
+    let text = message.text.trim();
+    if ((text.length === 0 && message.files.length === 0) || isResuming || preparation.current) return;
 
-    setHasInputText(false);
     setCancellationError(undefined);
     if (managed && message.files.length > 0) {
       setCancellationError("Attachments are not available yet.");
       return;
     }
+    if (managed && agentReadingEnabled && credential && fileReference) {
+      const abort = new AbortController();preparation.current = abort;setPreparing(true);
+      try {
+        await validateChatUpload(fileReference,credential,abort.signal);
+        text = encodeReviewedUploadMessage(text,fileReference);
+      } catch (error) {
+        if (!abort.signal.aborted) setCancellationError(toErrorMessage(error));
+        throw error; // Preserve the authored request in PromptInput on a failed check.
+      } finally { if (!abort.signal.aborted) setPreparing(false);preparation.current = null; }
+      if (abort.signal.aborted) return;
+    }
+    setHasInputText(false);
     if (managed && !sessionId) {
       if (!onCreate) throw new Error("Conversation creation is unavailable.");
       await onCreate(text);
+      setFileReference(null);
       return;
     }
     const options = isBusy ? { turnPolicy: "steer" as const } : undefined;
 
     if (message.files.length === 0) {
       await agent.send(text, options);
+      setFileReference(null);
       return;
     }
 
@@ -130,19 +152,19 @@ export function AgentChat({
   };
 
   const composer = (
-    <PromptInput onSubmit={handleSubmit}>
+    <PromptInputProvider><PromptInput onSubmit={handleSubmit}>
       <PromptInputTextarea
-        disabled={isResuming}
+        disabled={isResuming || preparing}
         onChange={(event) => setHasInputText(event.currentTarget.value.trim().length > 0)}
         placeholder="Send a message…"
       />
       <ComposerAction
         hasInputText={hasInputText}
         isBusy={isBusy}
-        isResuming={isResuming}
+        isResuming={isResuming || preparing}
         onCancel={requestCancellation}
       />
-    </PromptInput>
+    </PromptInput></PromptInputProvider>
   );
 
   return (
@@ -162,7 +184,7 @@ export function AgentChat({
           }
         >
           <ConversationTopFade className="top-14" />
-          <ConversationContent className="mx-auto w-full max-w-3xl gap-6 px-4 pt-20 pb-36 sm:px-6">
+          <ConversationContent className={cn("mx-auto w-full max-w-3xl gap-6 px-4 pt-20 sm:px-6",agentReadingEnabled ? "pb-8" : "pb-36")}>
             {agent.data.messages.map((message, index) =>
               showPendingThinking &&
               isPendingAssistantShell &&
@@ -192,7 +214,9 @@ export function AgentChat({
         className={cn(
           "mx-auto w-full px-4 sm:px-6",
           showConversationLayout
-            ? "fixed bottom-0 left-1/2 z-20 max-w-3xl -translate-x-1/2 bg-gradient-to-t from-background via-background to-transparent pt-4 pb-6"
+            ? agentReadingEnabled
+              ? "relative z-20 max-w-3xl shrink-0 bg-background pt-4 pb-6"
+              : "fixed bottom-0 left-1/2 z-20 max-w-3xl -translate-x-1/2 bg-gradient-to-t from-background via-background to-transparent pt-4 pb-6"
             : "flex max-w-xl flex-1 flex-col items-center justify-center gap-8 pb-[10vh]",
         )}
       >
@@ -201,7 +225,10 @@ export function AgentChat({
             <h1 className="font-medium text-5xl tracking-tighter">{AGENT_NAME}</h1>
           </div>
         )}
-        <div id="chat-composer" tabIndex={-1} className="w-full focus-visible:outline-2 focus-visible:outline-ring">{composer}</div>
+        <div id="chat-composer" tabIndex={-1} className="w-full focus-visible:outline-2 focus-visible:outline-ring">
+          {managed && agentReadingEnabled && credential && <ReviewedUploadPicker credential={credential} value={fileReference} onChange={setFileReference} disabled={isResuming || preparing} />}
+          {composer}
+        </div>
       </div>
     </main>
   );

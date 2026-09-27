@@ -84,6 +84,7 @@ npx playwright install chromium
 npm run test:e2e
 npm run test:container
 npm run test:chat:container
+npm run test:chat:uploads
 npm run test:workflow-compose
 ```
 

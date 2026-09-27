@@ -4,11 +4,19 @@ import { ConversationBroker, creationTransport, type CreationTransport } from ".
 import { sqliteAccessStore } from "../../lib/agent-access/sqlite";
 import { requestHash } from "../../lib/agent-access/signing";
 import { structuredRecordSchema } from "../../lib/agent-access/structured-record";
+import { encodeReviewedUploadMessage } from "../../lib/uploads/chat-reference";
 
 const alice = { tenant: "org", subject: "alice" }, bob = { ...alice, subject: "bob" };
 let store: ReturnType<typeof sqliteAccessStore>;
 beforeEach(() => { store = sqliteAccessStore(":memory:"); });
 afterEach(async () => { await store.close(); });
+it("uses the file request as its title while preserving the complete signed message",async () => {
+  const text = "Summarize my notes",message = encodeReviewedUploadMessage(text,{ id: randomUUID(),name: "Notes.txt",sha256: "a".repeat(64),reviewRevision: 1 });
+  const dispatch = vi.fn<CreationTransport>(async () => "candidate");
+  await new ConversationBroker(store,dispatch).create(alice,{ message,operationId: randomUUID() });
+  expect((await store.list(alice,{})).items[0].title).toBe(text);
+  expect(JSON.parse(dispatch.mock.calls[0][0]).message).toBe(message);
+});
 it("derives a bounded portable title without changing the dispatched message",async () => {
   const message = "Hello\u0000\n " + "x".repeat(113) + "😀 continuation";
   const input = { message,operationId: randomUUID() }, dispatch = vi.fn<CreationTransport>(async () => "candidate");

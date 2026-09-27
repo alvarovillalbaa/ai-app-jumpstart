@@ -1,13 +1,10 @@
-import { z } from "zod";
 import { accessOwner,operationId,sessionId,type SessionAccessStore,type AccessOwner } from "../agent-access/contract";
 import { AppError } from "../http/errors";
 import { uploadDownloadConfigured } from "./download-capability";
-import { extractedUploadText,uploadReview } from "./review-contract";
+import { agentUploadReference,extractedUploadText,type AgentUploadReference } from "./review-contract";
 import type { UploadService } from "./service";
 
-export const agentUploadReference = z.object({ id: uploadReview.shape.id,sha256: uploadReview.shape.sha256,
-  reviewRevision: z.number().int().min(1).max(2_147_483_647) }).strict();
-export type AgentUploadReference = z.infer<typeof agentUploadReference>;
+export { agentUploadReference,type AgentUploadReference } from "./review-contract";
 export type UploadReaderSession = { id: string;auth: {
   initiator?: { authenticator: string;issuer?: string;principalId: string;attributes: Record<string,unknown> } | null;
   current?: { authenticator: string;issuer?: string;principalId: string } | null;
