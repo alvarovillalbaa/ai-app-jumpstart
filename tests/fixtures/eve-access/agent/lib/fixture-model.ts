@@ -1,6 +1,7 @@
 import { access, appendFile } from "node:fs/promises";
 import { mockModel } from "eve/evals";
 import { customProvider, wrapLanguageModel } from "ai";
+import { defaultMaxInputBytes, inputPayloadBytes } from "../../../../../lib/budgets/input";
 
 export const fixtureModel = mockModel(async ({ lastUserMessage,toolResults }) => {
     await appendFile(process.env.TEST_MODEL_RECEIPTS!, `${JSON.stringify({ message: lastUserMessage ?? "compaction" })}\n`);
@@ -24,7 +25,7 @@ export const recordedModel = wrapLanguageModel({ model: fixtureModel,
   middleware: {
   async transformParams({ params }) {
     if (process.env.TEST_MODEL_LIMIT_RECEIPTS) await appendFile(process.env.TEST_MODEL_LIMIT_RECEIPTS,
-      `${JSON.stringify({ maxOutputTokens: params.maxOutputTokens })}\n`);
+      `${JSON.stringify({ maxOutputTokens: params.maxOutputTokens,inputBytes: inputPayloadBytes(params,defaultMaxInputBytes) })}\n`);
     return params;
   },
 } });

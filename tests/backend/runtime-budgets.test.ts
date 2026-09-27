@@ -14,11 +14,11 @@ function context(sequence = 0, id = `turn-${sequence}`) {
 }
 async function step(ctx: ReturnType<typeof context>, eventId: string, modelId: string, sequence?: number, controller = runtime) {
   await controller.beginStep(ctx,eventId,modelId,sequence);
-  return controller.prepareProviderCall(modelId,"fixture-provider");
+  return controller.prepareProviderCall(modelId,"fixture-provider",{ prompt: [] });
 }
 async function compact(ctx: ReturnType<typeof context>, eventId: string, modelId: string) {
   await runtime.beginCompaction(ctx,eventId,modelId);
-  return runtime.prepareProviderCall(modelId,"fixture-provider");
+  return runtime.prepareProviderCall(modelId,"fixture-provider",{ prompt: [] });
 }
 beforeEach(async () => {
   access = sqliteAccessStore(":memory:"); budgets = sqliteBudgetStore(":memory:"); operation = randomUUID(); state = { turn: null, compaction: null };

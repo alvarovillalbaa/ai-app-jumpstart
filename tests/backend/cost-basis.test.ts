@@ -39,7 +39,7 @@ it("rejects arithmetic overflow rather than trusting an unsafe floating-point qu
 it("gives an operator a secret-free policy check using the production parser", () => {
   expect(checkBudgetPolicy({ NODE_ENV: "production", AI_BUDGET_POLICY_JSON: JSON.stringify(settings) })).toMatchObject({
     policyId: "review-v1", quotedMicros: BigInt(18), estimateMicros: 18,
-    models: ["model-a", "model-b"], sourceHost: "example.test",
+    models: ["model-a", "model-b"], sourceHost: "example.test", maxInputBytes: 262_144,
   });
   const secret = "private-fixture-value";
   const invalid = { NODE_ENV: "production" as const, AI_BUDGET_POLICY_JSON: JSON.stringify({ ...settings, costBasis: { ...basis, sourceUrl: `https://example.test/?key=${secret}` } }) };
@@ -50,15 +50,17 @@ it("gives an operator a secret-free policy check using the production parser", (
 
 it("binds reservations to a canonical envelope independent of object and model ordering", () => {
   const policy = runtimeReservationPolicy(settings);
-  expect(policy.id).toMatch(/^runtime-v2:[a-f0-9]{64}$/);
+  expect(policy.id).toMatch(/^runtime-v3:[a-f0-9]{64}$/);
   expect(policy).toMatchObject({ dailyMicros: 100, maxActive: 2, maxPerMinute: 10 });
+  expect(runtimeReservationPolicy({ ...settings,maxInputBytes: 256 * 1024 })).toEqual(policy);
+  for (const maxInputBytes of [0,1.5,1024 * 1024+1]) expect(() => parseRuntimeBudgetSettings({ ...settings,maxInputBytes })).toThrow();
   expect(runtimeReservationPolicy({ ...settings, modelIds: [...settings.modelIds].reverse(),
     costBasis: { ...basis, models: basis.models.toReversed().map(model => ({
       outputMicrosPerMillion: model.outputMicrosPerMillion, inputMicrosPerMillion: model.inputMicrosPerMillion,
       maxOutputTokens: model.maxOutputTokens, maxInputTokens: model.maxInputTokens, id: model.id,
     })) } })).toEqual(policy);
   for (const changed of [
-    { ...settings, maxModelCalls: 4 }, { ...settings, estimateMicros: 20 },
+    { ...settings, maxInputBytes: 1000 }, { ...settings, maxModelCalls: 4 }, { ...settings, estimateMicros: 20 },
     { ...settings, policy: { ...settings.policy, id: "new-review" } },
     { ...settings, costBasis: { ...basis, reviewedAt: "2026-09-25" } },
     { ...settings, costBasis: { ...basis, models: basis.models.map(model => ({ ...model, maxOutputTokens: model.maxOutputTokens + 1 })) } },

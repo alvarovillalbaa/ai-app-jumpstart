@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { ZodError } from "zod";
 import { parseRuntimeBudgetSettings, runtimeReservationPolicy } from "../lib/budgets/runtime";
 import { quotedEnvelopeMicros } from "../lib/budgets/cost-basis";
+import { defaultMaxInputBytes } from "../lib/budgets/input";
 
 /** Offline review of the same account-chat policy parsed by Next and Eve. */
 export function checkBudgetPolicy(env: NodeJS.ProcessEnv = process.env) {
@@ -22,6 +23,7 @@ export function checkBudgetPolicy(env: NodeJS.ProcessEnv = process.env) {
   const basis = settings.costBasis;
   return { policyId: settings.policy.id, reservationPolicyId: runtimeReservationPolicy(settings).id, estimateMicros: settings.estimateMicros,
     quotedMicros: quotedEnvelopeMicros(basis, settings.maxModelCalls),
+    maxInputBytes: settings.maxInputBytes ?? defaultMaxInputBytes,
     models: settings.modelIds, reviewedAt: basis.reviewedAt, sourceHost: new URL(basis.sourceUrl).host };
 }
 
@@ -30,6 +32,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const result = checkBudgetPolicy();
     console.log(`Budget policy ${result.policyId}: quote ${result.quotedMicros} micro-USD <= reservation ${result.estimateMicros} micro-USD.`);
     console.log(`Ledger envelope: ${result.reservationPolicyId}.`);
+    console.log(`SDK input payload limit: ${result.maxInputBytes} UTF-8 JSON bytes (not a token count).`);
     console.log(`Models: ${result.models.join(", ")}; pricing reviewed ${result.reviewedAt} at ${result.sourceHost}.`);
     console.log("Review current prices, input-token bounds, provider acceptance of output caps, paid tools and a real model turn before enabling production chat.");
   } catch (error) {

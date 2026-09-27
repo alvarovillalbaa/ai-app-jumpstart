@@ -5,8 +5,9 @@ import { accessOwner, operationId, type AccessOwner, type SessionAccessStore } f
 import { requestHash } from "../agent-access/signing";
 import { budgetPolicy, micros, type BudgetStore } from "./contract";
 import { costBasis, quotedEnvelopeMicros } from "./cost-basis";
+import { defaultMaxInputBytes, inputPayloadBytes, type ModelParams } from "./input";
 
-export const runtimeBudgetSettings = z.object({ policy: budgetPolicy, estimateMicros: micros.positive(), maxModelCalls: z.number().int().min(1).max(1000), modelIds: z.array(z.string().min(1)).min(1).max(10), costBasis }).strict().superRefine((settings, ctx) => {
+export const runtimeBudgetSettings = z.object({ policy: budgetPolicy, estimateMicros: micros.positive(), maxModelCalls: z.number().int().min(1).max(1000), maxInputBytes: z.number().int().min(1).max(1024 * 1024).optional(), modelIds: z.array(z.string().min(1)).min(1).max(10), costBasis }).strict().superRefine((settings, ctx) => {
   if (settings.estimateMicros > settings.policy.dailyMicros) {
     ctx.addIssue({ code: "custom", path: ["estimateMicros"], message: "One reservation exceeds the daily allowance." });
   }
@@ -27,13 +28,13 @@ export type RuntimeBudgetSettings = z.infer<typeof runtimeBudgetSettings>;
 export function runtimeReservationPolicy(settings: RuntimeBudgetSettings) {
   const { policy, costBasis: basis } = settings;
   const fingerprint = createHash("sha256").update(JSON.stringify([
-    "jumpstart-runtime-envelope-v2", policy.id, policy.dailyMicros, policy.maxActive, policy.maxPerMinute,
+    "jumpstart-runtime-envelope-v3", policy.id, policy.dailyMicros, policy.maxActive, policy.maxPerMinute,
     settings.estimateMicros, settings.maxModelCalls, [...settings.modelIds].sort(),
-    basis.sourceUrl, basis.reviewedAt, basis.maxOtherMicros,
+    basis.sourceUrl, basis.reviewedAt, basis.maxOtherMicros, settings.maxInputBytes ?? defaultMaxInputBytes,
     [...basis.models].sort((a,b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
       .map(model => [model.id, model.maxInputTokens, model.maxOutputTokens, model.inputMicrosPerMillion, model.outputMicrosPerMillion]),
   ])).digest("hex");
-  return { ...policy,id: `runtime-v2:${fingerprint}` };
+  return { ...policy,id: `runtime-v3:${fingerprint}` };
 }
 export function parseRuntimeBudgetSettings(raw: unknown) { return runtimeBudgetSettings.parse(raw); }
 export function readRuntimeBudgetSettings(env: NodeJS.ProcessEnv = process.env) {
@@ -41,7 +42,7 @@ export function readRuntimeBudgetSettings(env: NodeJS.ProcessEnv = process.env) 
   try { return parseRuntimeBudgetSettings(JSON.parse(env.AI_BUDGET_POLICY_JSON)); }
   catch { throw new Error("AI budget policy is invalid; review model prices, token assumptions and reservation amount."); }
 }
-type Run = { operationId: string; turnId: string; reported: number; knownMicros: number; unknown: boolean; open: boolean; pending: boolean; estimateMicros: number; maxModelCalls: number; modelIds: string[]; outputCaps?: { id: string; limit: number }[]; reconciliationRequired?: boolean };
+type Run = { operationId: string; turnId: string; reported: number; knownMicros: number; unknown: boolean; open: boolean; pending: boolean; estimateMicros: number; maxModelCalls: number; modelIds: string[]; outputCaps?: { id: string; limit: number }[]; maxInputBytes?: number; reconciliationRequired?: boolean };
 type ProviderCall = { owner: AccessOwner; sessionId: string; operationId: string; modelId: string; eventId: string; kind: "step" | "compaction"; calls: number };
 export type RuntimeBudgetState = { turn: Run | null; compaction: Run | null; enforced?: boolean; providerCall?: ProviderCall | null };
 export interface BudgetStateHandle { get(): RuntimeBudgetState; update(fn: (state: RuntimeBudgetState) => RuntimeBudgetState): void }
@@ -76,7 +77,7 @@ export class RuntimeBudgets {
     const turnKey = ctx.session.turn.id || `continuation:${ctx.session.turn.sequence}`;
     const id = first ? creation : stableBudgetId(JSON.stringify([owner,ctx.session.id,turnKey]));
     await this.reserve(ctx,id,first ? row.requestHash : requestHash(JSON.stringify([ctx.session.id,turnKey])));
-    this.state.update(s => ({ ...s, enforced: true, providerCall: null, turn: s.turn?.turnId === ctx.session.turn.id && s.turn.open ? s.turn : { operationId: id, turnId: ctx.session.turn.id, reported: 0, knownMicros: 0, unknown: false, open: true, pending: false, estimateMicros: this.settings.estimateMicros, maxModelCalls: this.settings.maxModelCalls, modelIds: [...this.settings.modelIds], outputCaps: this.outputCaps() } }));
+    this.state.update(s => ({ ...s, enforced: true, providerCall: null, turn: s.turn?.turnId === ctx.session.turn.id && s.turn.open ? s.turn : { operationId: id, turnId: ctx.session.turn.id, reported: 0, knownMicros: 0, unknown: false, open: true, pending: false, estimateMicros: this.settings.estimateMicros, maxModelCalls: this.settings.maxModelCalls, modelIds: [...this.settings.modelIds], outputCaps: this.outputCaps(), maxInputBytes: this.settings.maxInputBytes ?? defaultMaxInputBytes } }));
   }
   private async admitProvider(ctx: Context, run: Run, eventId: string, modelId: string, kind: ProviderCall["kind"]) {
     if (!run.modelIds.includes(modelId) || !this.settings.modelIds.includes(modelId)) throw new Error("The model is outside the budget policy.");
@@ -85,7 +86,7 @@ export class RuntimeBudgets {
     this.state.update(s => ({ ...s, enforced: true, providerCall: { owner, sessionId: ctx.session.id, operationId: run.operationId, modelId, eventId, kind, calls: 0 } }));
   }
   /** Called by model middleware for EVERY provider invocation, including SDK retries. */
-  async prepareProviderCall(modelId: string, provider: string) {
+  async prepareProviderCall(modelId: string, provider: string, params: ModelParams) {
     const saved = this.state.get(), call = saved.providerCall;
     if (!saved.enforced || !call || (call.modelId !== modelId && call.modelId !== `${provider}/${modelId}`))
       throw new Error("Model request has no matching admitted budget.");
@@ -95,6 +96,8 @@ export class RuntimeBudgets {
     const original = run.outputCaps?.find(model => model.id === call.modelId)?.limit;
     const current = this.settings.costBasis.models.find(model => model.id === call.modelId)?.maxOutputTokens;
     if (!original || !current) throw new Error("This admitted budget predates per-call output limits; start a new turn.");
+    if (!run.maxInputBytes) throw new Error("This admitted budget predates input payload limits; start a new turn.");
+    inputPayloadBytes(params,Math.min(run.maxInputBytes,this.settings.maxInputBytes ?? defaultMaxInputBytes));
     if (!await this.access.ownsSession(call.owner,call.sessionId)) throw new Error("Session ownership is unavailable.");
     // Never use a replayable event/turn ID for a billed provider attempt. A retry
     // must consume a new durable slot even when restored state lost its count.
@@ -139,7 +142,7 @@ export class RuntimeBudgets {
     }
     const id = stableBudgetId(`compaction:${ctx.session.id}:${eventId}`);
     await this.reserve(ctx,id,requestHash(eventId));
-    const run = { operationId: id, turnId: ctx.session.turn.id, reported: 0, knownMicros: 0, unknown: true, open: true, pending: false, estimateMicros: this.settings.estimateMicros, maxModelCalls: this.settings.maxModelCalls, modelIds: [...this.settings.modelIds], outputCaps: this.outputCaps() };
+    const run = { operationId: id, turnId: ctx.session.turn.id, reported: 0, knownMicros: 0, unknown: true, open: true, pending: false, estimateMicros: this.settings.estimateMicros, maxModelCalls: this.settings.maxModelCalls, modelIds: [...this.settings.modelIds], outputCaps: this.outputCaps(), maxInputBytes: this.settings.maxInputBytes ?? defaultMaxInputBytes };
     this.state.update(s => ({ ...s, compaction: run }));
     await this.admitProvider(ctx,run,eventId,modelId,"compaction");
   }
@@ -147,7 +150,9 @@ export class RuntimeBudgets {
     if (run.reconciliationRequired) throw new Error("Model cost requires reconciliation.");
     const owner = this.owner(ctx);
     const attempts = await this.budgets.attemptCount({ ...owner, operationId: run.operationId });
-    const unknown = run.unknown || run.pending || attempts !== run.reported;
+    // Admission alone is not evidence of a model request. The middleware claims
+    // durably before provider entry; a zero count verifies zero model cost.
+    const unknown = (attempts > 0 && (run.unknown || run.pending)) || attempts !== run.reported;
     // Never refund an interrupted/retried provider call whose usage was lost.
     // A known partial overage plus unknown usage needs an explicit adjustment.
     if (unknown && run.knownMicros > run.estimateMicros) throw new Error("Partial cost overage requires reconciliation.");

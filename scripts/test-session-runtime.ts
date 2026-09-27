@@ -30,7 +30,7 @@ const origin = `http://127.0.0.1:${port}`, aliceToken = randomBytes(32).toString
 const signing = { audience: "isolated-session-runtime", activeKey: "fixture", keys: { fixture: randomBytes(32).toString("hex") } };
 const database = join(directory, "app.sqlite"), receipts = join(directory, "model.txt"), failures = join(directory, "failures.txt"), gate = join(directory, "gate"), modelGate = join(directory, "model-gate");
 const limitReceipts = join(directory,"model-limits.txt");
-const budgetSettings = { policy: { id: "fixture", dailyMicros: 60, maxActive: 2, maxPerMinute: 20 }, estimateMicros: 20, maxModelCalls: 1, modelIds: ["openai/gpt-5.6-luna-fast"],
+const budgetSettings = { policy: { id: "fixture", dailyMicros: 60, maxActive: 2, maxPerMinute: 20 }, estimateMicros: 20, maxModelCalls: 1, maxInputBytes: 16_384, modelIds: ["openai/gpt-5.6-luna-fast"],
   costBasis: { sourceUrl: "https://example.test/fixture-prices", reviewedAt: "2026-09-24", maxOtherMicros: 0,
     models: ["openai/gpt-5.6-luna-fast"].map(id => ({ id, maxInputTokens: 1, maxOutputTokens: 1, inputMicrosPerMillion: 1_000_000, outputMicrosPerMillion: 1_000_000 })) } };
 const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: "production", EVE_DEV: "", EVE_TELEMETRY_DISABLED: "1", NITRO_PRESET: "node-server",
@@ -219,10 +219,18 @@ try {
   }
   assert.equal((await fetch(`${origin}/eve/v1/session/${recovered.sessionId}/stream`, { headers: bobHeaders })).status, 401);
   assert.equal((await fetch(`${origin}/eve/v1/session`, { method: "POST", headers: { authorization: `Bearer ${aliceToken}`, "content-type": "application/json" }, body: JSON.stringify({ message: "Unsigned" }) })).status, 401);
+  const bob = { ...alice,subject: "bob" },oversizeOperation = randomUUID(),beforeInputDenial = await lines(failures);
+  await new BudgetedCreation(new ConversationBroker(store,realDispatch),budgets,runtimeReservationPolicy(budgetSettings),() => 20)
+    .create(bob,{ message: "input-budget-test" + "x".repeat(20_000),operationId: oversizeOperation });
+  await eventually(async () => await lines(failures) > beforeInputDenial,"Oversize SDK input did not fail its turn.");
+  await eventually(async () => (await budgets.snapshot({ ...bob,now: Date.now() })).active === 0,"Input denial did not release its reservation.");
+  assert.equal(await lines(receipts),3,"Oversize input must not reach the provider.");
+  assert.equal(await budgets.attemptCount({ ...bob,operationId: oversizeOperation }),0);
+  assert.equal((await budgets.snapshot({ ...bob,now: Date.now() })).chargedMicros,0,"Verified no-call input denial must cost zero.");
   // Hold the receipt hook, revoke after HTTP acceptance, then release the hook.
   // The real runtime must fail the turn without reaching the mock model.
   await rm(gate);
-  const bob = { ...alice, subject: "bob" }, failuresBefore = await lines(failures);
+  const failuresBefore = await lines(failures);
   let guardedCandidate: string | undefined;
   const guarded = await new BudgetedCreation(new ConversationBroker(store, async (body, owner) => { guardedCandidate = await realDispatch(body, owner); return guardedCandidate; }),budgets,runtimeReservationPolicy(budgetSettings),() => 20).create(bob, { message: "Must never reach the model", operationId: randomUUID() });
   assert.equal(guarded.status, "starting"); assert.equal(guarded.sessionId, null);
@@ -342,7 +350,8 @@ try {
   assert.ok(limits.length >= 3,"Initial/follow-up/compaction must reach the provider boundary.");
   assert.equal(limits.length,await lines(receipts),"Every provider call must have one bounded request receipt.");
   assert.ok(limits.every(row => row.maxOutputTokens === 1),"Provider requests exceeded the admitted output limit.");
-  console.log("Eve runtime: creation recovery, owned follow-up, compaction settlement, daily-budget and provider-call/output caps, stale-response quota enforcement, owner isolation and revocation passed.");
+  assert.ok(limits.every(row => Number.isSafeInteger(row.inputBytes) && row.inputBytes > 0 && row.inputBytes <= budgetSettings.maxInputBytes),"Provider requests exceeded the admitted input payload limit.");
+  console.log("Eve runtime: creation recovery, owned follow-up, compaction settlement, input-payload/output caps, verified no-call zero-cost denial, daily/provider-call limits, stale-response quota enforcement, owner isolation and revocation passed.");
 } catch (error) {
   validationFailed = true;
   console.error(error instanceof Error ? error.message : "Session runtime validation failed.");

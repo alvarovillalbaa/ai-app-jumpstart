@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { APICallError, customProvider, generateText, streamText } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { installBudgetProvider, modelWithBudget } from "../../lib/budgets/model";
+import { inputPayloadBytes, type ModelParams } from "../../lib/budgets/input";
 import { RuntimeBudgets, type RuntimeBudgetState } from "../../lib/budgets/runtime";
 import { sqliteAccessStore } from "../../lib/agent-access/sqlite";
 import { sqliteBudgetStore } from "../../lib/budgets/sqlite";
@@ -37,7 +38,7 @@ beforeEach(async () => {
 afterEach(async () => { await access.close(); await budgets.close(); });
 
 it("bounds both generated and streamed provider parameters without changing identity, prompt, tools or options", async () => {
-  const provider = fake(), wrapped = modelWithBudget(provider, (id, name) => runtime.prepareProviderCall(id, name));
+  const provider = fake(), wrapped = modelWithBudget(provider, (id, name, params) => runtime.prepareProviderCall(id, name, params));
   const tools = [{ type: "function" as const, name: "read", inputSchema: { type: "object" as const } }];
   const params = { prompt, tools, providerOptions: { fixture: { safe: true } }, maxOutputTokens: 1000 };
   await wrapped.doGenerate(params);
@@ -55,7 +56,7 @@ it("counts AI SDK network retries inside one admitted step and blocks the next r
   const provider = new MockLanguageModelV4({ provider: "fixture", modelId: "model", doGenerate: async () => {
     throw new APICallError({ message: "Fixture rate limit", url: "https://example.test/model", requestBodyValues: {}, statusCode: 429, isRetryable: true });
   } });
-  const wrapped = modelWithBudget(provider, (id, name) => runtime.prepareProviderCall(id, name));
+  const wrapped = modelWithBudget(provider, (id, name, params) => runtime.prepareProviderCall(id, name, params));
   await expect(generateText({ model: wrapped, prompt: "retry fixture", maxRetries: 5 })).rejects.toThrow("exhausted");
   expect(provider.doGenerateCalls).toHaveLength(2);
   expect(provider.doGenerateCalls.every(call => call.maxOutputTokens === 16)).toBe(true);
@@ -65,7 +66,7 @@ it("counts AI SDK network retries inside one admitted step and blocks the next r
 }, 15_000);
 
 it("applies the provider boundary to the actual AI SDK streaming path", async () => {
-  const provider = fake(), wrapped = modelWithBudget(provider, (id, name) => runtime.prepareProviderCall(id, name));
+  const provider = fake(), wrapped = modelWithBudget(provider, (id, name, params) => runtime.prepareProviderCall(id, name, params));
   const result = streamText({ model: wrapped, prompt: "stream fixture" });
   expect(await result.text).toBe("ok");
   expect(provider.doStreamCalls[0].maxOutputTokens).toBe(16);
@@ -76,7 +77,7 @@ it("preserves string model resolution through the configured provider and instal
   const previous = globalThis.AI_SDK_DEFAULT_PROVIDER, provider = fake();
   try {
     globalThis.AI_SDK_DEFAULT_PROVIDER = customProvider({ languageModels: { "fixture/model": provider } });
-    const prepare = (id: string, name: string) => runtime.prepareProviderCall(id,name);
+    const prepare = (id: string, name: string, params: ModelParams) => runtime.prepareProviderCall(id,name,params);
     installBudgetProvider(prepare);
     const installed = globalThis.AI_SDK_DEFAULT_PROVIDER;
     installBudgetProvider(prepare); expect(globalThis.AI_SDK_DEFAULT_PROVIDER).toBe(installed);
@@ -92,7 +93,7 @@ it("cannot widen restored output caps and immediately honors a tighter deploymen
   const changed = (limit: number) => new RuntimeBudgets(budgets, access, handle, { ...settings,
     costBasis: { ...settings.costBasis, models: [{ ...settings.costBasis.models[0], maxOutputTokens: limit }] } });
   let controller = changed(1000);
-  const wrapped = modelWithBudget(provider, (id, name) => controller.prepareProviderCall(id, name));
+  const wrapped = modelWithBudget(provider, (id, name, params) => controller.prepareProviderCall(id, name, params));
   await wrapped.doGenerate({ prompt }); expect(provider.doGenerateCalls[0].maxOutputTokens).toBe(16);
   state = structuredClone(state); controller = changed(8);
   await wrapped.doGenerate({ prompt }); expect(provider.doGenerateCalls[1].maxOutputTokens).toBe(8);
@@ -101,7 +102,7 @@ it("cannot widen restored output caps and immediately honors a tighter deploymen
 it("does not reuse a provider attempt after restoring an earlier context or raising the call cap", async () => {
   const restored = structuredClone(state), provider = fake();
   let controller = runtime;
-  const wrapped = modelWithBudget(provider, (id, name) => controller.prepareProviderCall(id, name));
+  const wrapped = modelWithBudget(provider, (id, name, params) => controller.prepareProviderCall(id, name, params));
   await wrapped.doGenerate({ prompt }); state = restored;
   controller = new RuntimeBudgets(budgets, access, handle, { ...settings, maxModelCalls: 100 });
   await wrapped.doGenerate({ prompt });
@@ -111,7 +112,7 @@ it("does not reuse a provider attempt after restoring an earlier context or rais
 });
 
 it("rejects a changed reservation envelope even when the first-step checkpoint was entirely lost", async () => {
-  const provider = fake(), wrapped = modelWithBudget(provider, (id, name) => runtime.prepareProviderCall(id, name));
+  const provider = fake(), wrapped = modelWithBudget(provider, (id, name, params) => runtime.prepareProviderCall(id, name, params));
   await wrapped.doGenerate({ prompt });
   state = { turn: null, compaction: null };
   const changed = new RuntimeBudgets(budgets, access, handle, { ...settings,
@@ -122,9 +123,47 @@ it("rejects a changed reservation envelope even when the first-step checkpoint w
   expect(await budgets.snapshot({ ...owner, now: Date.now() })).toMatchObject({ active: 1, reservedMicros: 100 });
 });
 
+it("denies oversize prompts and tool context before claiming an attempt or reaching the provider", async () => {
+  const provider = fake(), wrapped = modelWithBudget(provider,(id,name,params) => runtime.prepareProviderCall(id,name,params));
+  state.turn!.maxInputBytes = inputPayloadBytes({ prompt },1000);
+  await expect(wrapped.doGenerate({ prompt: [{ role: "system",content: "private oversized text".repeat(100) }] })).rejects.toThrow("payload limit");
+  await expect(wrapped.doStream({ prompt,tools: [{ type: "function",name: "read",description: "extra context",inputSchema: {} }] })).rejects.toThrow("payload limit");
+  expect(provider.doGenerateCalls).toHaveLength(0); expect(provider.doStreamCalls).toHaveLength(0);
+  expect(await budgets.attemptCount({ ...owner,operationId })).toBe(0);
+  await wrapped.doGenerate({ prompt }); expect(provider.doGenerateCalls).toHaveLength(1);
+});
+
+it("preserves the admitted payload cap on restore, honors tightening and denies legacy input envelopes", async () => {
+  const provider = fake(), bytes = inputPayloadBytes({ prompt },1000);
+  state.turn!.maxInputBytes = bytes;
+  let controller = new RuntimeBudgets(budgets,access,handle,{ ...settings,maxInputBytes: 1000 });
+  const wrapped = modelWithBudget(provider,(id,name,params) => controller.prepareProviderCall(id,name,params));
+  state = structuredClone(state);
+  await expect(wrapped.doGenerate({ prompt,providerOptions: { fixture: { extra: true } } })).rejects.toThrow("payload limit");
+  controller = new RuntimeBudgets(budgets,access,handle,{ ...settings,maxInputBytes: bytes-1 });
+  await expect(wrapped.doGenerate({ prompt })).rejects.toThrow("payload limit");
+  delete state.turn!.maxInputBytes;
+  await expect(wrapped.doGenerate({ prompt })).rejects.toThrow("predates input");
+  expect(provider.doGenerateCalls).toHaveLength(0); expect(await budgets.attemptCount({ ...owner,operationId })).toBe(0);
+});
+
+it("settles denied input at verified zero when no provider attempt exists, including manual compaction", async () => {
+  const provider = fake(), wrapped = modelWithBudget(provider,(id,name,params) => runtime.prepareProviderCall(id,name,params));
+  state.turn!.maxInputBytes = 1;
+  await expect(wrapped.doGenerate({ prompt })).rejects.toThrow("payload limit");
+  await runtime.endTurn(context());
+  expect(await budgets.snapshot({ ...owner,now: Date.now() })).toMatchObject({ chargedMicros: 0,active: 0,unknownCosts: 0 });
+  await runtime.beginCompaction(context(),"input-denied-compaction","fixture/model");
+  state.compaction!.maxInputBytes = 1;
+  await expect(wrapped.doGenerate({ prompt })).rejects.toThrow("payload limit");
+  await runtime.endCompaction(context());
+  expect(await budgets.snapshot({ ...owner,now: Date.now() })).toMatchObject({ chargedMicros: 0,active: 0,unknownCosts: 0 });
+  expect(provider.doGenerateCalls).toHaveLength(0);
+});
+
 it("rejects mismatched models, legacy envelopes and revoked ownership before networking", async () => {
-  const provider = fake(), wrapped = modelWithBudget(provider, (id, name) => runtime.prepareProviderCall(id, name));
-  await expect(runtime.prepareProviderCall("another", "fixture")).rejects.toThrow("matching admitted");
+  const provider = fake(), wrapped = modelWithBudget(provider, (id, name, params) => runtime.prepareProviderCall(id, name, params));
+  await expect(runtime.prepareProviderCall("another", "fixture",{ prompt })).rejects.toThrow("matching admitted");
   const caps = state.turn!.outputCaps; delete state.turn!.outputCaps;
   await expect(wrapped.doGenerate({ prompt })).rejects.toThrow("predates per-call");
   state.turn!.outputCaps = caps;
@@ -134,7 +173,7 @@ it("rejects mismatched models, legacy envelopes and revoked ownership before net
 });
 
 it("uses the same limits for automatic and independent manual compaction", async () => {
-  const provider = fake(), wrapped = modelWithBudget(provider, (id, name) => runtime.prepareProviderCall(id, name));
+  const provider = fake(), wrapped = modelWithBudget(provider, (id, name, params) => runtime.prepareProviderCall(id, name, params));
   await runtime.beginCompaction(context(), "auto", "fixture/model");
   await wrapped.doGenerate({ prompt }); await runtime.endCompaction(context());
   await expect(wrapped.doGenerate({ prompt })).rejects.toThrow("matching admitted");
