@@ -1,4 +1,5 @@
 "use client";
+import { SoundPreferences } from "./sound-preferences";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -44,5 +45,6 @@ export function AccountPanel({ settings, user }: { settings: PublicAuthSettings;
     </header>
     {error && <p role="alert" className="p-6 text-destructive">{error}</p>}
     {identity.id ? <RecordsPanel key={identity.id} credential={credential} headingLevel={2} /> : <p role="status" className="p-6">Your session ended. <Link href="/login">Sign in again</Link>.</p>}
+    <div className="p-6"><SoundPreferences /></div>
   </main>;
 }

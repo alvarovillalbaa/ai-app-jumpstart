@@ -453,6 +453,36 @@ export type Database = {
         }
         Relationships: []
       }
+      app_user_preferences: {
+        Row: {
+          revision: number
+          sound_enabled: boolean
+          sound_volume: number
+          subject: string
+          tenant: string
+          theme: string
+          updated_at: string
+        }
+        Insert: {
+          revision: number
+          sound_enabled: boolean
+          sound_volume: number
+          subject: string
+          tenant: string
+          theme: string
+          updated_at: string
+        }
+        Update: {
+          revision?: number
+          sound_enabled?: boolean
+          sound_volume?: number
+          subject?: string
+          tenant?: string
+          theme?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -508,6 +538,10 @@ export type Database = {
           p_source: number
         }
         Returns: string
+      }
+      app_preferences_command: {
+        Args: { command: string; input: Json }
+        Returns: Json
       }
       app_run_cache: { Args: { p_facts: Json }; Returns: string }
       app_save_artifact: {

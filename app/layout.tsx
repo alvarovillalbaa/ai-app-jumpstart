@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { appConfig } from "@/app.config";
 import { AppProviders } from "./_components/app-providers";
+import { authSettings } from "@/lib/auth/settings";
 import { headers } from "next/headers";
 
 export const metadata: Metadata = {
@@ -17,7 +18,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
       className="h-full antialiased font-sans"
       suppressHydrationWarning
     >
-      <body className="min-h-full flex flex-col"><AppProviders nonce={nonce}>{children}</AppProviders></body>
+      <body className="min-h-full flex flex-col"><AppProviders nonce={nonce} auth={authSettings()}>{children}</AppProviders></body>
     </html>
   );
 }

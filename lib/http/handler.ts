@@ -3,7 +3,7 @@ import { ZodError } from "zod";
 import { AppError } from "./errors";
 import { config } from "../config";
 
-export async function readJson(request: Request) {
+export async function readJson(request: Request,maximumBytes = 131072) {
   if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) throw new AppError(415, "unsupported_media_type", "Use application/json.");
   const reader = request.body?.getReader();
   if (!reader) throw new AppError(400, "invalid_json", "A JSON body is required.");
@@ -13,7 +13,7 @@ export async function readJson(request: Request) {
       const { value, done } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > 131072) { await reader.cancel(); throw new AppError(413, "body_too_large", "Request body exceeds 128 KiB."); }
+      if (size > maximumBytes) { await reader.cancel(); throw new AppError(413, "body_too_large", maximumBytes === 131072 ? "Request body exceeds 128 KiB." : `Request body exceeds ${maximumBytes} bytes.`); }
       chunks.push(value);
     }
   } finally { reader.releaseLock(); }

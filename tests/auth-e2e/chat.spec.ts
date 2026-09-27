@@ -246,12 +246,13 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
     const aliceFile = join(exportDirectory,"alice.ndjson"),bobFile = join(exportDirectory,"bob.ndjson");
     const env = { APP_API_URL: process.env.APP_ORIGIN! };
     expect(await runCli(["export","application",aliceFile],{ ...env,APP_API_TOKEN: alice.token })).toMatchObject({
-      counts: { profile: 1,records: 1,conversations: 1,uploads: 1,uploadUsage: 1,reservations: aliceLedger.items.length,corrections: 0,usage: 1 },
+      counts: { profile: 1,preferences: 1,records: 1,conversations: 1,uploads: 1,uploadUsage: 1,reservations: aliceLedger.items.length,corrections: 0,usage: 1 },
     });
     const aliceLines = (await readFile(aliceFile,"utf8")).trim().split("\n").map(line => JSON.parse(line));
     expect(aliceLines.some(line => line.type === "record" && line.value.id === exportRecordId)).toBe(true);
     expect(aliceLines.some(line => line.type === "conversation" && line.value.operationId === receipt.operationId)).toBe(true);
-    expect(aliceLines[0].value.format).toBe("ai-app-jumpstart-visible-data-v6");
+    expect(aliceLines.find(line => line.type === "account_preferences")?.value).toMatchObject({ schemaVersion: 1,soundEnabled: false });
+    expect(aliceLines[0].value.format).toBe("ai-app-jumpstart-visible-data-v7");
     expect(aliceLines.find(line => line.type === "run" && line.value.operationId === receipt.operationId)?.value.run).toMatchObject({ turnId: capturedRuns.items[0].turnId,state: "completed",models: capturedRuns.items[0].models,boundaryCount: 2 });
     expect(aliceLines.some(line => line.type === "projection" && line.value.operationId === receipt.operationId)).toBe(true);
     expect(aliceLines.some(line => line.type === "upload" && line.value.id === exportUploadId && line.value.state === "quarantined")).toBe(true);
@@ -260,7 +261,7 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
     expect(aliceLines.filter(line => line.type === "budget_reservation").map(line => line.value)).toEqual(aliceLedger.items);
     expect(await readFile(aliceFile,"utf8")).not.toContain("Alice's quarantined bytes are not exportable.");
     expect(await runCli(["export","application",bobFile],{ ...env,APP_API_TOKEN: bob.token })).toMatchObject({
-      counts: { profile: 1,records: 0,conversations: 0,projections: 0,runs: 0,artifacts: 0,uploads: 0,uploadUsage: 1,reservations: 0,corrections: 0,usage: 1 },
+      counts: { profile: 1,preferences: 1,records: 0,conversations: 0,projections: 0,runs: 0,artifacts: 0,uploads: 0,uploadUsage: 1,reservations: 0,corrections: 0,usage: 1 },
     });
     expect(await readFile(bobFile,"utf8")).not.toContain(exportRecordId);
     expect(await readFile(bobFile,"utf8")).not.toContain(receipt.operationId);

@@ -1,3 +1,6 @@
+import { PreferenceService } from "./preferences/service";
+import { preferencePatch,type PreferenceStore } from "./preferences/contract";
+import { getPreferenceStore } from "./preferences/store";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
@@ -31,7 +34,7 @@ import { verifySupabaseIdentity } from "./auth/identity";
 import { profileSnapshot, type AccountProfile } from "./auth/profile";
 
 export function createMcpServer(service: RecordService, history?: ConversationHistoryService,artifacts?: ArtifactService,usage?: UsageService,uploads?: UploadService,
-  profile?: () => Promise<AccountProfile>,sourceEvents?: (operationId: string,options: unknown) => Promise<unknown>,reconcile?: (operationId: string,options: unknown) => Promise<unknown>) {
+  profile?: () => Promise<AccountProfile>,sourceEvents?: (operationId: string,options: unknown) => Promise<unknown>,reconcile?: (operationId: string,options: unknown) => Promise<unknown>,accountPreferences?: PreferenceService) {
   const server = new McpServer({ name: "ai-app-jumpstart-data", version: "1.0.0" });
   async function result(action: () => Promise<unknown>) {
     try { return { content: [{ type: "text" as const, text: JSON.stringify(await action()) }] }; }
@@ -183,6 +186,14 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
       catch { throw new Error("Upload unavailable."); }
     });
   }
+  if (accountPreferences) {
+    server.registerTool("account_preferences",{ description: "Read the current account's theme and optional sound preferences.",inputSchema: z.object({}).strict(),annotations: { readOnlyHint: true,openWorldHint: false } },() => result(() => accountPreferences.get()));
+    server.registerTool("account_preferences_update",{ description: "Update the current account's preferences at their current revision. Conflicts require a fresh read.",inputSchema: preferencePatch,annotations: { readOnlyHint: false,destructiveHint: false,idempotentHint: false,openWorldHint: false } },input => result(() => accountPreferences.update(input)));
+    server.registerResource("account-preferences","account:///preferences",{ description: "Current account preferences",mimeType: "application/json" },async uri => {
+      try { return { contents: [{ uri: uri.href,mimeType: "application/json",text: JSON.stringify(await accountPreferences.get()) }] }; }
+      catch { throw new Error("Account preferences unavailable."); }
+    });
+  }
   if (profile) {
     server.registerTool("account_profile",{
       description: "Read selected profile fields for the currently verified account. Excludes credentials, sessions, MFA factors and provider identity details.",
@@ -199,7 +210,7 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
 }
 
 export function mcpHandler(repository: () => Promise<RecordRepository> = getRepository, accessStore: () => Promise<SessionAccessStore> = getSessionAccessStore,budgetStore: () => Promise<BudgetStore> = getBudgetStore,
-  uploadCatalog: () => Promise<UploadCatalog> = getUploadCatalog) {
+  uploadCatalog: () => Promise<UploadCatalog> = getUploadCatalog,preferenceStore: () => Promise<PreferenceStore> = getPreferenceStore) {
   return (request: Request) => handle(request, async () => {
     const principal = await authenticate(request);
     const parsedBody = await readJson(request);
@@ -225,7 +236,7 @@ export function mcpHandler(repository: () => Promise<RecordRepository> = getRepo
       readSourceEvents(ownedStore,owner,operation,options,settings.origin,bearerToken(request),request.signal) : undefined;
     const reconcile = settings && ownedStore ? (operation: string,options: unknown) =>
       reconcileProjections(ownedStore,owner,operation,options,settings.origin,bearerToken(request),request.signal) : undefined;
-    const server = createMcpServer(new RecordService(await repository(), principal), history, artifacts, usage,uploads,profile,sourceEvents,reconcile);
+    const server = createMcpServer(new RecordService(await repository(), principal), history, artifacts, usage,uploads,profile,sourceEvents,reconcile,principal.credentialType === "user" ? new PreferenceService(preferenceStore,owner) : undefined);
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     await server.connect(transport);
     try { return await transport.handleRequest(request, { parsedBody }); }

@@ -26,7 +26,7 @@ it("exports every paged record for one owner to a private file without replacing
     expect(await run(["export", "records", output], env, request)).toMatchObject({ mode: "records", counts: { records: 105 } });
     const exported = await lines(output);
     expect(exported).toHaveLength(107);
-    expect(exported[0].value).toMatchObject({ format: "ai-app-jumpstart-visible-data-v6", mode: "records" });
+    expect(exported[0].value).toMatchObject({ format: "ai-app-jumpstart-visible-data-v7", mode: "records" });
     expect(exported.filter(line => line.type === "record").map(line => line.value.title)).not.toContain("Foreign");
     expect(exported.at(-1).value.counts.records).toBe(105);
     expect((await stat(output)).mode & 0o077).toBe(0);
@@ -57,6 +57,7 @@ it("exports visible account data, including archived conversations and paged pro
     if (path.pathname === "/api/v1/account/profile") return Response.json({ id: "0c9074e3-a19e-44ba-8931-8d1c84661297",
       email: "alice@example.test", phone: null, createdAt: "2026-09-24T10:00:00.000Z", updatedAt: null,
       lastSignInAt: null, emailConfirmedAt: null, phoneConfirmedAt: null, providers: ["email"], userMetadata: { displayName: "Alice" } });
+    if (path.pathname === "/api/v1/account/preferences") return Response.json({ schemaVersion: 1,revision: 2,theme: "dark",soundEnabled: false,soundVolume: 0.25,updatedAt: "2026-09-27T10:00:00.000Z" });
     if (path.pathname === "/api/v1/usage") return Response.json({ day: 1, reservedMicros: 0, chargedMicros: 5,
       active: 0, recent: 0, unknownCosts: 0, dailyLimitMicros: 100 });
     if (path.pathname === "/api/v1/records") return Response.json({ items: [{ id: record, title: "Record", content: "private",
@@ -92,14 +93,15 @@ it("exports visible account data, including archived conversations and paged pro
   try {
     const output = join(directory, "account.ndjson");
     expect(await run(["export", "application", output], { APP_API_TOKEN: "current-account-token" }, request)).toMatchObject({
-      counts: { profile: 1, records: 1, conversations: 2, projections: 2, runs: 1, artifacts: 1, uploads: 1, uploadUsage: 1, reservations: 2, corrections: 2, usage: 1 },
+      counts: { profile: 1, preferences: 1, records: 1, conversations: 2, projections: 2, runs: 1, artifacts: 1, uploads: 1, uploadUsage: 1, reservations: 2, corrections: 2, usage: 1 },
     });
     const exported = await lines(output);
-    expect(exported.map(line => line.type)).toEqual(["manifest", "account_profile", "record", "conversation", "projection", "projection", "run", "conversation", "artifact", "upload", "upload_usage", "budget_reservation", "budget_reservation", "budget_correction", "budget_correction", "usage", "end"]);
+    expect(exported.map(line => line.type)).toEqual(["manifest", "account_profile", "account_preferences", "record", "conversation", "projection", "projection", "run", "conversation", "artifact", "upload", "upload_usage", "budget_reservation", "budget_reservation", "budget_correction", "budget_correction", "usage", "end"]);
     expect(exported.find(line => line.type === "account_profile")?.value).toMatchObject({ email: "alice@example.test", userMetadata: { displayName: "Alice" } });
     expect(exported[0].value.exclusions).toEqual(expect.arrayContaining([expect.stringContaining("Eve session/model history")]));
     expect(exported.find(line => line.type === "run")?.value.run).toMatchObject({ state: "completed",models: ["fixture-model"] });
     expect(exported.some(line => line.type === "run" && "facts" in line.value.run)).toBe(false);
+    expect(exported.find(line => line.type === "account_preferences")?.value).toMatchObject({ revision: 2,theme: "dark",soundEnabled: false,soundVolume: 0.25 });
     expect(exported.find(line => line.type === "artifact")?.value.content).toBe("artifact text");
     expect(exported.find(line => line.type === "upload")?.value).toMatchObject({ id: upload,state: "rejected",
       scan: { status: "rejected",reason: "malware",checkedAt: 2,policyVersion: 1 } });
@@ -180,14 +182,14 @@ it("publishes no source export when the runtime fails after an earlier page", as
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-it("continues verifying published v5 exports without accepting v6 sections in them",async () => {
+it.each([5,6])("continues verifying published v%s exports without accepting v7 sections in them",async version => {
   const directory = await mkdtemp(join(tmpdir(),"jumpstart-export-v5-")),path = join(directory,"old.ndjson");
-  const manifest = JSON.stringify({ type: "manifest",value: { format: "ai-app-jumpstart-visible-data-v5",mode: "application" } })+"\n";
-  const counts = { profile: 0,records: 0,conversations: 0,projections: 0,artifacts: 0,uploads: 0,uploadUsage: 0,reservations: 0,corrections: 0,usage: 0 };
+  const manifest = JSON.stringify({ type: "manifest",value: { format: `ai-app-jumpstart-visible-data-v${version}`,mode: "application" } })+"\n";
+  const counts = { ...(version === 6 ? { runs: 0 } : {}),profile: 0,records: 0,conversations: 0,projections: 0,artifacts: 0,uploads: 0,uploadUsage: 0,reservations: 0,corrections: 0,usage: 0 };
   try {
     await writeFile(path,manifest+JSON.stringify({ type: "end",value: { counts,contentSha256: createHash("sha256").update(manifest).digest("hex") } })+"\n");
-    expect(await run(["export","verify",path],{})).toMatchObject({ format: "ai-app-jumpstart-visible-data-v5",counts });
-    await writeFile(path,manifest+JSON.stringify({ type: "run",value: {} })+"\n");
+    expect(await run(["export","verify",path],{})).toMatchObject({ format: `ai-app-jumpstart-visible-data-v${version}`,counts });
+    await writeFile(path,manifest+JSON.stringify({ type: "account_preferences",value: {} })+"\n");
     await expect(run(["export","verify",path],{})).rejects.toThrow("unexpected type");
   } finally { await rm(directory,{ recursive: true,force: true }); }
 });

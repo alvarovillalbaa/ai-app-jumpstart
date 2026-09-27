@@ -12,6 +12,7 @@ it("denies table reads and forged inserts to anonymous and authenticated databas
     const write = await client.from("app_records").insert({ id: crypto.randomUUID(), tenant: "victim", subject: "victim", title: "forged", content: "" });
     expect(write.error?.code).toBe("42501");
     for (const [table, row] of [
+      ["app_user_preferences",{ tenant: "victim",subject: "victim",theme: "dark",sound_enabled: true,sound_volume: 1,revision: 1,updated_at: new Date().toISOString() }],
       ["app_budget_accounts", { tenant: "victim", subject: "victim" }],
       ["app_budget_reservations", { operation_id: crypto.randomUUID(), tenant: "victim", subject: "victim", request_hash: "a".repeat(64), policy_id: "forged", estimate_micros: 1, day: 1, created_at: 86400000, status: "reserved" }],
       ["app_budget_corrections", { correction_id: crypto.randomUUID(),operation_id: crypto.randomUUID(),tenant: "victim",subject: "victim",
@@ -29,6 +30,7 @@ it("denies table reads and forged inserts to anonymous and authenticated databas
       expect((await client.from(table).insert(row)).error?.code).toBe("42501");
       if (table === "app_artifacts") expect((await client.from(table).update({ content: "forged" }).eq("id",row.id)).error?.code).toBe("42501");
     }
+    for (const command of ["get","update"]) expect((await client.rpc("app_preferences_command",{ command,input: { tenant: "victim",subject: "victim",patch: { revision: 0,theme: "dark" } } })).error?.code).toBe("42501");
     for (const command of ["reserve", "settle", "snapshot"]) {
       const result = await client.rpc("app_budget_command", { command, input: { tenant: "victim", subject: "victim", now: Date.now() } });
       expect(result.error?.code).toBe("42501");

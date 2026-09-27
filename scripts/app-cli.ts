@@ -2,6 +2,7 @@
 import { readFile,stat } from "node:fs/promises";
 import { basename } from "node:path";
 import { historyOptions, historyPatch, operationId } from "../lib/agent-access/contract";
+import { preferences,preferencePatch } from "../lib/preferences/contract";
 import { projectionOptions } from "../lib/agent-access/projection-contract";
 import { sourceEventOptions } from "../lib/agent-access/source-events";
 import { reconcileInput } from "../lib/agent-access/reconcile";
@@ -29,7 +30,7 @@ export async function run(args: string[], env: Record<string, string | undefined
     conversations: "npm run app -- conversations <list [--archived] [--limit N] [--cursor CURSOR] | get OPERATION_UUID | events OPERATION_UUID [AFTER_INGESTION_INDEX] | runs OPERATION_UUID [AFTER_INGESTION_INDEX] | source-events OPERATION_UUID [START_SOURCE_INDEX] | reconcile OPERATION_UUID [START_SOURCE_INDEX] | update OPERATION_UUID JSON_FILE>",
     artifacts: "npm run app -- artifacts <list [--limit N] [--cursor CURSOR] | get ARTIFACT_UUID | delete ARTIFACT_UUID>",
     uploads: "npm run app -- uploads <list | get UPLOAD_UUID | put FILE | scan UPLOAD_UUID | link UPLOAD_UUID | download UPLOAD_UUID OUTPUT_FILE | download-link LINK_JSON_FILE OUTPUT_FILE | delete UPLOAD_UUID> (scan/download/link require uploads:download and an enabled scan-on-read policy)",
-    account: "npm run app -- account profile (selected fields; current registered-user token required)",
+    account: "npm run app -- account <profile | preferences | preferences update JSON_FILE> (current registered-user token required)",
     usage: "npm run app -- usage [reservations|corrections [--limit N] [--cursor CURSOR]] (verified user token required)",
     export: "npm run app -- export <records OUTPUT.ndjson | application OUTPUT.ndjson | source-events OPERATION_UUID OUTPUT.ndjson | verify FILE.ndjson> (private, no-clobber; verification works offline)",
     environment: "APP_API_URL (default http://localhost:3000), APP_API_TOKEN (server-issued credential)",
@@ -101,6 +102,12 @@ export async function run(args: string[], env: Record<string, string | undefined
     return exportApplication("source-events",rest[2],path => call(path),checked.data);
   }
   if (command === "account" && rest.length === 1 && rest[0] === "profile") return call("/api/v1/account/profile");
+  if (command === "account" && rest.length === 1 && rest[0] === "preferences") return preferences.parse(await call("/api/v1/account/preferences"));
+  if (command === "account" && rest.length === 3 && rest[0] === "preferences" && rest[1] === "update") {
+    const info = await stat(rest[2]);if (!info.isFile() || info.size > 4096) throw new Error("Use a preference JSON file of at most 4 KiB.");
+    const patch = preferencePatch.parse(JSON.parse(await readFile(rest[2],"utf8")));
+    return preferences.parse(await call("/api/v1/account/preferences","PATCH",JSON.stringify(patch)));
+  }
   if (command === "usage" && (rest[0] === "reservations" || rest[0] === "corrections")) {
     const input: Record<string,unknown> = {},options = rest.slice(1);
     for (let i=0;i<options.length;i++) {

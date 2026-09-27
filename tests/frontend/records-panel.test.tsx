@@ -56,3 +56,14 @@ it("ignores a late authorization failure from a disconnected account", async () 
   expect(screen.getByText("New account record")).toBeInTheDocument();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
+
+it("does not dispatch a request when credential lookup completes after unmount",async () => {
+  let provide!: (token: string) => void;
+  const credential = vi.fn(() => new Promise<string>(resolve => { provide = resolve; })),fetcher = vi.fn();
+  vi.stubGlobal("fetch",fetcher);
+  const view = render(<RecordsPanel credential={credential} />);
+  fireEvent.click(screen.getByRole("button",{ name: "Load records" }));
+  expect(credential).toHaveBeenCalledOnce();view.unmount();
+  await act(async () => provide("a-new-account-token"));
+  expect(fetcher).not.toHaveBeenCalled();
+});

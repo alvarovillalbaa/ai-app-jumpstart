@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { auditAccessibility } from "../helpers/accessibility";
+import { run as runCli } from "../../scripts/app-cli";
+import { preferences,defaultPreferences } from "../../lib/preferences/contract";
 
 const auth = process.env.TEST_AUTH_ORIGIN!;
 const adminHeaders = { authorization: `Bearer ${process.env.TEST_AUTH_ADMIN_KEY!}`, apikey: process.env.SUPABASE_PUBLISHABLE_KEY! };
@@ -199,4 +201,70 @@ test("account entry and authenticated workspace pass automated accessibility rul
   await page.goto("/account/password");
   await expect(page.getByRole("heading", { name: "Update password" })).toBeVisible();
   await auditAccessibility(page, "password update");
+});
+
+test("preferences hydrate without writes, sync across devices and restore device settings after logout",async ({ page,browser,request }) => {
+  const alice = `preferences-alice-${randomUUID()}@example.test`,bob = `preferences-bob-${randomUUID()}@example.test`;
+  await confirmedUser(request,alice);await confirmedUser(request,bob);
+  const token = await tokenFor(request,alice),headers = { authorization: `Bearer ${token}` };
+  const initial = await request.patch("/api/v1/account/preferences",{ headers,data: { revision: 0,theme: "dark",soundVolume: 0.25 } });
+  expect(initial.status()).toBe(200);
+  await page.addInitScript(() => {
+    Reflect.set(window,"__soundContexts",0);
+    const Original = window.AudioContext;
+    if (Original) window.AudioContext = new Proxy(Original,{ construct(target,args) {
+      Reflect.set(window,"__soundContexts",Reflect.get(window,"__soundContexts")+1);return Reflect.construct(target,args);
+    } });
+  });
+  await page.goto("/records");
+  const theme = page.locator('select[aria-label="Theme"]:visible');
+  await expect(theme).toBeEnabled();await theme.selectOption("light");
+  const writes: string[] = [];
+  page.on("request",req => { if (new URL(req.url()).pathname === "/api/v1/account/preferences" && req.method() === "PATCH") writes.push(req.method()); });
+  await login(page,alice);
+  await expect(theme).toHaveValue("dark");expect(writes).toHaveLength(0);
+  await expect(page.getByLabel("Enable sounds")).not.toBeChecked();
+  await theme.selectOption("light");await expect(theme).toBeEnabled();
+  await page.getByLabel("Enable sounds").click();await expect(page.getByLabel("Enable sounds")).toBeChecked();await expect(page.getByLabel("Enable sounds")).toBeEnabled();
+  await page.getByLabel("Sound volume").press("End");
+  for (let step = 0;step < 5;step++) await page.getByLabel("Sound volume").press("ArrowLeft");
+  expect(writes).toHaveLength(2);
+  await page.getByRole("button",{ name: "Save volume" }).click();
+  await expect(page.getByRole("button",{ name: "Test sound" })).toBeEnabled();
+  await page.reload();
+  await expect(page.getByLabel("Enable sounds")).toBeChecked();
+  await expect(page.getByLabel("Sound volume")).toHaveValue("0.75");
+  expect(await page.evaluate(() => Reflect.get(window,"__soundContexts"))).toBe(0);
+  await page.getByRole("button",{ name: "Load records",exact: true }).click();
+  await page.getByLabel("Title",{ exact: true }).fill("Confirmed sound note");
+  await page.getByRole("button",{ name: "Create record",exact: true }).click();
+  await expect(page.getByRole("heading",{ name: "Confirmed sound note",exact: true })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => Reflect.get(window,"__soundContexts"))).toBe(1);
+  const saved = preferences.parse(await (await request.get("/api/v1/account/preferences",{ headers })).json());
+  expect(saved).toMatchObject({ revision: 4,theme: "light",soundEnabled: true,soundVolume: 0.75 });
+  expect(await runCli(["account","preferences"],{ APP_API_URL: process.env.APP_ORIGIN!,APP_API_TOKEN: token })).toEqual(saved);
+  const client = new Client({ name: "preference-parity",version: "1" });
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL("/api/mcp",process.env.APP_ORIGIN!),{ requestInit: { headers } }));
+    const result = await client.callTool({ name: "account_preferences",arguments: {} });expect(result.isError).not.toBe(true);
+    expect(JSON.parse((result.content as { text: string }[])[0].text)).toEqual(saved);
+  } finally { await client.close(); }
+  await auditAccessibility(page,"saved account preferences");
+  const second = await browser.newContext();
+  try {
+    const otherPage = await second.newPage();await login(otherPage,alice);
+    const otherTheme = otherPage.locator('select[aria-label="Theme"]:visible');
+    await expect(otherTheme).toHaveValue("light");await expect(otherPage.getByLabel("Enable sounds")).toBeChecked();
+    await expect(otherPage.getByLabel("Sound volume")).toHaveValue("0.75");
+    await otherTheme.selectOption("dark");await expect(otherTheme).toBeEnabled();
+    await page.getByRole("button",{ name: "Refresh preferences" }).click();await expect(theme).toHaveValue("dark");
+    await otherPage.getByRole("button",{ name: "Sign out",exact: true }).click();await atPath(otherPage,"/login");
+    await login(otherPage,bob);
+    await expect(otherTheme).toHaveValue("system");await expect(otherPage.getByLabel("Enable sounds")).not.toBeChecked();
+    const bobToken = await tokenFor(request,bob);
+    expect(await (await request.get("/api/v1/account/preferences",{ headers: { authorization: `Bearer ${bobToken}` } })).json()).toEqual(defaultPreferences);
+  } finally { await second.close(); }
+  await page.getByRole("button",{ name: "Sign out",exact: true }).click();await atPath(page,"/login");
+  await page.goto("/records");await expect(theme).toHaveValue("light");
+  expect((await request.patch("/api/v1/account/preferences",{ headers,data: { revision: 4,theme: "system" } })).status()).toBe(409);
 });

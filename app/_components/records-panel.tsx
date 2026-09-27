@@ -1,8 +1,9 @@
 "use client";
 import Link from "next/link";
-import { useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { AppRecord, RecordPage } from "@/lib/data/contract";
 import { storedStructuredDraft } from "@/lib/agent-access/structured-record";
+import { useSoundFeedback } from "./preferences-provider";
 
 /** A small reference UI for any backend implementing the versioned record API. */
 const subscribe = () => () => {};
@@ -20,10 +21,16 @@ export function RecordsPanel({ credential, headingLevel = 1 }: { credential?: ()
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const generation = useRef(0);
+  const captureFeedback = useSoundFeedback();
+  useEffect(() => {
+    const retire = () => { generation.current++; };
+    return retire;
+  },[]);
 
   async function api(path: string, method = "GET", body?: unknown) {
     const active = generation.current;
     const accessToken = credential ? await credential() : token;
+    if (active !== generation.current) throw new Error("Your account changed. Connect again.");
     const response = await fetch(`/api/v1/records${path}`, {
       method, headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
       body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(15_000),
@@ -63,9 +70,10 @@ export function RecordsPanel({ credential, headingLevel = 1 }: { credential?: ()
     </form> : <>
       <div className="flex gap-3"><button className={buttonClass} disabled={busy} onClick={() => void action(load)}>Refresh</button><button className={buttonClass} onClick={disconnect}>Disconnect</button></div>
       <form className="space-y-3" onSubmit={event => {
-        event.preventDefault(); void action(async current => {
+        event.preventDefault(); const feedback = captureFeedback();void action(async current => {
           await api("", "POST", { title, content });
           if (!current()) return;
+          feedback();
           setTitle(""); setContent(""); await load(current);
         });
       }}>
