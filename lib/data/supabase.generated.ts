@@ -10,6 +10,38 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      app_artifact_versions: {
+        Row: {
+          artifact_id: string
+          content: string
+          revision: number
+          title: string
+          updated_at: number
+        }
+        Insert: {
+          artifact_id: string
+          content: string
+          revision: number
+          title: string
+          updated_at: number
+        }
+        Update: {
+          artifact_id?: string
+          content?: string
+          revision?: number
+          title?: string
+          updated_at?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "app_artifact_versions_artifact_id_fkey"
+            columns: ["artifact_id"]
+            isOneToOne: false
+            referencedRelation: "app_artifacts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       app_artifacts: {
         Row: {
           call_id: string
@@ -19,8 +51,10 @@ export type Database = {
           id: string
           input_hash: string
           operation_id: string
+          revision: number
           session_id: string
           title: string
+          updated_at: number
         }
         Insert: {
           call_id: string
@@ -30,8 +64,10 @@ export type Database = {
           id: string
           input_hash: string
           operation_id: string
+          revision?: number
           session_id: string
           title: string
+          updated_at?: number
         }
         Update: {
           call_id?: string
@@ -41,8 +77,10 @@ export type Database = {
           id?: string
           input_hash?: string
           operation_id?: string
+          revision?: number
           session_id?: string
           title?: string
+          updated_at?: number
         }
         Relationships: [
           {
@@ -579,6 +617,18 @@ export type Database = {
           p_subject: string
           p_tenant: string
           p_title: string
+        }
+        Returns: Json
+      }
+      app_update_artifact: {
+        Args: {
+          p_content: string
+          p_id: string
+          p_revision: number
+          p_subject: string
+          p_tenant: string
+          p_title: string
+          p_updated: number
         }
         Returns: Json
       }

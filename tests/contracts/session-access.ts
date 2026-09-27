@@ -9,6 +9,64 @@ export function sessionAccessContract(name: string, factory: () => Promise<Sessi
     let store: SessionAccessStore, owner: AccessOwner, strangers: AccessOwner[], input: Reservation;
     let sessionNamespace: string;
     const sid = (name: string) => `${name}-${sessionNamespace}`;
+    it("appends atomic owner versions while replay returns the exact approved creation",async () => {
+      await store.reserve(input);const session = sid("version-session");await store.bind(owner,input.operationId,session);
+      const draft = { title: "Approved original",content: "Original text 📝" };
+      const saved = await store.saveArtifact(owner,input.operationId,session,"version-call",draft);
+      if (saved.status !== "created") throw new Error("Missing fixture artifact");
+      const original = saved.artifact,key = original.id;
+      expect(original).toMatchObject({ revision: 1,updatedAt: original.createdAt });
+      for (const stranger of strangers) {
+        expect(await store.updateArtifact(stranger,key,{ revision: 1,title: "Attack",content: "Foreign" })).toEqual({ status: "unavailable" });
+        expect(await store.listArtifactVersions(stranger,key,{})).toBeNull();
+      }
+      const contenders = await Promise.all([1,2,3].map(n => store.updateArtifact(owner,key,{ revision: 1,title: `Edit ${n}`,content: `Owner text ${n}` })));
+      expect(contenders.filter(result => result.status === "updated")).toHaveLength(1);
+      expect(contenders.filter(result => result.status === "conflict")).toHaveLength(2);
+      const current = await store.getArtifact(owner,key);
+      expect(current).toMatchObject({ id: key,revision: 2,createdAt: original.createdAt });
+      expect(await store.saveArtifact(owner,input.operationId,session,"version-call",draft)).toEqual({ status: "existing",artifact: original });
+      expect(await store.saveArtifact(owner,input.operationId,session,"version-call",{ ...draft,content: current!.content })).toEqual({ status: "conflict" });
+      const first = await store.listArtifactVersions(owner,key,{ limit: 1 });
+      expect(first).toEqual({ items: [current],nextBefore: 2 });
+      await store.updateArtifact(owner,key,{ revision: 2,title: "Later edit",content: "Later text" });
+      expect(await store.listArtifactVersions(owner,key,{ before: first!.nextBefore!,limit: 1 })).toEqual({ items: [original],nextBefore: null });
+      expect((await store.listArtifactVersions(owner,key,{}))!.items.map(item => item.revision)).toEqual([3,2,1]);
+      await store.revoke(owner,input.id);
+      expect((await store.updateArtifact(owner,key,{ revision: 3,title: "After revoke",content: "Owner retains their artifact" })).status).toBe("updated");
+      expect(await store.deleteArtifact(owner,key)).toBe(true);
+      expect(await store.listArtifactVersions(owner,key,{})).toBeNull();
+      expect(await store.updateArtifact(owner,key,{ revision: 4,...draft })).toEqual({ status: "unavailable" });
+    });
+    it("bounds retained history at 100 versions without mutating the creation receipt",async () => {
+      await store.reserve(input);const session = sid("version-limit-session");await store.bind(owner,input.operationId,session);
+      const draft = { title: "Bounded note",content: "Approved" };
+      const saved = await store.saveArtifact(owner,input.operationId,session,"limit-call",draft);
+      if (saved.status !== "created") throw new Error("Missing fixture artifact");
+      for (let revision=1;revision<100;revision++) expect((await store.updateArtifact(owner,saved.artifact.id,{ revision,...draft,content: `Version ${revision+1}` })).status).toBe("updated");
+      expect(await store.updateArtifact(owner,saved.artifact.id,{ revision: 100,...draft })).toEqual({ status: "limit" });
+      expect(await store.updateArtifact(owner,saved.artifact.id,{ revision: 99,...draft })).toEqual({ status: "conflict" });
+      expect(await store.saveArtifact(owner,input.operationId,session,"limit-call",draft)).toEqual({ status: "existing",artifact: saved.artifact });
+      const first = await store.listArtifactVersions(owner,saved.artifact.id,{ limit: 50 });
+      const second = await store.listArtifactVersions(owner,saved.artifact.id,{ before: first!.nextBefore!,limit: 50 });
+      expect([...first!.items,...second!.items].map(item => item.revision)).toEqual(Array.from({ length: 100 },(_,n) => 100-n));
+      expect(second!.nextBefore).toBeNull();
+      expect(await store.deleteArtifact(owner,saved.artifact.id)).toBe(true);
+      expect(await store.listArtifactVersions(owner,saved.artifact.id,{})).toBeNull();
+    });
+    it("cannot resurrect an artifact when deletion races an owner edit",async () => {
+      await store.reserve(input);const session = sid("version-delete-session");await store.bind(owner,input.operationId,session);
+      const draft = { title: "Race note",content: "Approved" };
+      const saved = await store.saveArtifact(owner,input.operationId,session,"delete-race-call",draft);
+      if (saved.status !== "created") throw new Error("Missing fixture artifact");
+      const [edit,deleted] = await Promise.all([
+        store.updateArtifact(owner,saved.artifact.id,{ revision: 1,...draft,content: "Concurrent edit" }),store.deleteArtifact(owner,saved.artifact.id),
+      ]);
+      expect(["updated","unavailable"]).toContain(edit.status);expect(deleted).toBe(true);
+      expect(await store.getArtifact(owner,saved.artifact.id)).toBeNull();
+      expect(await store.listArtifactVersions(owner,saved.artifact.id,{})).toBeNull();
+      expect(await store.saveArtifact(owner,input.operationId,session,"delete-race-call",draft)).toEqual({ status: "unavailable" });
+    });
     it("materializes run boundaries atomically, verifies source order and retains uncertain/late attempts",async () => {
       await store.reserve(input);const session = sid("run-session");await store.bind(owner,input.operationId,session);
       const event = (n: number,payload: ProjectionEntry["payload"],turnId = "run-one"): ProjectionEntry => ({ schemaVersion: 1,eventId: `evt_${n.toString(16).toUpperCase().padStart(26,"0")}`,

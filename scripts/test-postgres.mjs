@@ -59,7 +59,7 @@ async function rehearseUpgrade() {
   const recordId = randomUUID();
   const conversationId = randomUUID();
   const operationId = randomUUID();
-  const uploadId = randomUUID(),deletedUploadId = randomUUID();
+  const uploadId = randomUUID(),deletedUploadId = randomUUID(),artifactId = randomUUID(),deletedArtifactId = randomUUID();
   const eventId = `evt_${"0".repeat(26)}`;
   const event = JSON.stringify({
     schemaVersion: 1, eventId, at: "2026-09-24T00:00:00.000Z", turnId: "upgrade-turn", sequence: 0,
@@ -83,6 +83,9 @@ async function rehearseUpgrade() {
     await probe.query(`INSERT INTO app_conversations(id,tenant,subject,operation_id,request_hash,session_id,status,title,created_at)
       VALUES($1,$2,$3,$4,$5,$6,'active',$7,$8)`,
       [conversationId, "upgrade-tenant", "upgrade-owner", operationId, "a".repeat(64), "upgrade-session", "Before upgrade", 1]);
+    await probe.query(`INSERT INTO app_artifacts(id,operation_id,session_id,call_id,input_hash,title,content,created_at,deleted_at)
+      VALUES($1,$3,'upgrade-session','retained',$4,'Before upgrade','Retained approved text',10,NULL),
+        ($2,$3,'upgrade-session','deleted',$4,'Deleted artifact',' ',11,12)`,[artifactId,deletedArtifactId,operationId,"a".repeat(64)]);
     await probe.query("INSERT INTO app_conversation_events(operation_id,event_id,payload) VALUES($1,$2,$3)", [operationId, eventId, event]);
     const runEvent = JSON.stringify({ schemaVersion: 1,eventId: `evt_${"1".repeat(26)}`,at: "2026-09-24T00:00:01.000Z",
       turnId: "upgrade-turn",sequence: 0,payload: { kind: "run",state: "completed" } });
@@ -104,6 +107,9 @@ async function rehearseUpgrade() {
     await run(["scripts/migrate.ts"], 0, upgradeEnv);
     await run(["scripts/migrate.ts", "--dry-run"], 0, upgradeEnv);
     assert.equal((await probe.query("SELECT count(*)::int AS count FROM app_migrations")).rows[0].count, names.length);
+    assert.deepEqual((await probe.query("SELECT revision,title,content,updated_at FROM app_artifact_versions WHERE artifact_id=$1",[artifactId])).rows,
+      [{ revision: 1,title: "Before upgrade",content: "Retained approved text",updated_at: "10" }]);
+    assert.equal((await probe.query("SELECT count(*)::int AS count FROM app_artifact_versions WHERE artifact_id=$1",[deletedArtifactId])).rows[0].count,0);
     assert.deepEqual((await probe.query("SELECT title,content,revision FROM app_records WHERE id=$1", [recordId])).rows[0],
       { title: "Before upgrade", content: "Keep this private record", revision: 1 });
     assert.deepEqual((await probe.query("SELECT tenant,subject,status,projection_checkpoint FROM app_conversations WHERE operation_id=$1", [operationId])).rows[0],
@@ -116,6 +122,11 @@ async function rehearseUpgrade() {
     assert.deepEqual(runCache.summary.models,[],"Backfill invented model information");
     if (withSupabase) await probe.query("SET ROLE service_role");
     try {
+      assert.equal((await probe.query("SELECT app_update_artifact($1,$2,$3,1,$4,$5,20) AS result",
+        ["upgrade-tenant","upgrade-owner",artifactId,"Edited after upgrade","New version"])).rows[0].result.status,"updated");
+      assert.equal((await probe.query("SELECT count(*)::int AS count FROM app_artifact_versions WHERE artifact_id=$1",[artifactId])).rows[0].count,2);
+      assert.equal((await probe.query("SELECT app_delete_artifact($1,$2,$3,30) AS result",["upgrade-tenant","upgrade-owner",artifactId])).rows[0].result,true);
+      assert.equal((await probe.query("SELECT count(*)::int AS count FROM app_artifact_versions WHERE artifact_id=$1",[artifactId])).rows[0].count,0);
       const owner = { tenant: "upgrade-tenant",subject: "upgrade-owner",id: uploadId };
       const scan = async (status,checkedAt,reason) => (await probe.query("SELECT app_upload_scan_command('record',$1) AS result",[
         { ...owner,decision: { status,sha256: "a".repeat(64),checkedAt,policyVersion: 1,...(reason ? { reason } : {}) } },

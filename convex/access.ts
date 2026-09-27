@@ -5,7 +5,7 @@ import type { ProjectionEntry } from "../lib/agent-access/projection-contract";
 import { accessOwner, reservation, operationId, sessionId, bodyHash, type AccessOwner } from "../lib/agent-access/contract";
 import { conversation, conversationTitle, conversationSummary, historyOptions, historyPatch, pageOfHistory } from "../lib/agent-access/contract";
 import { projectionEntry, projectionOptions, projectionSourceIndex, pageOfProjections } from "../lib/agent-access/projection-contract";
-import { artifactInput, artifactCallId, artifactOptions, artifact, pageOfArtifacts } from "../lib/agent-access/artifact-contract";
+import { artifactPatch, artifactVersionOptions, pageOfArtifactVersions, artifactInput, artifactCallId, artifactOptions, artifact, pageOfArtifacts } from "../lib/agent-access/artifact-contract";
 
 const ownerFields = { tenant: v.string(), subject: v.string() };
 async function captureRun(ctx: MutationCtx,operation: string,entry: ProjectionEntry,ordinal: number,source?: number) {
@@ -46,9 +46,9 @@ async function ownedOperation(ctx: QueryCtx, owner: AccessOwner, id: string) {
   const row = await ctx.db.query("conversations").withIndex("by_operation", q => q.eq("operationId", operationId.parse(id))).unique();
   return row && sameOwner(row, owner) ? row : null;
 }
-const publicArtifact = (row: { id: string;operationId: string;sessionId: string;callId: string;title: string;content: string;createdAt: number }) =>
+const publicArtifact = (row: { id: string;operationId: string;sessionId: string;callId: string;title: string;content: string;createdAt: number;revision?: number;updatedAt?: number }) =>
   artifact.parse({ id: row.id,operationId: row.operationId,sourceSessionId: row.sessionId,sourceCallId: row.callId,
-    title: row.title,content: row.content,mediaType: "text/plain",createdAt: row.createdAt });
+    title: row.title,content: row.content,mediaType: "text/plain",createdAt: row.createdAt,revision: row.revision ?? 1,updatedAt: row.updatedAt ?? row.createdAt });
 export const saveArtifact = internalMutation({
   args: { ...ownerFields,operationId: v.string(),sessionId: v.string(),callId: v.string(),input: v.object({ title: v.string(),content: v.string() }) },
   handler: async (ctx,args) => {
@@ -57,10 +57,18 @@ export const saveArtifact = internalMutation({
     const bytes = new TextEncoder().encode(JSON.stringify(data)),digest = await crypto.subtle.digest("SHA-256",bytes);
     const hash = Array.from(new Uint8Array(digest),byte => byte.toString(16).padStart(2,"0")).join("");
     const existing = await ctx.db.query("artifacts").withIndex("by_operation_call",q => q.eq("operationId",args.operationId).eq("callId",call)).unique();
-    if (existing) return existing.deletedAt !== undefined ? { status: "unavailable" as const } : existing.inputHash !== hash ? { status: "conflict" as const } : { status: "existing" as const,artifact: publicArtifact(existing) };
+    if (existing) {
+      if (existing.deletedAt !== undefined) return { status: "unavailable" as const };
+      if (existing.inputHash !== hash) return { status: "conflict" as const };
+      const original = await ctx.db.query("artifactVersions").withIndex("by_artifact_revision",q => q.eq("artifactId",existing.id).eq("revision",1)).unique();
+      if (!original && (existing.revision ?? 1) !== 1) throw new Error("Artifact creation version is unavailable.");
+      return { status: "existing" as const,artifact: publicArtifact({ ...existing,...(original ?? {}) }) };
+    }
     const saved = { id: crypto.randomUUID(),tenant: row.tenant,subject: row.subject,operationId: row.operationId,sessionId: sid,callId: call,
-      inputHash: hash,title: data.title,content: data.content,createdAt: Date.now() };
+      inputHash: hash,title: data.title,content: data.content,createdAt: Date.now(),revision: 1,updatedAt: Date.now() };
+    saved.updatedAt = saved.createdAt;
     await ctx.db.insert("artifacts",saved);
+    await ctx.db.insert("artifactVersions",{ artifactId: saved.id,revision: 1,title: saved.title,content: saved.content,updatedAt: saved.createdAt });
     return { status: "created" as const,artifact: publicArtifact(saved) };
   },
 });
@@ -72,12 +80,45 @@ export const getArtifact = internalQuery({
     return row && sameOwner(row,owner) && row.deletedAt === undefined ? publicArtifact(row) : null;
   },
 });
+export const updateArtifact = internalMutation({
+  args: { ...ownerFields,id: v.string(),patch: v.object({ revision: v.number(),title: v.string(),content: v.string() }) },
+  handler: async (ctx,args) => {
+    const owner = accessOwner.parse({ tenant: args.tenant,subject: args.subject }),p = artifactPatch.parse(args.patch);
+    const row = await ctx.db.query("artifacts").withIndex("by_external_id",q => q.eq("id",operationId.parse(args.id))).unique();
+    if (!row || !sameOwner(row,owner) || row.deletedAt !== undefined) return { status: "unavailable" as const };
+    const revision = row.revision ?? 1;
+    if (p.revision !== revision) return { status: "conflict" as const };
+    if (revision >= 100) return { status: "limit" as const };
+    // Older live documents become version 1 on their first edit. Tombstones
+    // never reach this branch and queries can read legacy version 1 directly.
+    const original = await ctx.db.query("artifactVersions").withIndex("by_artifact_revision",q => q.eq("artifactId",row.id).eq("revision",1)).unique();
+    if (!original) await ctx.db.insert("artifactVersions",{ artifactId: row.id,revision: 1,title: row.title,content: row.content,updatedAt: row.createdAt });
+    const changes = { title: p.title,content: p.content,revision: revision+1,updatedAt: Date.now() };
+    await ctx.db.patch(row._id,changes);
+    await ctx.db.insert("artifactVersions",{ artifactId: row.id,...changes });
+    return { status: "updated" as const,artifact: publicArtifact({ ...row,...changes }) };
+  },
+});
+export const listArtifactVersions = internalQuery({
+  args: { ...ownerFields,id: v.string(),options: v.object({ limit: v.number(),before: v.optional(v.number()) }) },
+  handler: async (ctx,args) => {
+    const owner = accessOwner.parse({ tenant: args.tenant,subject: args.subject }),q = artifactVersionOptions.parse(args.options);
+    const row = await ctx.db.query("artifacts").withIndex("by_external_id",index => index.eq("id",operationId.parse(args.id))).unique();
+    if (!row || !sameOwner(row,owner) || row.deletedAt !== undefined) return null;
+    const versions = await ctx.db.query("artifactVersions").withIndex("by_artifact_revision",index => index.eq("artifactId",row.id).lt("revision",q.before ?? 101)).order("desc").take(q.limit+1);
+    const values = versions.map(version => publicArtifact({ ...row,...version }));
+    if (!versions.length && (row.revision ?? 1) === 1 && (q.before ?? 101) > 1) values.push(publicArtifact(row));
+    return pageOfArtifactVersions(values,q.limit);
+  },
+});
 export const deleteArtifact = internalMutation({
   args: { ...ownerFields,id: v.string() },
   handler: async (ctx,args) => {
     const owner = accessOwner.parse({ tenant: args.tenant,subject: args.subject });
     const row = await ctx.db.query("artifacts").withIndex("by_external_id",q => q.eq("id",operationId.parse(args.id))).unique();
     if (!row || !sameOwner(row,owner) || row.deletedAt !== undefined) return false;
+    const versions = await ctx.db.query("artifactVersions").withIndex("by_artifact_revision",q => q.eq("artifactId",row.id)).take(101);
+    for (const version of versions) await ctx.db.delete(version._id);
     await ctx.db.patch(row._id,{ title: "Deleted artifact",content: " ",inputHash: "0".repeat(64),deletedAt: Date.now() });
     return true;
   },

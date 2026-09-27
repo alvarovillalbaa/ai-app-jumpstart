@@ -8,7 +8,7 @@ Enabled account chat includes private conversation history at `/conversations`, 
 
 The opt-in [structured output reference](docs/structured-output.md) at `/structured` uses the same ownership and budget path to generate editable, schema-validated fields. It can reload the generated result by operation ID or save reviewed fields as a versioned private record that reopens for editing.
 
-The [approved artifact reference](docs/approved-artifacts.md) proposes a private plain-text artifact in chat, shows its exact input for approval, saves it once, and lists owned results at `/artifacts`. Owners can download or erase the saved copy; owner-scoped reads and deletion also work through REST, CLI and MCP.
+The [approved artifact reference](docs/approved-artifacts.md) proposes a private plain-text artifact in chat, shows its exact input for approval, saves it once, and lists owned results at `/artifacts`. Owners can edit with revision conflicts, inspect immutable version history, export every retained version, download or erase the saved copy; owner-scoped reads and deletion also work through REST, CLI and MCP.
 
 The [AI usage view](docs/usage-budgets.md) at `/usage` shows the account's current UTC-day charges, reservations and limit. The same owner-scoped snapshot is available through REST, CLI and MCP; it is an application budget view rather than a provider invoice. Operators can use the read-only [outstanding-start inventory](docs/operations.md) and an audited [settled-cost correction](docs/operations.md#correct-an-already-settled-cost) from a source checkout with backend credentials.
 

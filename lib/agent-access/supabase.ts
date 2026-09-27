@@ -4,7 +4,7 @@ import { pageOfRuns,runOptions,runRepairOptions } from "./run-contract";
 import { accessOwner, reservation, operationId, sessionId, bodyHash, fromAccessRow, type AccessOwner, type Reservation, type SessionAccessStore } from "./contract";
 import { conversationTitle, historyOptions, historyPatch, pageOfHistory, summaryFromRow } from "./contract";
 import { projectionEntry, projectionOptions, projectionOutcome, projectionSourceIndex, pageOfProjections } from "./projection-contract";
-import { artifactInput, artifactCallId, artifactOptions, artifactSaveResult, artifactFromRow, pageOfArtifacts } from "./artifact-contract";
+import { artifactPatch, artifactVersionOptions, artifactUpdateResult, pageOfArtifactVersions, artifactInput, artifactCallId, artifactOptions, artifactSaveResult, artifactFromRow, pageOfArtifacts } from "./artifact-contract";
 import { createHash, randomUUID } from "node:crypto";
 import type { Database } from "../data/supabase.generated";
 
@@ -45,6 +45,23 @@ export function supabaseAccessStore(url: string, secret: string): SessionAccessS
       const { data,error } = await client.from("app_artifacts").select("*,app_conversations!inner(tenant,subject)").eq("app_conversations.tenant",o.tenant).eq("app_conversations.subject",o.subject).eq("id",operationId.parse(id)).is("deleted_at",null).maybeSingle();
       if (error) throw error;
       return data ? artifactFromRow(data) : null;
+    },
+    async updateArtifact(owner,id,input) {
+      const o = accessOwner.parse(owner),p = artifactPatch.parse(input);
+      const { data,error } = await client.rpc("app_update_artifact",{ p_tenant: o.tenant,p_subject: o.subject,p_id: operationId.parse(id),
+        p_revision: p.revision,p_title: p.title,p_content: p.content,p_updated: Date.now() });
+      if (error) throw error;
+      const response = z.object({ status: z.enum(["updated","conflict","limit","unavailable"]),artifact: z.unknown().optional() }).parse(data);
+      return artifactUpdateResult.parse({ status: response.status,...(response.artifact !== undefined ? { artifact: artifactFromRow(response.artifact) } : {}) });
+    },
+    async listArtifactVersions(owner,id,options) {
+      const o = accessOwner.parse(owner),key = operationId.parse(id),q = artifactVersionOptions.parse(options);
+      if (!await store.getArtifact(o,key)) return null;
+      const { data,error } = await client.from("app_artifact_versions").select("*,app_artifacts!inner(*,app_conversations!inner(tenant,subject))")
+        .eq("artifact_id",key).eq("app_artifacts.app_conversations.tenant",o.tenant).eq("app_artifacts.app_conversations.subject",o.subject)
+        .is("app_artifacts.deleted_at",null).lt("revision",q.before ?? 101).order("revision",{ ascending: false }).limit(q.limit+1);
+      if (error) throw error;
+      return pageOfArtifactVersions(data.map(row => artifactFromRow({ ...row.app_artifacts,...row })),q.limit);
     },
     async deleteArtifact(owner,id) {
       const o = accessOwner.parse(owner);

@@ -7,6 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { sqliteAccessStore } from "../../lib/agent-access/sqlite";
 import { SqliteRepository } from "../../lib/data/sqlite";
+import { artifactHandlers } from "../../lib/http/artifacts";
 import { conversationHandlers } from "../../lib/http/conversations";
 import { mcpHandler } from "../../lib/mcp";
 import { run } from "../../scripts/app-cli";
@@ -137,4 +138,31 @@ it("rejects owner/control-field injection and invalid CLI arguments without writ
   }
   expect(spy).not.toHaveBeenCalled();
   expect((await store.getDetails(owner,id))?.revision).toBe(1);
+});
+
+it("shares artifact version edits through REST, CLI and MCP while fencing keys and stale owners",async () => {
+  await store.bind(owner,id,"versions-session");
+  const draft = { title: "Original",content: "Approved original" };
+  const saved = await store.saveArtifact(owner,id,"versions-session","versions-call",draft);
+  if (saved.status !== "created") throw new Error("Fixture not created");
+  const artifactId = saved.artifact.id,api = artifactHandlers(async () => store);
+  const request: typeof fetch = async (url,init) => {
+    const req = new Request(url,init),path = new URL(String(url)).pathname;
+    if (path.endsWith("/versions")) return api.versions(req,artifactId);
+    return init?.method === "PATCH" ? api.update(req,artifactId) : api.get(req,artifactId);
+  };
+  const client = await mcp(alice),foreign = await mcp(bob),recordKey = await mcp(key);
+  expect(value(await client.callTool({ name: "artifacts_update",arguments: { id: artifactId,revision: 1,title: "MCP edit",content: "Version two" } }))).toMatchObject({ revision: 2,content: "Version two" });
+  expect((await foreign.callTool({ name: "artifacts_update",arguments: { id: artifactId,revision: 2,...draft } })).isError).toBe(true);
+  expect((await recordKey.listTools()).tools.map(tool => tool.name)).not.toContain("artifacts_update");
+  expect((await api.versions(new Request(`http://localhost:3000/api/v1/artifacts/${artifactId}/versions`,{ headers: { authorization: `Bearer ${key}` } }),artifactId)).status).toBe(401);
+  const directory = await mkdtemp(join(tmpdir(),"jumpstart-artifact-cli-"));
+  try {
+    const file = join(directory,"patch.json");await writeFile(file,JSON.stringify({ revision: 2,title: "CLI edit",content: "Version three" }));
+    expect(await run(["artifacts","update",artifactId,file],{ APP_API_TOKEN: alice },request)).toMatchObject({ revision: 3,content: "Version three" });
+    await expect(run(["artifacts","update",artifactId,file],{ APP_API_TOKEN: alice },request)).rejects.toThrow("HTTP 409");
+    expect(await run(["artifacts","versions",artifactId,"--limit","2"],{ APP_API_TOKEN: alice },request)).toEqual(value(await client.callTool({ name: "artifacts_versions",arguments: { id: artifactId,limit: 2 } })));
+    expect(await run(["artifacts","versions",artifactId,"--before","2"],{ APP_API_TOKEN: alice },request)).toEqual({ items: [saved.artifact],nextBefore: null });
+  } finally { await rm(directory,{ recursive: true,force: true }); }
+  expect(await store.saveArtifact(owner,id,"versions-session","versions-call",draft)).toEqual({ status: "existing",artifact: saved.artifact });
 });

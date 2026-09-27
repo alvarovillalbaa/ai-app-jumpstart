@@ -252,7 +252,7 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
     expect(aliceLines.some(line => line.type === "record" && line.value.id === exportRecordId)).toBe(true);
     expect(aliceLines.some(line => line.type === "conversation" && line.value.operationId === receipt.operationId)).toBe(true);
     expect(aliceLines.find(line => line.type === "account_preferences")?.value).toMatchObject({ schemaVersion: 1,soundEnabled: false });
-    expect(aliceLines[0].value.format).toBe("ai-app-jumpstart-visible-data-v7");
+    expect(aliceLines[0].value.format).toBe("ai-app-jumpstart-visible-data-v8");
     expect(aliceLines.find(line => line.type === "run" && line.value.operationId === receipt.operationId)?.value.run).toMatchObject({ turnId: capturedRuns.items[0].turnId,state: "completed",models: capturedRuns.items[0].models,boundaryCount: 2 });
     expect(aliceLines.some(line => line.type === "projection" && line.value.operationId === receipt.operationId)).toBe(true);
     expect(aliceLines.some(line => line.type === "upload" && line.value.id === exportUploadId && line.value.state === "quarantined")).toBe(true);
@@ -261,7 +261,7 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
     expect(aliceLines.filter(line => line.type === "budget_reservation").map(line => line.value)).toEqual(aliceLedger.items);
     expect(await readFile(aliceFile,"utf8")).not.toContain("Alice's quarantined bytes are not exportable.");
     expect(await runCli(["export","application",bobFile],{ ...env,APP_API_TOKEN: bob.token })).toMatchObject({
-      counts: { profile: 1,preferences: 1,records: 0,conversations: 0,projections: 0,runs: 0,artifacts: 0,uploads: 0,uploadUsage: 1,reservations: 0,corrections: 0,usage: 1 },
+      counts: { profile: 1,preferences: 1,records: 0,conversations: 0,projections: 0,runs: 0,artifacts: 0,artifactVersions: 0,uploads: 0,uploadUsage: 1,reservations: 0,corrections: 0,usage: 1 },
     });
     expect(await readFile(bobFile,"utf8")).not.toContain(exportRecordId);
     expect(await readFile(bobFile,"utf8")).not.toContain(receipt.operationId);
@@ -502,6 +502,9 @@ test("an approved tool saves one private artifact; denial saves none",async ({ p
   const env = { APP_API_URL: process.env.APP_ORIGIN!,APP_API_TOKEN: alice.token };
   expect(await runCli(["artifacts","get",artifact.id],env)).toEqual(artifact);
   expect(await runCli(["artifacts","list"],env)).toMatchObject({ items: [{ id: artifact.id }] });
+  expect((await request.patch(`/api/v1/artifacts/${artifact.id}`,{ headers: { authorization: `Bearer ${bob.token}` },data: { revision: 1,title: "Foreign",content: "Attack" } })).status()).toBe(404);
+  expect((await request.get(`/api/v1/artifacts/${artifact.id}/versions`,{ headers: { authorization: `Bearer ${bob.token}` } })).status()).toBe(404);
+  expect(await runCli(["artifacts","versions",artifact.id,"--limit","1"],env)).toEqual({ items: [artifact],nextBefore: null });
   const exported = await request.get(`/api/v1/artifacts/${artifact.id}/download`,{ headers: { authorization: `Bearer ${alice.token}` } });
   expect(exported.status()).toBe(200);
   expect(exported.headers()["content-type"]).toContain("text/plain");
@@ -522,12 +525,51 @@ test("an approved tool saves one private artifact; denial saves none",async ({ p
   await expect(page.getByRole("heading",{ name: "Fixture artifact" })).toBeVisible();
   await page.getByText("View text").click();
   await expect(page.getByText("Exact approved plain-text payload.")).toBeVisible();
+  await page.getByRole("button",{ name: "Edit artifact",exact: true }).click();
+  await page.getByLabel("Artifact title",{ exact: true }).fill("Edited fixture artifact");
+  await page.getByLabel("Artifact text",{ exact: true }).fill("Owner-authored second version.");
+  await auditAccessibility(page,"artifact version editor");
+  await page.getByRole("button",{ name: "Save version",exact: true }).click();
+  await expect(page.getByText("Saved version 2.",{ exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("heading",{ name: "Edited fixture artifact",exact: true })).toBeVisible();
+  await page.getByRole("button",{ name: "Version history",exact: true }).click();
+  await expect(page.getByText("Version 1 · Approved original · Fixture artifact",{ exact: true })).toBeVisible();
+  await auditAccessibility(page,"artifact version history");
+  const history = await runCli(["artifacts","versions",artifact.id],env);
+  expect(history).toMatchObject({ items: [{ revision: 2,content: "Owner-authored second version." },artifact],nextBefore: null });
+  expect((await request.patch(`/api/v1/artifacts/${artifact.id}`,{ headers: { authorization: `Bearer ${alice.token}` },data: { revision: 1,title: "Stale",content: "Lost edit" } })).status()).toBe(409);
+  const versionsClient = new Client({ name: "artifact-version-contract",version: "1" });
+  try {
+    await versionsClient.connect(new StreamableHTTPClientTransport(new URL("/api/mcp",env.APP_API_URL),{ requestInit: { headers: { authorization: `Bearer ${alice.token}` } } }));
+    const result = await versionsClient.callTool({ name: "artifacts_versions",arguments: { id: artifact.id } });
+    expect(result.isError).not.toBe(true);
+    expect(JSON.parse((result.content as { text: string }[])[0].text)).toEqual(history);
+  } finally { await versionsClient.close(); }
+  const versionDirectory = await mkdtemp(join(tmpdir(),"jumpstart-artifact-export-"));
+  try {
+    const file = join(versionDirectory,"versions.ndjson");
+    expect(await runCli(["export","application",file],env)).toMatchObject({ counts: { artifacts: 1,artifactVersions: 2 } });
+    const lines = (await readFile(file,"utf8")).trim().split("\n").map(line => JSON.parse(line));
+    expect(lines.filter(line => line.type === "artifact_version").map(line => line.value)).toEqual((history as { items: unknown[] }).items);
+    expect(await runCli(["export","verify",file],{})).toMatchObject({ counts: { artifactVersions: 2 } });
+  } finally { await rm(versionDirectory,{ recursive: true,force: true }); }
+  await page.getByRole("button",{ name: "Edit artifact",exact: true }).click();
+  await page.getByLabel("Artifact text",{ exact: true }).fill("Unsaved owner draft");
+  const concurrent = await request.patch(`/api/v1/artifacts/${artifact.id}`,{ headers: { authorization: `Bearer ${alice.token}` },data: { revision: 2,title: "Edited fixture artifact",content: "Concurrent owner version" } });
+  expect(concurrent.status()).toBe(200);
+  await page.getByRole("button",{ name: "Save version",exact: true }).click();
+  await expect(page.getByRole("main").getByRole("alert")).toHaveText("The artifact changed. Refresh before saving your edit.");
+  await expect(page.getByLabel("Artifact text",{ exact: true })).toHaveValue("Unsaved owner draft");
+  await page.getByRole("button",{ name: "Cancel edit",exact: true }).click();
+  await page.getByRole("button",{ name: "Refresh",exact: true }).click();
+  await expect(page.getByText(/Version 3 of 100/)).toBeVisible();
   const download = page.waitForEvent("download");
   await page.getByRole("button",{ name: "Download .txt" }).click();
   expect((await download).suggestedFilename()).toBe(`artifact-${artifact.id}.txt`);
   page.once("dialog",dialog => dialog.accept());
   await page.getByRole("button",{ name: "Delete",exact: true }).click();
-  await expect(page.getByRole("heading",{ name: "Fixture artifact" })).toHaveCount(0);
+  await expect(page.getByRole("heading",{ name: "Edited fixture artifact" })).toHaveCount(0);
   expect((await request.get(`/api/v1/artifacts/${artifact.id}`,{ headers: { authorization: `Bearer ${alice.token}` } })).status()).toBe(404);
   expect((await (await request.get(artifactsUrl,{ headers: { authorization: `Bearer ${alice.token}` } })).json()).items).toEqual([]);
   await expect(runCli(["artifacts","get",artifact.id],env)).rejects.toThrow("HTTP 404");

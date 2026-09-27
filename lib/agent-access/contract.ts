@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { runOptions, runPage, runRepairOptions, runRepairResult, type RunOptions } from "./run-contract";
 import { projectionEntry, projectionOptions, projectionPage, projectionOutcome, projectionSourceIndex, type ProjectionEntry, type ProjectionOptions } from "./projection-contract";
-import { artifactInput, artifactCallId, artifactOptions, artifactPage, artifactSaveResult, artifact, type ArtifactInput, type ArtifactOptions } from "./artifact-contract";
+import { artifactPatch, artifactVersionOptions, artifactVersionPage, artifactUpdateResult, type ArtifactPatch, type ArtifactVersionOptions, artifactInput, artifactCallId, artifactOptions, artifactPage, artifactSaveResult, artifact, type ArtifactInput, type ArtifactOptions } from "./artifact-contract";
 
 export const accessOwner = z.object({ tenant: z.string().min(1).max(200), subject: z.string().min(1).max(200) }).strict();
 export type AccessOwner = z.infer<typeof accessOwner>;
@@ -46,6 +46,8 @@ export interface SessionAccessStore {
   saveArtifact(owner: AccessOwner, operation: string, session: string, callId: string, input: ArtifactInput): Promise<z.infer<typeof artifactSaveResult>>;
   listArtifacts(owner: AccessOwner, options: ArtifactOptions): Promise<z.infer<typeof artifactPage>>;
   getArtifact(owner: AccessOwner, id: string): Promise<z.infer<typeof artifact> | null>;
+  updateArtifact(owner: AccessOwner, id: string, patch: ArtifactPatch): Promise<z.infer<typeof artifactUpdateResult>>;
+  listArtifactVersions(owner: AccessOwner, id: string, options: ArtifactVersionOptions): Promise<z.infer<typeof artifactVersionPage> | null>;
   deleteArtifact(owner: AccessOwner, id: string): Promise<boolean>;
   appendProjection(owner: AccessOwner, operation: string, session: string, entry: ProjectionEntry, sourceIndex?: number): Promise<z.infer<typeof projectionOutcome>>;
   listProjections(owner: AccessOwner, operation: string, options: ProjectionOptions): Promise<z.infer<typeof projectionPage>>;
@@ -70,6 +72,8 @@ export const accessCommand = z.discriminatedUnion("operation", [
   accessOwner.extend({ operation: z.literal("access.saveArtifact"),operationId,sessionId,callId: artifactCallId,input: artifactInput }).strict(),
   accessOwner.extend({ operation: z.literal("access.listArtifacts"),options: artifactOptions }).strict(),
   accessOwner.extend({ operation: z.literal("access.getArtifact"),id: z.uuid() }).strict(),
+  accessOwner.extend({ operation: z.literal("access.updateArtifact"),id: z.uuid(),patch: artifactPatch }).strict(),
+  accessOwner.extend({ operation: z.literal("access.listArtifactVersions"),id: z.uuid(),options: artifactVersionOptions }).strict(),
   accessOwner.extend({ operation: z.literal("access.deleteArtifact"),id: z.uuid() }).strict(),
   accessOwner.extend({ operation: z.literal("access.appendProjection"),operationId,sessionId,entry: projectionEntry,sourceIndex: projectionSourceIndex.optional() }).strict(),
   accessOwner.extend({ operation: z.literal("access.listProjections"),operationId,options: projectionOptions }).strict(),

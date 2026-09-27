@@ -6,3 +6,6 @@ export async function GET(request: Request,context: { params: Promise<{ id: stri
 export async function DELETE(request: Request,context: { params: Promise<{ id: string }> }) {
   return artifactHandlers().delete(request,(await context.params).id);
 }
+export async function PATCH(request: Request,context: { params: Promise<{ id: string }> }) {
+  return artifactHandlers().update(request,(await context.params).id);
+}

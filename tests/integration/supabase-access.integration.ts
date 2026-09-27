@@ -21,6 +21,7 @@ it("denies table reads and forged inserts to anonymous and authenticated databas
       ["app_internal_nonces", { id: "b".repeat(64), expires_at: Date.now() + 60000 }],
       ["app_conversation_events",{ operation_id: crypto.randomUUID(),event_id: "evt_00000000000000000000000001",payload: "{}" }],
       ["app_conversation_runs",{ operation_id: crypto.randomUUID(),turn_id: "forged",first_ordinal: 1,payload: "{}" }],
+      ["app_artifact_versions",{ artifact_id: crypto.randomUUID(),revision: 1,title: "forged",content: "forged",updated_at: Date.now() }],
       ["app_artifacts",{ id: crypto.randomUUID(),operation_id: crypto.randomUUID(),session_id: "forged",call_id: "forged",input_hash: "a".repeat(64),title: "forged",content: "forged",created_at: Date.now() }],
       ["app_uploads",{ id: crypto.randomUUID(),tenant: "victim",subject: "victim",name: "forged.txt",media_type: "text/plain",size: 1,sha256: "a".repeat(64),created_at: Date.now(),state: "pending" }],
       ["app_record_creates",{ tenant: "victim",subject: "victim",creation_key: crypto.randomUUID(),request_hash: "a".repeat(64),record_id: crypto.randomUUID(),created_at: new Date().toISOString() }],
@@ -40,6 +41,7 @@ it("denies table reads and forged inserts to anonymous and authenticated databas
     expect((await client.rpc("app_run_cache",{ p_facts: {} })).error?.code).toBe("42501");
     expect((await client.rpc("app_materialize_run",{ p_existing: null,p_entry: "{}",p_ordinal: 1,p_source: 0 })).error?.code).toBe("42501");
     expect((await client.rpc("app_save_artifact",{ p_tenant: "victim",p_subject: "victim",p_operation: crypto.randomUUID(),p_session: "session",p_call: "forged",p_hash: "a".repeat(64),p_id: crypto.randomUUID(),p_title: "forged",p_content: "forged",p_created: Date.now() })).error?.code).toBe("42501");
+    expect((await client.rpc("app_update_artifact",{ p_tenant: "victim",p_subject: "victim",p_id: crypto.randomUUID(),p_revision: 1,p_title: "forged",p_content: "forged",p_updated: Date.now() })).error?.code).toBe("42501");
     expect((await client.rpc("app_delete_artifact",{ p_tenant: "victim",p_subject: "victim",p_id: crypto.randomUUID(),p_deleted: Date.now() })).error?.code).toBe("42501");
     expect((await client.rpc("app_upload_command",{ command: "usage",input: { tenant: "victim",subject: "victim" } })).error?.code).toBe("42501");
     expect((await client.rpc("app_upload_list",{ input: { tenant: "victim",subject: "victim" } })).error?.code).toBe("42501");

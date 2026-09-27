@@ -1,5 +1,6 @@
 "use client";
 
+import { ArtifactEditor } from "./artifact-editor";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { artifactPage, type Artifact } from "@/lib/agent-access/artifact-contract";
@@ -56,7 +57,7 @@ export function ArtifactLibrary({ settings,userId }: { settings: PublicAuthSetti
   },[load]);
 
   const act = async (item: Artifact,action: "download" | "delete") => {
-    if (action === "delete" && !window.confirm(`Delete “${item.title}”? This erases its saved text and cannot be undone.`)) return;
+    if (action === "delete" && !window.confirm(`Delete “${item.title}”? This erases all its saved versions and cannot be undone.`)) return;
     setActing(item.id);setError("");
     try {
       const { data,error } = await client.auth.getSession();
@@ -95,6 +96,7 @@ export function ArtifactLibrary({ settings,userId }: { settings: PublicAuthSetti
       <h2 className="font-medium break-words">{item.title}</h2>
       <p className="text-sm text-muted-foreground">{new Date(item.createdAt).toLocaleString()} · <Link className="underline" href={`/s/${item.operationId}`}>Source conversation</Link></p>
       <details><summary className="cursor-pointer underline">View text</summary><pre className="mt-3 max-h-96 overflow-auto rounded border p-4 whitespace-pre-wrap break-words font-sans text-sm">{item.content}</pre></details>
+      <ArtifactEditor key={item.id} item={item} settings={settings} userId={userId} onUpdate={updated => { if (identity.current === userId) setItems(previous => previous.map(saved => saved.id === updated.id ? updated : saved)); }} />
       <div className="flex gap-3"><button className="underline disabled:opacity-50" disabled={busy || acting !== null} onClick={() => void act(item,"download")}>Download .txt</button>
         <button className="underline disabled:opacity-50" disabled={busy || acting !== null} onClick={() => void act(item,"delete")}>Delete</button></div>
     </li>)}</ul>

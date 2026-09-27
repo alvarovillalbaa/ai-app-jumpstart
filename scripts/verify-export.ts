@@ -11,6 +11,7 @@ const applicationCounts = {
 } as const;
 const applicationCountsV6 = { ...applicationCounts,run: "runs" } as const;
 const applicationCountsV7 = { ...applicationCountsV6,account_preferences: "preferences" } as const;
+const applicationCountsV8 = { ...applicationCountsV7,artifact_version: "artifactVersions" } as const;
 const recordCounts = { record: "records" } as const;
 const sourceCounts = { source_event: "sourceEvents" } as const;
 const footer = z.object({ counts: z.record(z.string(), z.number().int().nonnegative()),
@@ -36,7 +37,8 @@ export async function verifyExport(path: string) {
       manifest = row.value as Record<string, unknown>;
       const sections = manifest.format === "ai-app-jumpstart-visible-data-v5" ? applicationCounts
         : manifest.format === "ai-app-jumpstart-visible-data-v6" ? applicationCountsV6
-        : manifest.format === "ai-app-jumpstart-visible-data-v7" ? applicationCountsV7 : undefined;
+        : manifest.format === "ai-app-jumpstart-visible-data-v7" ? applicationCountsV7
+        : manifest.format === "ai-app-jumpstart-visible-data-v8" ? applicationCountsV8 : undefined;
       expected = manifest.format === "ai-app-jumpstart-source-events-v1" ? sourceCounts
         : sections && manifest.mode === "application" ? sections
         : sections && manifest.mode === "records" ? recordCounts : undefined;

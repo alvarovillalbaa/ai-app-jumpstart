@@ -11,7 +11,9 @@ export default defineSchema({
     scan: v.optional(v.object({ sha256: v.string(),status: v.union(v.literal("clean"),v.literal("rejected")),checkedAt: v.number(),policyVersion: v.literal(1),reason: v.optional(v.union(v.literal("malware"),v.literal("integrity"))) })) })
     .index("by_external_id",["id"]).index("by_owner_state",["tenant","subject","state"])
     .index("by_cleanup",["state","createdAt","id"]),
-  artifacts: defineTable({ id: v.string(),tenant: v.string(),subject: v.string(),operationId: v.string(),sessionId: v.string(),callId: v.string(),inputHash: v.string(),title: v.string(),content: v.string(),createdAt: v.number(),deletedAt: v.optional(v.number()) })
+  artifactVersions: defineTable({ artifactId: v.string(),revision: v.number(),title: v.string(),content: v.string(),updatedAt: v.number() })
+    .index("by_artifact_revision",["artifactId","revision"]),
+  artifacts: defineTable({ id: v.string(),tenant: v.string(),subject: v.string(),operationId: v.string(),sessionId: v.string(),callId: v.string(),inputHash: v.string(),title: v.string(),content: v.string(),createdAt: v.number(),revision: v.optional(v.number()),updatedAt: v.optional(v.number()),deletedAt: v.optional(v.number()) })
     .index("by_external_id",["id"]).index("by_operation_call",["operationId","callId"]).index("by_owner_time",["tenant","subject","createdAt","id"]),
   conversationEvents: defineTable({ operationId: v.string(),eventId: v.string(),ordinal: v.number(),payload: v.string(),sourceIndex: v.optional(v.number()) }).index("by_operation_event",["operationId","eventId"]).index("by_operation_ordinal",["operationId","ordinal"]).index("by_operation_source",["operationId","sourceIndex"]),
   conversationRuns: defineTable({ operationId: v.string(),turnId: v.string(),firstOrdinal: v.number(),payload: v.string() })

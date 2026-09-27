@@ -26,7 +26,7 @@ it("exports every paged record for one owner to a private file without replacing
     expect(await run(["export", "records", output], env, request)).toMatchObject({ mode: "records", counts: { records: 105 } });
     const exported = await lines(output);
     expect(exported).toHaveLength(107);
-    expect(exported[0].value).toMatchObject({ format: "ai-app-jumpstart-visible-data-v7", mode: "records" });
+    expect(exported[0].value).toMatchObject({ format: "ai-app-jumpstart-visible-data-v8", mode: "records" });
     expect(exported.filter(line => line.type === "record").map(line => line.value.title)).not.toContain("Foreign");
     expect(exported.at(-1).value.counts.records).toBe(105);
     expect((await stat(output)).mode & 0o077).toBe(0);
@@ -74,7 +74,10 @@ it("exports visible account data, including archived conversations and paged pro
         code: null,models: ["fixture-model"],boundaryCount: 2,unindexedBoundaries: 0,unindexedFacts: 0,coverage: { checkpoint: 4,indexComplete: true } }],nextCursor: null });
     if (path.pathname === "/api/v1/artifacts") return Response.json({ items: [{ id: artifact, operationId: operation,
       sourceSessionId: "session-1", sourceCallId: "call-1", title: "Note", content: "artifact text",
-      mediaType: "text/plain", createdAt: 1 }], nextCursor: null });
+      mediaType: "text/plain", createdAt: 1,revision: 2,updatedAt: 2 }], nextCursor: null });
+    if (path.pathname === `/api/v1/artifacts/${artifact}/versions`) return Response.json({ items: [{ id: artifact,operationId: operation,
+      sourceSessionId: "session-1",sourceCallId: "call-1",title: "Note",content: path.searchParams.has("before") ? "approved original" : "artifact text",
+      mediaType: "text/plain",createdAt: 1,revision: path.searchParams.has("before") ? 1 : 2,updatedAt: path.searchParams.has("before") ? 1 : 2 }],nextBefore: path.searchParams.has("before") ? null : 2 });
     if (path.pathname === "/api/v1/uploads") return Response.json({ items: [{ id: upload, name: "private.txt",
       mediaType: "text/plain", size: 4, sha256: "a".repeat(64), createdAt: 1, state: "rejected",
       scan: { sha256: "a".repeat(64),status: "rejected",reason: "malware",checkedAt: 2,policyVersion: 1 } }], usage: { files: 1, bytes: 4 } });
@@ -93,16 +96,17 @@ it("exports visible account data, including archived conversations and paged pro
   try {
     const output = join(directory, "account.ndjson");
     expect(await run(["export", "application", output], { APP_API_TOKEN: "current-account-token" }, request)).toMatchObject({
-      counts: { profile: 1, preferences: 1, records: 1, conversations: 2, projections: 2, runs: 1, artifacts: 1, uploads: 1, uploadUsage: 1, reservations: 2, corrections: 2, usage: 1 },
+      counts: { profile: 1, preferences: 1, records: 1, conversations: 2, projections: 2, runs: 1, artifacts: 1, artifactVersions: 2, uploads: 1, uploadUsage: 1, reservations: 2, corrections: 2, usage: 1 },
     });
     const exported = await lines(output);
-    expect(exported.map(line => line.type)).toEqual(["manifest", "account_profile", "account_preferences", "record", "conversation", "projection", "projection", "run", "conversation", "artifact", "upload", "upload_usage", "budget_reservation", "budget_reservation", "budget_correction", "budget_correction", "usage", "end"]);
+    expect(exported.map(line => line.type)).toEqual(["manifest", "account_profile", "account_preferences", "record", "conversation", "projection", "projection", "run", "conversation", "artifact", "artifact_version", "artifact_version", "upload", "upload_usage", "budget_reservation", "budget_reservation", "budget_correction", "budget_correction", "usage", "end"]);
     expect(exported.find(line => line.type === "account_profile")?.value).toMatchObject({ email: "alice@example.test", userMetadata: { displayName: "Alice" } });
     expect(exported[0].value.exclusions).toEqual(expect.arrayContaining([expect.stringContaining("Eve session/model history")]));
     expect(exported.find(line => line.type === "run")?.value.run).toMatchObject({ state: "completed",models: ["fixture-model"] });
     expect(exported.some(line => line.type === "run" && "facts" in line.value.run)).toBe(false);
     expect(exported.find(line => line.type === "account_preferences")?.value).toMatchObject({ revision: 2,theme: "dark",soundEnabled: false,soundVolume: 0.25 });
     expect(exported.find(line => line.type === "artifact")?.value.content).toBe("artifact text");
+    expect(exported.filter(line => line.type === "artifact_version").map(line => [line.value.revision,line.value.content])).toEqual([[2,"artifact text"],[1,"approved original"]]);
     expect(exported.find(line => line.type === "upload")?.value).toMatchObject({ id: upload,state: "rejected",
       scan: { status: "rejected",reason: "malware",checkedAt: 2,policyVersion: 1 } });
     expect(exported.find(line => line.type === "upload_usage")?.value).toEqual({ files: 1, bytes: 4 });
@@ -182,14 +186,14 @@ it("publishes no source export when the runtime fails after an earlier page", as
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-it.each([5,6])("continues verifying published v%s exports without accepting v7 sections in them",async version => {
+it.each([5,6,7])("continues verifying published v%s exports without accepting v8 sections in them",async version => {
   const directory = await mkdtemp(join(tmpdir(),"jumpstart-export-v5-")),path = join(directory,"old.ndjson");
   const manifest = JSON.stringify({ type: "manifest",value: { format: `ai-app-jumpstart-visible-data-v${version}`,mode: "application" } })+"\n";
-  const counts = { ...(version === 6 ? { runs: 0 } : {}),profile: 0,records: 0,conversations: 0,projections: 0,artifacts: 0,uploads: 0,uploadUsage: 0,reservations: 0,corrections: 0,usage: 0 };
+  const counts = { ...(version >= 6 ? { runs: 0 } : {}),...(version >= 7 ? { preferences: 0 } : {}),profile: 0,records: 0,conversations: 0,projections: 0,artifacts: 0,uploads: 0,uploadUsage: 0,reservations: 0,corrections: 0,usage: 0 };
   try {
     await writeFile(path,manifest+JSON.stringify({ type: "end",value: { counts,contentSha256: createHash("sha256").update(manifest).digest("hex") } })+"\n");
     expect(await run(["export","verify",path],{})).toMatchObject({ format: `ai-app-jumpstart-visible-data-v${version}`,counts });
-    await writeFile(path,manifest+JSON.stringify({ type: "account_preferences",value: {} })+"\n");
+    await writeFile(path,manifest+JSON.stringify({ type: "artifact_version",value: {} })+"\n");
     await expect(run(["export","verify",path],{})).rejects.toThrow("unexpected type");
   } finally { await rm(directory,{ recursive: true,force: true }); }
 });

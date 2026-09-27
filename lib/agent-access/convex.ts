@@ -3,7 +3,7 @@ import { runOptions,runPage,runRepairOptions,runRepairResult } from "./run-contr
 import { ConvexBackend } from "../data/convex-client";
 import { conversation, historyOptions, historyPage, conversationSummary, type AccessOwner, type Reservation, type SessionAccessStore } from "./contract";
 import { projectionEntry, projectionOptions, projectionOutcome, projectionPage, projectionSourceIndex } from "./projection-contract";
-import { artifactInput, artifactCallId, artifactOptions, artifactSaveResult, artifactPage, artifact } from "./artifact-contract";
+import { artifactPatch, artifactVersionOptions, artifactVersionPage, artifactUpdateResult, artifactInput, artifactCallId, artifactOptions, artifactSaveResult, artifactPage, artifact } from "./artifact-contract";
 
 export function convexAccessStore(url: string, secret: string, request: typeof fetch = fetch): SessionAccessStore {
   const backend = new ConvexBackend(url, secret, request);
@@ -13,6 +13,8 @@ export function convexAccessStore(url: string, secret: string, request: typeof f
     saveArtifact: (owner,operationId,sessionId,callId,input) => backend.call("access.saveArtifact",{ ...owner,operationId,sessionId,callId: artifactCallId.parse(callId),input: artifactInput.parse(input) },artifactSaveResult),
     listArtifacts: (owner,options) => backend.call("access.listArtifacts",{ ...owner,options: artifactOptions.parse(options) },artifactPage),
     getArtifact: (owner,id) => backend.call("access.getArtifact",{ ...owner,id },artifact.nullable()),
+    updateArtifact: (owner,id,patch) => backend.call("access.updateArtifact",{ ...owner,id,patch: artifactPatch.parse(patch) },artifactUpdateResult),
+    listArtifactVersions: (owner,id,options) => backend.call("access.listArtifactVersions",{ ...owner,id,options: artifactVersionOptions.parse(options) },artifactVersionPage.nullable()),
     deleteArtifact: (owner,id) => backend.call("access.deleteArtifact",{ ...owner,id },z.boolean()),
     appendProjection: async (owner, operationId, sessionId, entry,sourceIndex) => backend.call("access.appendProjection",{ ...owner,operationId,sessionId,entry: projectionEntry.parse(entry),...(sourceIndex === undefined ? {} : { sourceIndex: projectionSourceIndex.parse(sourceIndex) }) },projectionOutcome),
     listProjections: async (owner, operationId, options) => backend.call("access.listProjections",{ ...owner,operationId,options: projectionOptions.parse(options) },projectionPage),

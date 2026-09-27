@@ -21,7 +21,7 @@ import { projectionOptions } from "./agent-access/projection-contract";
 import { readSourceEvents, sourceEventOptions } from "./agent-access/source-events";
 import { reconcileInput, reconcileProjections } from "./agent-access/reconcile";
 import { ArtifactService } from "./agent-access/artifacts";
-import { artifactOptions } from "./agent-access/artifact-contract";
+import { artifactOptions, artifactPatch, artifactVersionOptions } from "./agent-access/artifact-contract";
 import { UsageService } from "./budgets/usage";
 import { getBudgetStore } from "./budgets/store";
 import { ledgerQueryOptions, type BudgetStore } from "./budgets/contract";
@@ -129,8 +129,16 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
     server.registerTool("artifacts_get",{
       description: "Read one owned private artifact by its UUID.",inputSchema: { id: z.uuid() },annotations: { readOnlyHint: true,openWorldHint: false },
     },({ id }) => result(() => artifacts.get(id)));
+    server.registerTool("artifacts_versions",{
+      description: "Read immutable versions of an owned artifact, newest first. Creation is version 1. Returns nextBefore for pagination.",
+      inputSchema: artifactVersionOptions.extend({ id: z.uuid() }),annotations: { readOnlyHint: true,openWorldHint: false },
+    },({ id,...options }) => result(() => artifacts.versions(id,options)));
+    server.registerTool("artifacts_update",{
+      description: "Save a new owner-authored version of an existing artifact. Supply its current revision and exact title/content; stale edits conflict. The approved creation remains version 1. Maximum 100 versions.",
+      inputSchema: artifactPatch.extend({ id: z.uuid() }),annotations: { destructiveHint: false,idempotentHint: false,openWorldHint: false },
+    },({ id,...patch }) => result(() => artifacts.update(id,patch)));
     server.registerTool("artifacts_delete",{
-      description: "Erase the stored title, content and input hash of one owned artifact. The call receipt remains to prevent replay; source chat and backups have separate retention.",
+      description: "Erase every stored version, title, content and input hash of one owned artifact. The call receipt remains to prevent replay; source chat and backups have separate retention.",
       inputSchema: { id: z.uuid() },annotations: { destructiveHint: true,idempotentHint: false,openWorldHint: false },
     },({ id }) => result(async () => { await artifacts.delete(id);return { deleted: true }; }));
     server.registerResource("artifact",new ResourceTemplate("artifacts:///{id}",{ list: undefined }),{

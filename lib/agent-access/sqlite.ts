@@ -46,6 +46,28 @@ export function sqliteAccessStore(path: string) {
     }
     const artifactColumns = new Set(db.prepare("PRAGMA table_info(app_artifacts)").all().map(row => row.name));
     if (!artifactColumns.has("deleted_at")) db.exec("ALTER TABLE app_artifacts ADD COLUMN deleted_at INTEGER");
+    if (!artifactColumns.has("revision")) db.exec("ALTER TABLE app_artifacts ADD COLUMN revision INTEGER NOT NULL DEFAULT 1 CHECK(revision BETWEEN 1 AND 100)");
+    if (!artifactColumns.has("updated_at")) db.exec("ALTER TABLE app_artifacts ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0");
+    db.exec(`UPDATE app_artifacts SET updated_at=created_at WHERE updated_at=0;
+      CREATE TABLE IF NOT EXISTS app_artifact_versions (artifact_id TEXT NOT NULL REFERENCES app_artifacts(id),
+        revision INTEGER NOT NULL CHECK(revision BETWEEN 1 AND 100),title TEXT NOT NULL,content TEXT NOT NULL,updated_at INTEGER NOT NULL,
+        PRIMARY KEY(artifact_id,revision));
+      INSERT INTO app_artifact_versions(artifact_id,revision,title,content,updated_at)
+        SELECT id,revision,title,content,updated_at FROM app_artifacts WHERE deleted_at IS NULL ON CONFLICT DO NOTHING;
+      CREATE TRIGGER IF NOT EXISTS artifact_version_guard BEFORE UPDATE OF title,content,revision,input_hash,deleted_at ON app_artifacts
+        WHEN OLD.deleted_at IS NOT NULL OR (NEW.deleted_at IS NULL AND (NEW.revision != OLD.revision+1 OR NEW.input_hash != OLD.input_hash)) BEGIN
+        SELECT RAISE(ABORT,'Artifact edits require a new revision');
+      END;
+      CREATE TRIGGER IF NOT EXISTS artifact_version_insert AFTER INSERT ON app_artifacts WHEN NEW.deleted_at IS NULL BEGIN
+        INSERT INTO app_artifact_versions VALUES(NEW.id,NEW.revision,NEW.title,NEW.content,NEW.created_at);
+      END;
+      CREATE TRIGGER IF NOT EXISTS artifact_version_update AFTER UPDATE OF revision ON app_artifacts
+        WHEN NEW.deleted_at IS NULL AND NEW.revision != OLD.revision BEGIN
+        INSERT INTO app_artifact_versions VALUES(NEW.id,NEW.revision,NEW.title,NEW.content,NEW.updated_at);
+      END;
+      CREATE TRIGGER IF NOT EXISTS artifact_version_erase AFTER UPDATE OF deleted_at ON app_artifacts WHEN NEW.deleted_at IS NOT NULL BEGIN
+        DELETE FROM app_artifact_versions WHERE artifact_id=NEW.id;
+      END;`);
     const eventColumns = new Set(db.prepare("PRAGMA table_info(app_conversation_events)").all().map(row => row.name));
     if (!eventColumns.has("source_index")) db.exec("ALTER TABLE app_conversation_events ADD COLUMN source_index INTEGER CHECK(source_index >= 0)");
     db.exec(`CREATE TRIGGER IF NOT EXISTS conversation_runs_insert AFTER INSERT ON app_conversation_events

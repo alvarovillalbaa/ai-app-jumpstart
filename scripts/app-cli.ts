@@ -6,7 +6,7 @@ import { preferences,preferencePatch } from "../lib/preferences/contract";
 import { projectionOptions } from "../lib/agent-access/projection-contract";
 import { sourceEventOptions } from "../lib/agent-access/source-events";
 import { reconcileInput } from "../lib/agent-access/reconcile";
-import { artifactOptions } from "../lib/agent-access/artifact-contract";
+import { artifactOptions, artifactPatch, artifactVersionOptions } from "../lib/agent-access/artifact-contract";
 import { ledgerQueryOptions } from "../lib/budgets/contract";
 import { recordId, recordInput, recordCreationKey } from "../lib/data/contract";
 import { exportApplication } from "./export-application";
@@ -29,7 +29,7 @@ export async function run(args: string[], env: Record<string, string | undefined
     records: "npm run app -- <list [cursor] | get ID | create JSON_FILE [--key UUID] | creation UUID | update ID JSON_FILE | delete ID REVISION>",
     seed: "npm run app -- seed [--allow-remote] (two idempotent, owner-scoped example records)",
     conversations: "npm run app -- conversations <list [--archived] [--limit N] [--cursor CURSOR] | get OPERATION_UUID | events OPERATION_UUID [AFTER_INGESTION_INDEX] | runs OPERATION_UUID [AFTER_INGESTION_INDEX] | source-events OPERATION_UUID [START_SOURCE_INDEX] | reconcile OPERATION_UUID [START_SOURCE_INDEX] | update OPERATION_UUID JSON_FILE>",
-    artifacts: "npm run app -- artifacts <list [--limit N] [--cursor CURSOR] | get ARTIFACT_UUID | delete ARTIFACT_UUID>",
+    artifacts: "npm run app -- artifacts <list [--limit N] [--cursor CURSOR] | get ARTIFACT_UUID | update ARTIFACT_UUID patch.json | versions ARTIFACT_UUID [--limit N] [--before N] | delete ARTIFACT_UUID>",
     uploads: "npm run app -- uploads <list | get UPLOAD_UUID | put FILE | scan UPLOAD_UUID | link UPLOAD_UUID | download UPLOAD_UUID OUTPUT_FILE | download-link LINK_JSON_FILE OUTPUT_FILE | delete UPLOAD_UUID> (scan/download/link require uploads:download and an enabled scan-on-read policy)",
     account: "npm run app -- account <profile | preferences | preferences update JSON_FILE> (current registered-user token required)",
     usage: "npm run app -- usage [reservations|corrections [--limit N] [--cursor CURSOR]] (verified user token required)",
@@ -211,6 +211,23 @@ export async function run(args: string[], env: Record<string, string | undefined
     if ((action === "get" || action === "delete") && options.length === 1) {
       path += `/${id(options[0])}`;
       if (action === "delete") method = "DELETE";
+    }
+    else if (action === "update" && options.length === 2) {
+      path += `/${id(options[0])}`;
+      const patch = artifactPatch.safeParse(JSON.parse(await readFile(options[1],"utf8")));
+      if (!patch.success) throw new Error("Invalid artifact update. Supply revision, title and content.");
+      method = "PATCH";body = JSON.stringify(patch.data);
+    }
+    else if (action === "versions" && options.length >= 1) {
+      path += `/${id(options.shift()!)}/versions`;
+      const input: Record<string,unknown> = {};
+      for (let i=0;i<options.length;i++) {
+        const flag = options[i];
+        if (!["--limit","--before"].includes(flag) || options[i+1] === undefined || Object.hasOwn(input,flag.slice(2))) throw new Error("Invalid artifact version options.");
+        input[flag.slice(2)] = Number(options[++i]);
+      }
+      const q = artifactVersionOptions.parse(input);
+      path += `?${new URLSearchParams({ limit: String(q.limit),...(q.before !== undefined ? { before: String(q.before) } : {}) })}`;
     }
     else if (action === "list") {
       const input: Record<string,unknown> = {};

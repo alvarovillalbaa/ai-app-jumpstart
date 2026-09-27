@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { preferences } from "../lib/preferences/contract";
 import { historyPage } from "../lib/agent-access/contract";
-import { artifactPage } from "../lib/agent-access/artifact-contract";
+import { artifactPage,artifactVersionPage } from "../lib/agent-access/artifact-contract";
 import { projectionPage } from "../lib/agent-access/projection-contract";
 import { runPage } from "../lib/agent-access/run-contract";
 import { sourceEventPage } from "../lib/agent-access/source-events";
@@ -39,7 +39,7 @@ export async function exportApplication(mode: Mode, output: string, call: Call, 
   const temporary = join(directory, `${randomUUID()}.ndjson`);
   let file: Awaited<ReturnType<typeof open>> | undefined;
   const digest = createHash("sha256");
-  const counts = { profile: 0, preferences: 0, records: 0, conversations: 0, projections: 0, runs: 0, artifacts: 0, uploads: 0, uploadUsage: 0, reservations: 0, corrections: 0, usage: 0 };
+  const counts = { profile: 0, preferences: 0, records: 0, conversations: 0, projections: 0, runs: 0, artifacts: 0, artifactVersions: 0, uploads: 0, uploadUsage: 0, reservations: 0, corrections: 0, usage: 0 };
   async function write(type: string, value: unknown) {
     if (!file) throw new Error("Export file is unavailable.");
     const line = `${JSON.stringify({ type, value })}\n`;
@@ -96,7 +96,7 @@ export async function exportApplication(mode: Mode, output: string, call: Call, 
       throw new Error("Export exceeded 10,000 source event pages.");
     }
     await write("manifest", {
-      format: "ai-app-jumpstart-visible-data-v7", mode, exportedAt: new Date().toISOString(),
+      format: "ai-app-jumpstart-visible-data-v8", mode, exportedAt: new Date().toISOString(),
       consistency: "paged-live-reads; concurrent changes may appear or be missed",
       exclusions: mode === "application" ? [
         "Auth credentials, sessions, MFA factors, linked identity details and provider logs; profile is selected fields only",
@@ -138,7 +138,14 @@ export async function exportApplication(mode: Mode, output: string, call: Call, 
       await walk(
         (cursor: string | null) => `/api/v1/artifacts?${new URLSearchParams({ limit: "50", ...(cursor ? { cursor } : {}) })}`,
         value => artifactPage.parse(value),
-        async item => { await write("artifact", item); counts.artifacts++; },
+        async item => {
+          await write("artifact", item); counts.artifacts++;
+          await walk(
+            (before: number | null) => `/api/v1/artifacts/${item.id}/versions?${new URLSearchParams({ limit: "50",...(before !== null ? { before: String(before) } : {}) })}`,
+            value => { const page = artifactVersionPage.parse(value);return { items: page.items,nextCursor: page.nextBefore }; },
+            async version => { await write("artifact_version",version);counts.artifactVersions++; },
+          );
+        },
       );
       const uploads = uploadPage.parse(await call("/api/v1/uploads"));
       for (const item of uploads.items) { await write("upload", item); counts.uploads++; }

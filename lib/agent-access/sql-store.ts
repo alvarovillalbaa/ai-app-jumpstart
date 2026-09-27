@@ -1,7 +1,7 @@
 import { accessOwner, reservation, operationId, sessionId, bodyHash, fromAccessRow, type AccessOwner, type Reservation, type SessionAccessStore } from "./contract";
 import { conversationTitle, historyOptions, historyPatch, pageOfHistory, summaryFromRow, type HistoryOptions, type HistoryPatch } from "./contract";
 import { projectionEntry, projectionOptions, projectionSourceIndex, pageOfProjections, type ProjectionEntry, type ProjectionOptions } from "./projection-contract";
-import { artifactInput, artifactCallId, artifactOptions, artifactFromRow, pageOfArtifacts, type ArtifactInput, type ArtifactOptions } from "./artifact-contract";
+import { artifactPatch, artifactVersionOptions, pageOfArtifactVersions, type ArtifactPatch, type ArtifactVersionOptions, artifactInput, artifactCallId, artifactOptions, artifactFromRow, pageOfArtifacts, type ArtifactInput, type ArtifactOptions } from "./artifact-contract";
 import { createHash, randomUUID } from "node:crypto";
 import { pageOfRuns, runOptions, runRepairOptions, type RunOptions } from "./run-contract";
 
@@ -28,12 +28,13 @@ export class SqlSessionAccessStore implements SessionAccessStore {
   async saveArtifact(owner: AccessOwner,operation: string,session: string,callId: string,input: ArtifactInput) {
     const o = accessOwner.parse(owner),id = operationId.parse(operation),sid = sessionId.parse(session),call = artifactCallId.parse(callId),data = artifactInput.parse(input);
     const hash = createHash("sha256").update(JSON.stringify(data)).digest("hex"),createdAt = Date.now();
-    const inserted = await this.db.query(`INSERT INTO app_artifacts(id,operation_id,session_id,call_id,input_hash,title,content,created_at)
-      SELECT ?,operation_id,?,?,?,?,?,? FROM app_conversations WHERE tenant=? AND subject=? AND operation_id=? AND session_id=? AND status='active'
+    const inserted = await this.db.query(`INSERT INTO app_artifacts(id,operation_id,session_id,call_id,input_hash,title,content,created_at,updated_at)
+      SELECT ?,operation_id,?,?,?,?,?,?,? FROM app_conversations WHERE tenant=? AND subject=? AND operation_id=? AND session_id=? AND status='active'
       ${this.db.lockBinding ? "FOR UPDATE" : ""} ON CONFLICT DO NOTHING RETURNING *`,
-      [randomUUID(),sid,call,hash,data.title,data.content,createdAt,o.tenant,o.subject,id,sid]);
-    if (inserted[0]) return { status: "created" as const,artifact: artifactFromRow(inserted[0]) };
-    const existing = await this.db.query(`SELECT a.* FROM app_artifacts a JOIN app_conversations c ON c.operation_id=a.operation_id
+      [randomUUID(),sid,call,hash,data.title,data.content,createdAt,createdAt,o.tenant,o.subject,id,sid]);
+    if (inserted[0]) return { status: "created" as const,artifact: artifactFromRow({ ...inserted[0] as object,updated_at: createdAt }) };
+    const existing = await this.db.query(`SELECT a.*,v.title,v.content,v.revision,v.updated_at FROM app_artifacts a JOIN app_conversations c ON c.operation_id=a.operation_id
+      LEFT JOIN app_artifact_versions v ON v.artifact_id=a.id AND v.revision=1
       WHERE c.tenant=? AND c.subject=? AND c.operation_id=? AND c.session_id=? AND c.status='active' AND a.call_id=?`,[o.tenant,o.subject,id,sid,call]);
     if (!existing[0]) return { status: "unavailable" as const };
     const row = existing[0] as { input_hash: string;deleted_at: number | null };
@@ -54,6 +55,24 @@ export class SqlSessionAccessStore implements SessionAccessStore {
     const rows = await this.db.query(`SELECT a.* FROM app_artifacts a JOIN app_conversations c ON c.operation_id=a.operation_id
       WHERE c.tenant=? AND c.subject=? AND a.id=? AND a.deleted_at IS NULL`,[o.tenant,o.subject,operationId.parse(id)]);
     return rows[0] ? artifactFromRow(rows[0]) : null;
+  }
+  async updateArtifact(owner: AccessOwner,id: string,input: ArtifactPatch) {
+    const o = accessOwner.parse(owner),key = operationId.parse(id),p = artifactPatch.parse(input);
+    const rows = await this.db.query(`UPDATE app_artifacts SET title=?,content=?,revision=revision+1,updated_at=? WHERE id=? AND deleted_at IS NULL
+      AND revision=? AND revision<100 AND operation_id IN (SELECT operation_id FROM app_conversations WHERE tenant=? AND subject=?) RETURNING *`,
+      [p.title,p.content,Date.now(),key,p.revision,o.tenant,o.subject]);
+    if (rows[0]) return { status: "updated" as const,artifact: artifactFromRow(rows[0]) };
+    const current = await this.getArtifact(o,key);
+    return { status: !current ? "unavailable" as const : current.revision !== p.revision ? "conflict" as const : "limit" as const };
+  }
+  async listArtifactVersions(owner: AccessOwner,id: string,options: ArtifactVersionOptions) {
+    const o = accessOwner.parse(owner),key = operationId.parse(id),q = artifactVersionOptions.parse(options);
+    if (!await this.getArtifact(o,key)) return null;
+    const rows = await this.db.query(`SELECT a.*,v.title,v.content,v.revision,v.updated_at FROM app_artifact_versions v
+      JOIN app_artifacts a ON a.id=v.artifact_id JOIN app_conversations c ON c.operation_id=a.operation_id
+      WHERE c.tenant=? AND c.subject=? AND a.id=? AND a.deleted_at IS NULL AND v.revision<? ORDER BY v.revision DESC LIMIT ?`,
+      [o.tenant,o.subject,key,q.before ?? 101,q.limit+1]);
+    return pageOfArtifactVersions(rows.map(artifactFromRow),q.limit);
   }
   async deleteArtifact(owner: AccessOwner,id: string) {
     const o = accessOwner.parse(owner);

@@ -2,7 +2,7 @@
 const codes = new Set([
   "active_limit", "daily_limit", "rate_limit",
   "request_limit", "request_limit_unavailable",
-  "artifact_not_found", "auth_unconfigured", "body_too_large", "cancellation_reconciliation_required",
+  "artifact_not_found", "artifact_conflict", "artifact_version_limit", "auth_unconfigured", "body_too_large", "cancellation_reconciliation_required",
   "chat_disabled", "chat_unconfigured", "configuration_error", "confirmation_failed",
   "conversation_already_started", "conversation_changed", "conversation_not_found", "creation_conflict",
   "creation_unavailable", "download_link_expired", "download_link_invalid", "download_links_disabled",

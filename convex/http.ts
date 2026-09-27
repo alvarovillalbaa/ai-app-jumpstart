@@ -98,6 +98,8 @@ http.route({ path: "/app/records", method: "POST", handler: httpAction(async (ct
       case "access.saveArtifact": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.access.saveArtifact, input)); }
       case "access.listArtifacts": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.access.listArtifacts, input)); }
       case "access.getArtifact": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.access.getArtifact, input)); }
+      case "access.updateArtifact": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.access.updateArtifact, input)); }
+      case "access.listArtifactVersions": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.access.listArtifactVersions, input)); }
       case "access.deleteArtifact": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.access.deleteArtifact, input)); }
       case "access.getDetails": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.access.getDetails, input)); }
       case "access.updateDetails": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.access.updateDetails, input)); }

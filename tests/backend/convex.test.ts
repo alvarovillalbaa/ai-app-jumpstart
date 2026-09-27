@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { preferenceContract } from "../contracts/preferences";
 import { requestLimitContract } from "../contracts/request-limits";
 import { convexRequestLimitStore } from "../../lib/request-limits/remote";
@@ -84,4 +85,25 @@ it("backfills legacy run facts in bounded pages without marking skipped ranges v
   expect(await access.rebuildRuns(owner,operationId,{})).toEqual({ processed: 2,nextIndex: 2,complete: true });
   expect(await access.listRuns(owner,operationId,{})).toEqual(page);
   expect((await access.listRuns({ ...owner,subject: "bob" },operationId,{})).items).toEqual([]);
+});
+
+it("preserves legacy Convex approval replay through edits and atomically erases all history",async () => {
+  const { backend,access } = fixture(),owner = { tenant: "org",subject: "alice" },id = crypto.randomUUID(),operationId = crypto.randomUUID(),deleted = crypto.randomUUID();
+  const draft = { title: "Legacy original",content: "Approved legacy content" },session = "legacy-artifact-session";
+  await backend.run(async ctx => {
+    await ctx.db.insert("conversations",{ ...owner,id: crypto.randomUUID(),operationId,requestHash: "a".repeat(64),sessionId: session,status: "active" });
+    const legacy = { ...owner,operationId,sessionId: session,callId: "legacy-call",inputHash: createHash("sha256").update(JSON.stringify(draft)).digest("hex"),...draft,createdAt: 10 };
+    await ctx.db.insert("artifacts",{ ...legacy,id });
+    await ctx.db.insert("artifacts",{ ...legacy,id: deleted,callId: "deleted-call",title: "Deleted artifact",content: " ",inputHash: "0".repeat(64),deletedAt: 11 });
+  });
+  const original = await access.getArtifact(owner,id);
+  expect(original).toMatchObject({ revision: 1,updatedAt: 10 });
+  expect(await access.listArtifactVersions(owner,id,{})).toEqual({ items: [original],nextBefore: null });
+  expect(await access.listArtifactVersions(owner,deleted,{})).toBeNull();
+  expect((await access.updateArtifact(owner,id,{ revision: 1,title: "Owner edit",content: "Second version" })).status).toBe("updated");
+  expect(await access.saveArtifact(owner,operationId,session,"legacy-call",draft)).toEqual({ status: "existing",artifact: original });
+  expect((await access.listArtifactVersions(owner,id,{}))!.items.map(item => item.content)).toEqual(["Second version",draft.content]);
+  expect(await access.deleteArtifact(owner,id)).toBe(true);
+  expect(await backend.run(ctx => ctx.db.query("artifactVersions").collect())).toEqual([]);
+  expect(await access.saveArtifact(owner,operationId,session,"legacy-call",draft)).toEqual({ status: "unavailable" });
 });
