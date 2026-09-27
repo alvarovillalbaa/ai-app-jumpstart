@@ -12,6 +12,7 @@ import { uploadObjectKey } from "../../lib/uploads/contract";
 import { uploadStorageEnabled } from "../../lib/uploads/provider";
 import { MAX_UPLOAD_BYTES } from "../../lib/uploads/validation";
 import { uploadObjectContract } from "../contracts/uploads";
+import { exerciseAwsS3Bucket,S3LiveCheckError } from "../../scripts/test-upload-s3-live";
 
 const bucket = "jumpstart-private-uploads";
 const owner = { tenant: "tenant/private",subject: "alice@example.test" };
@@ -20,7 +21,7 @@ const missing = (name: string) => Object.assign(new Error("missing"),{ name });
 function fakeS3() {
   const objects = new Map<string,Uint8Array>();
   const calls: unknown[] = [];
-  let publicBlock = true,versioning: "Enabled" | "Suspended" | undefined;
+  let publicBlock = true,versioning: "Enabled" | "Suspended" | undefined,deleteFailure = false;
   let readOverride: (() => { Body: Readable;ContentLength?: number }) | undefined;
   const client = { async send(command: unknown) {
     calls.push(command);
@@ -42,14 +43,19 @@ function fakeS3() {
       return readOverride?.() ?? { Body: Readable.from([bytes]),ContentLength: bytes.length };
     }
     if (command instanceof HeadObjectCommand) {
-      if (!objects.has(command.input.Key!)) throw missing("NotFound");
-      return {};
+      const bytes = objects.get(command.input.Key!);
+      if (!bytes) throw missing("NotFound");
+      return { ContentType: "application/octet-stream",CacheControl: "no-store",ContentLength: bytes.length };
     }
-    if (command instanceof DeleteObjectCommand) { objects.delete(command.input.Key!);return {}; }
+    if (command instanceof DeleteObjectCommand) {
+      if (deleteFailure) throw new Error("delete unavailable");
+      objects.delete(command.input.Key!);return {};
+    }
     throw new Error("unexpected S3 command");
   } } as unknown as S3Client;
   return { client,objects,calls,setPublic: () => { publicBlock = false; },
     setVersioning: (value: "Enabled" | "Suspended") => { versioning = value; },
+    setDeleteFailure: (value: boolean) => { deleteFailure = value; },
     setRead: (value: () => { Body: Readable;ContentLength?: number }) => { readOverride = value; } };
 }
 
@@ -130,4 +136,27 @@ it("uses signed SDK requests and conditional writes through a real S3 wire proto
     expect(await store.delete(owner,id)).toBe(false);
     expect(methods.some(method => method.startsWith("PUT /"))).toBe(true);
   } finally { client.destroy();await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+it("rehearses the operator acceptance sequence and removes its random objects",async () => {
+  const fake = fakeS3();
+  await expect(exerciseAwsS3Bucket(fake.client,bucket)).resolves.toMatchObject({ objectsRemoved: 2 });
+  expect(fake.objects.size).toBe(0);
+});
+
+it("removes random objects after an acceptance mismatch",async () => {
+  const fake = fakeS3();
+  fake.setRead(() => ({ Body: Readable.from([Buffer.from("tampered")]) }));
+  await expect(exerciseAwsS3Bucket(fake.client,bucket)).rejects.toMatchObject({ stage: "owner isolation and conditional write",cleanupKeys: [] } satisfies Partial<S3LiveCheckError>);
+  expect(fake.objects.size).toBe(0);
+});
+
+it("reports opaque keys when live cleanup cannot remove test objects",async () => {
+  const fake = fakeS3();
+  fake.setDeleteFailure(true);
+  const failure = await exerciseAwsS3Bucket(fake.client,bucket).catch(error => error);
+  expect(failure).toBeInstanceOf(S3LiveCheckError);
+  expect(failure.stage).toBe("owner deletion and missing-object reads");
+  expect(failure.cleanupKeys).toHaveLength(2);
+  expect(failure.cleanupKeys.every((key: string) => key.startsWith("uploads/v1/") && !key.includes("jumpstart-live"))).toBe(true);
 });
