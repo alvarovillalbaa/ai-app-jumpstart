@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import assert,{ AssertionError } from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { spawn,type ChildProcess } from "node:child_process";
 import { once } from "node:events";
@@ -132,39 +132,47 @@ async function rehearse(provider: "default" | "postgres",retention: "default" | 
       for (const row of scoped) {
         assert.ok(row.expiredAt);assert.ok(row.input == null && row.output == null && row.error == null,"Expired runs retained a user payload.");
       }
-      if (pg) {
-        const ids = scoped.map(row => row.runId);
-        for (const [table,payload] of [
-          ["workflow_runs","input IS NOT NULL OR input_cbor IS NOT NULL OR output IS NOT NULL OR output_cbor IS NOT NULL OR error IS NOT NULL OR error_cbor IS NOT NULL"],
-          ["workflow_steps","input IS NOT NULL OR input_cbor IS NOT NULL OR output IS NOT NULL OR output_cbor IS NOT NULL OR error IS NOT NULL OR error_cbor IS NOT NULL"],
-          ["workflow_events","payload IS NOT NULL OR payload_cbor IS NOT NULL"],
-          ["workflow_hooks","metadata IS NOT NULL OR metadata_cbor IS NOT NULL OR resume_context IS NOT NULL"],
-          ["workflow_stream_chunks","octet_length(data)>0"],
-        ]) {
-          const key = table === "workflow_runs" ? "id" : "run_id";
-          const result: { rows: { count: number }[] } = await pg.query(`SELECT count(*)::integer AS count FROM workflow.${table} WHERE ${key}=ANY($1::text[]) AND (${payload})`,[ids]);
-          assert.equal(result.rows[0].count,0,`${table} retained user payloads.`);
-        }
-      } else {
-        const ids = new Set(scoped.map(row => row.runId));
-        for (const kind of ["steps","events","hooks"]) {
-          for (const name of await readdir(join(dataDir,kind)).catch(error => {
-            if (error.code === "ENOENT") return [];throw error;
-          })) {
-            if (!name.endsWith(".json")) continue;
-            const row = JSON.parse(await readFile(join(dataDir,kind,name),"utf8"));
-            if (!ids.has(row.runId)) continue;
-            const fields = kind === "steps" ? ["input","output","error"] : kind === "hooks" ? ["metadata","resumeContext"] : getEventDataRefFields(row.eventType);
-            const payload = kind === "events" ? row.eventData : row;
-            assert.ok(fields.every(field => payload?.[field] == null),`Local ${kind} retained a user payload.`);
+      async function verifyNativePayloads() {
+        if (pg) {
+          const ids = scoped.map(row => row.runId);
+          for (const [table,payload] of [
+            ["workflow_runs","input IS NOT NULL OR input_cbor IS NOT NULL OR output IS NOT NULL OR output_cbor IS NOT NULL OR error IS NOT NULL OR error_cbor IS NOT NULL"],
+            ["workflow_steps","input IS NOT NULL OR input_cbor IS NOT NULL OR output IS NOT NULL OR output_cbor IS NOT NULL OR error IS NOT NULL OR error_cbor IS NOT NULL"],
+            ["workflow_events","payload IS NOT NULL OR payload_cbor IS NOT NULL"],
+            ["workflow_hooks","metadata IS NOT NULL OR metadata_cbor IS NOT NULL OR resume_context IS NOT NULL"],
+            ["workflow_stream_chunks","octet_length(data)>0"],
+          ]) {
+            const key = table === "workflow_runs" ? "id" : "run_id";
+            const result: { rows: { count: number }[] } = await pg.query(`SELECT count(*)::integer AS count FROM workflow.${table} WHERE ${key}=ANY($1::text[]) AND (${payload})`,[ids]);
+            assert.equal(result.rows[0].count,0,`${table} retained user payloads.`);
+          }
+        } else {
+          const ids = new Set(scoped.map(row => row.runId));
+          for (const kind of ["steps","events","hooks"]) {
+            for (const name of await readdir(join(dataDir,kind)).catch(error => {
+              if (error.code === "ENOENT") return [];throw error;
+            })) {
+              if (!name.endsWith(".json")) continue;
+              const row = JSON.parse(await readFile(join(dataDir,kind,name),"utf8"));
+              if (!ids.has(row.runId)) continue;
+              const fields = kind === "steps" ? ["input","output","error"] : kind === "hooks" ? ["metadata","resumeContext"] : getEventDataRefFields(row.eventType);
+              const payload = kind === "events" ? row.eventData : row;
+              assert.ok(fields.every(field => payload?.[field] == null),`Local ${kind} retained a user payload.`);
+            }
+          }
+          for (const row of scoped) for (const stream of await world!.streams.list(row.runId)) {
+            const chunks = await world!.streams.getChunks!(row.runId,stream,{ limit: 1000 });
+            assert.ok(chunks.done,"Purged local stream must terminate.");
+            assert.equal(chunks.hasMore,false);assert.ok(chunks.data.every(chunk => chunk.data.length===0),"Purged local stream retained bytes.");
           }
         }
-        for (const row of scoped) for (const stream of await world!.streams.list(row.runId)) {
-          const chunks = await world!.streams.getChunks!(row.runId,stream,{ limit: 1000 });
-          assert.ok(chunks.done,"Purged local stream must terminate.");
-          assert.equal(chunks.hasMore,false);assert.ok(chunks.data.every(chunk => chunk.data.length===0),"Purged local stream retained bytes.");
-        }
       }
+      // Native local expiry precedes the event/step/hook/stream scrub. Wait for
+      // actual storage removal, rather than treating the marker as its receipt.
+      await eventually(async () => {
+        try { await verifyNativePayloads();return true; }
+        catch (error) { if (error instanceof AssertionError) return false;throw error; }
+      },"Native physical payload purge did not complete.");
     }
     console.log(`${provider} Workflow retention ${retention}: live input, terminal payload policy and native metadata checked.`);
   } catch (error) {
