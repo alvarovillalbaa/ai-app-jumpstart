@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { Readable } from "node:stream";
 import {
   DeleteObjectCommand,GetBucketVersioningCommand,GetObjectCommand,GetPublicAccessBlockCommand,
-  HeadObjectCommand,PutObjectCommand,S3Client,
+  HeadObjectCommand,ListObjectsV2Command,PutObjectCommand,S3Client,
 } from "@aws-sdk/client-s3";
 import { expect,it } from "vitest";
 import { awsS3Settings,awsS3UploadObjects } from "../../lib/uploads/aws-s3";
@@ -30,6 +30,8 @@ function fakeS3() {
       BlockPublicPolicy: publicBlock,RestrictPublicBuckets: publicBlock,
     } };
     if (command instanceof GetBucketVersioningCommand) return { Status: versioning };
+    if (command instanceof ListObjectsV2Command) return { Contents: [...objects.keys()]
+      .filter(key => key.startsWith(command.input.Prefix ?? "")).map(Key => ({ Key })),IsTruncated: false };
     if (command instanceof PutObjectCommand) {
       if (command.input.IfNoneMatch !== "*") throw new Error("unconditional write");
       const key = command.input.Key!;

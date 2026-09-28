@@ -4,10 +4,15 @@ import { uploadId } from "./schema";
 export { uploadId, uploadName } from "./schema";
 
 /** The owner is never embedded in a caller-supplied or public object path. */
-export function uploadObjectKey(owner: AccessOwner, rawId: string) {
-  const checked = accessOwner.parse(owner), id = uploadId.parse(rawId);
+export function uploadOwnerPrefix(owner: AccessOwner) {
+  const checked = accessOwner.parse(owner);
   const namespace = createHash("sha256").update(JSON.stringify([checked.tenant, checked.subject])).digest("hex");
-  return `uploads/v1/${namespace}/${id}`;
+  return `uploads/v1/${namespace}/`;
+}
+
+export function uploadObjectKey(owner: AccessOwner, rawId: string) {
+  const id = uploadId.parse(rawId);
+  return `${uploadOwnerPrefix(owner)}${id}`;
 }
 
 export interface PrivateUploadObjects {

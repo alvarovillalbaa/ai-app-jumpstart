@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { HeadObjectCommand,type S3Client } from "@aws-sdk/client-s3";
 import { awsS3Client,awsS3Settings,awsS3UploadObjects,verifyPrivateS3Bucket } from "../lib/uploads/aws-s3";
 import { uploadObjectKey } from "../lib/uploads/contract";
+import { inspectS3OwnerObjects } from "../lib/uploads/object-inventory";
 
 type Owner = { tenant: string;subject: string };
 type Created = { owner: Owner;id: string };
@@ -31,6 +32,8 @@ export async function exerciseAwsS3Bucket(client: S3Client,bucket: string) {
     const id = randomUUID(),initial = Buffer.from("jumpstart private S3 acceptance v1");
     created.push({ owner: first,id });
     await store.put(first,id,initial);
+    assert.equal(await inspectS3OwnerObjects(client,bucket,first),1);
+    assert.equal(await inspectS3OwnerObjects(client,bucket,second),0);
     assert.deepEqual(await store.get(first,id),Uint8Array.from(initial));
     assert.equal(await store.get(second,id),null);
     assert.equal(await store.delete(second,id),false);
@@ -51,6 +54,7 @@ export async function exerciseAwsS3Bucket(client: S3Client,bucket: string) {
     assert.equal(settled.every(result => result.status === "fulfilled" || conditionalWriteRejected(result.reason)),true,
       "The losing writer must fail because its S3 condition was rejected.");
     assert.deepEqual(await store.get(first,raceId),Uint8Array.from(attempts[winners[0]]));
+    assert.equal(await inspectS3OwnerObjects(client,bucket,first),2);
 
     stage = "owner deletion and missing-object reads";
     assert.equal(await store.delete(first,id),true);
@@ -58,6 +62,7 @@ export async function exerciseAwsS3Bucket(client: S3Client,bucket: string) {
     assert.equal(await store.delete(first,id),false);
     assert.equal(await store.delete(first,raceId),true);
     assert.equal(await store.get(first,raceId),null);
+    assert.equal(await inspectS3OwnerObjects(client,bucket,first),0);
   } catch (error) { failure = error; }
   const cleanupKeys: string[] = [];
   for (const item of created.reverse()) {

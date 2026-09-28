@@ -8,6 +8,7 @@ import { supabaseUploadCatalog } from "../../lib/uploads/catalog-remote";
 import { UploadIntake } from "../../lib/uploads/intake";
 import { uploadObjectContract } from "../contracts/uploads";
 import { uploadHandlers } from "../../lib/http/uploads";
+import { inspectSupabaseOwnerObjects } from "../../lib/uploads/object-inventory";
 
 const url = process.env.SUPABASE_URL,secret = process.env.SUPABASE_SECRET_KEY,anonKey = process.env.SUPABASE_ANON_KEY;
 const database = process.env.DATABASE_URL;
@@ -40,6 +41,16 @@ uploadObjectContract("live Supabase Storage",async () => {
     get: (owner,id) => raw.get(owner,id),delete: (owner,id) => raw.delete(owner,id),
   };
   return { store,close: async () => { for (const { owner,id } of created) await raw.delete(owner,id); } };
+});
+
+it("counts real private objects even without catalog rows and observes their removal",async () => {
+  const owner = { tenant: randomUUID(),subject: "operator-audit" },id = randomUUID();
+  await raw.put(owner,id,new TextEncoder().encode("unlinked private bytes"));
+  try {
+    expect(await inspectSupabaseOwnerObjects(storage,owner)).toBe(1);
+    expect(await inspectSupabaseOwnerObjects(storage,{ ...owner,subject: "other" })).toBe(0);
+  } finally { await raw.delete(owner,id); }
+  expect(await inspectSupabaseOwnerObjects(storage,owner)).toBe(0);
 });
 
 it("denies anonymous Storage operations and public downloads for a private object",async () => {
