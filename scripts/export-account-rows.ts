@@ -233,7 +233,7 @@ export async function exportSelectedAccountRows(provider: Provider,owner: Access
 }
 
 /** Offline integrity verification; this deliberately has no backend credentials or network path. */
-export async function verifyAccountRowExport(path: string) {
+export async function verifyAccountRowExportDetails(path: string) {
   const details = await lstat(path);
   if (!details.isFile() || details.isSymbolicLink() || (details.mode & 0o077) !== 0 ||
       details.size < 1 || details.size > MAX_BYTES) throw new Error("Account row export file is unsafe.");
@@ -288,8 +288,13 @@ export async function verifyAccountRowExport(path: string) {
     if (!manifest || !ended || bytes !== actual.size || final.size !== actual.size ||
         final.mtimeMs !== actual.mtimeMs || final.ctimeMs !== actual.ctimeMs)
       throw new Error("Account row export is incomplete or changed during verification.");
-    return { provider: manifest.provider,rows };
+    return { provider: manifest.provider,owner: manifest.owner,counts,rows };
   } finally { await file.close(); }
+}
+
+export async function verifyAccountRowExport(path: string) {
+  const { provider,rows } = await verifyAccountRowExportDetails(path);
+  return { provider,rows };
 }
 
 async function main(args: string[],env: NodeJS.ProcessEnv) {

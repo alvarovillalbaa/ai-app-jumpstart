@@ -153,6 +153,27 @@ export function accountOwnerRowQueries(provider) {
   });
 }
 
+/** Delete children before parents using the same owner joins as the archive and count probes. */
+export function accountOwnerDeleteQueries(provider) {
+  if (provider !== "sqlite" && provider !== "sql") throw new Error("Account row deletion supports SQLite or PostgreSQL/Supabase.");
+  const entities = new Map(accountDataInventory.map(entry => [entry.entity,entry]));
+  const table = entry => provider === "sql" ? `public.${entry.sql}` : entry.sqlite;
+  const parameters = provider === "sql" ? ["$1","$2"] : ["?","?"];
+  const key = provider === "sql" ? "ctid" : "rowid";
+  return accountDataInventory.filter(entry => entry[provider] && entry.owner !== "global-expiring" && entry.owner !== "closure-control")
+    .reverse().map(entry => {
+      let current = entry,index = 0;
+      const joins = [];
+      while (current.owner !== "direct") {
+        const parent = entities.get(current.owner);
+        joins.push(`JOIN ${table(parent)} AS t${index+1} ON t${index}.${current.via[0]}=t${index+1}.${current.via[1]}`);
+        current = parent;index++;
+      }
+      const owned = `SELECT t0.${key} FROM ${table(entry)} AS t0 ${joins.join(" ")} WHERE t${index}.tenant=${parameters[0]} AND t${index}.subject=${parameters[1]}`;
+      return { entity: entry.entity,sql: `DELETE FROM ${table(entry)} WHERE ${key} IN (${owned})` };
+    });
+}
+
 /** Unattributable child rows must be investigated before any erasure claim. */
 export function accountOrphanCountQueries(provider) {
   if (provider !== "sqlite" && provider !== "sql") throw new Error("Account orphan probes support SQLite or PostgreSQL/Supabase.");
