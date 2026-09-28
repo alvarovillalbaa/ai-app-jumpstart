@@ -81,7 +81,7 @@ try {
     imageManifest = JSON.parse(await docker("run", "--rm", "--entrypoint", "cat", image, "/app/.next/routes-manifest.json"));
   }
   await docker("network", "create", name);
-  await runContainer("postgres", "postgres:17-bookworm", { POSTGRES_PASSWORD: password, POSTGRES_USER: "auth_test", POSTGRES_DB: "auth_test" },supabaseStorage || postgresData ? ["--publish","127.0.0.1::5432"] : []);
+  await runContainer("postgres", "postgres:17-bookworm@sha256:639ab7ceb90e13123085b741fb31ef493fba25463002f6da665352e7b534b652", { POSTGRES_PASSWORD: password, POSTGRES_USER: "auth_test", POSTGRES_DB: "auth_test" },supabaseStorage || postgresData ? ["--publish","127.0.0.1::5432"] : []);
   // TCP readiness excludes the image's temporary socket-only bootstrap server.
   await waitFor(async () => (await docker("exec", `${name}-postgres`, "pg_isready", "-h", "127.0.0.1", "-U", "auth_test", "-d", "auth_test")).includes("accepting"), "PostgreSQL", async () => {
     if (await docker("inspect", "--format", "{{.State.Running}}", `${name}-postgres`) === "true") return true;

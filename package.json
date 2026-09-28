@@ -50,6 +50,7 @@
     "budgets:reconcile": "tsx --env-file-if-exists=.env.local scripts/reconcile-budget.ts",
     "check": "npm run typecheck && npm run lint && npm test",
     "check:docs": "node scripts/check-doc-links.mjs",
+    "check:container-pins": "node scripts/check-container-image-pins.mjs",
     "sbom": "npm sbom --sbom-format cyclonedx --package-lock-only",
     "test:ai": "node scripts/eval-offline.mjs",
     "test:session-runtime": "tsx scripts/test-session-runtime.ts",

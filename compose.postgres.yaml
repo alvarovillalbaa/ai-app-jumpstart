@@ -17,7 +17,7 @@ services:
       postgres:
         condition: service_healthy
   postgres:
-    image: postgres:17-bookworm
+    image: postgres:17-bookworm@sha256:639ab7ceb90e13123085b741fb31ef493fba25463002f6da665352e7b534b652
     environment:
       POSTGRES_DB: app
       POSTGRES_USER: app

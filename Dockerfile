@@ -1,5 +1,5 @@
-# syntax=docker/dockerfile:1
-FROM node:24-bookworm-slim AS dependencies
+# syntax=docker/dockerfile:1@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32
+FROM node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY packages/workflow-postgres ./packages/workflow-postgres
@@ -18,7 +18,7 @@ RUN find .next/cache -mindepth 1 -delete
 FROM dependencies AS production-dependencies
 RUN npm prune --omit=dev --ignore-scripts --no-audit --no-fund
 
-FROM node:24-bookworm-slim AS runtime
+FROM node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS runtime
 WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000
 COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
