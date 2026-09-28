@@ -2,6 +2,7 @@ import { test,expect,type APIRequestContext,type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { Client } from "eve/client";
 import { encodeReviewedUploadMessage } from "../../lib/uploads/chat-reference";
+import { runHostedSmoke } from "../../scripts/smoke-hosted.mjs";
 import { auditAccessibility } from "../helpers/accessibility";
 
 const auth = process.env.TEST_AUTH_ORIGIN!,password = "Fixture-only-password-42!";
@@ -14,6 +15,11 @@ async function user(request: APIRequestContext) {
   expect(response.status()).toBe(200);return { email,token: (await response.json()).access_token as string };
 }
 const headers = (token: string) => ({ authorization: `Bearer ${token}` });
+test("portable hosted upload smoke verifies scanner-backed private bytes and cleanup",async ({ request }) => {
+  const alice = await user(request),bob = await user(request);
+  const result = await runHostedSmoke({ url: process.env.APP_ORIGIN!,token: alice.token,otherToken: bob.token,uploadDownload: true });
+  expect(result.uploadId).toMatch(/^[0-9a-f-]{36}$/i);
+});
 async function login(page: Page,email: string) {
   await page.goto("/login?next=/s");await page.getByLabel("Email",{ exact: true }).fill(email);await page.getByLabel("Password",{ exact: true }).fill(password);
   await page.getByRole("button",{ name: "Sign in",exact: true }).click();await expect.poll(() => new URL(page.url()).pathname).toBe("/s");

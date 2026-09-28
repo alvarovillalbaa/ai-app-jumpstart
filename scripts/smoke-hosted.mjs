@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,9 +23,9 @@ function targetOrigin(value) {
 
 function message(error) { return error instanceof Error ? error.message : "Unknown error"; }
 
-async function cliGet(origin, token, id) {
+async function cliJson(origin, token, args) {
   const executable = fileURLToPath(new URL("./app-cli.ts", import.meta.url));
-  const child = spawn(process.execPath, ["--import", "tsx", executable, "get", id], {
+  const child = spawn(process.execPath, ["--import", "tsx", executable, ...args], {
     cwd: fileURLToPath(new URL("../", import.meta.url)),
     env: { ...process.env, APP_API_URL: origin, APP_API_TOKEN: token },
     stdio: ["ignore", "pipe", "pipe"],
@@ -34,8 +34,99 @@ async function cliGet(origin, token, id) {
   child.stdout.on("data", chunk => { stdout = (stdout + chunk).slice(-100_000); });
   child.stderr.on("data", chunk => { stderr = (stderr + chunk).slice(-1000); });
   const [code, signal] = await once(child, "exit");
-  if (code !== 0 || signal) throw new Error(`CLI record read failed (${signal ?? code}): ${stderr.replaceAll(token, "[redacted]")}`);
+  if (code !== 0 || signal) throw new Error(`CLI read failed (${signal ?? code}): ${stderr.replaceAll(token, "[redacted]")}`);
   return JSON.parse(stdout);
+}
+
+async function runUploadSmoke({ request, origin, token, otherToken, protection, authorized, other, ownerClient, download }) {
+  const marker = randomUUID(), name = `hosted-smoke-${marker}.txt`;
+  const bytes = Buffer.from(`Private hosted upload smoke ${marker}\n`);
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const uploadId = /^[0-9a-f-]{36}$/i;
+  const checkMetadata = (row, id) => {
+    assert.ok(row && typeof row === "object", "Private upload metadata is invalid");
+    assert.ok(row.id === id, "Private upload ID changed");
+    assert.ok(row.name === name, "Private upload name changed");
+    assert.equal(row.size, bytes.length, "Private upload size changed");
+    assert.ok(row.sha256 === digest, "Private upload digest changed");
+    assert.equal(row.state, "quarantined", "Private upload left quarantine before review");
+    assert.ok(!JSON.stringify(row).includes(bytes.toString("utf8")), "Private bytes appeared in upload metadata");
+  };
+  console.log(`Temporary upload: ${name}`);
+  let upload, failure, cleanupFailure, foreignClient;
+  try {
+    const created = await request("/api/v1/uploads", {
+      method: "POST", body: bytes, timeoutMs: 60_000,
+      headers: { ...authorized, "content-type": "application/octet-stream",
+        "x-upload-name": encodeURIComponent(name), "x-upload-media-type": "text/plain" },
+    });
+    assert.equal(created.status, 201, "Private upload creation failed");
+    const row = await created.json();
+    assert.ok(uploadId.test(row?.id), "Private upload returned an invalid ID");
+    checkMetadata(row, row.id);
+    upload = row;
+    const path = `/api/v1/uploads/${upload.id}`;
+    const ownRead = await request(path, { headers: authorized });
+    assert.equal(ownRead.status, 200, "Owner cannot read private upload metadata");
+    checkMetadata(await ownRead.json(), upload.id);
+    assert.equal((await request(path)).status, 401, "Anonymous caller can read private upload metadata");
+    assert.equal((await request(path, { headers: other })).status, 404, "Other owner can read private upload metadata");
+    assert.equal((await request(path, { method: "DELETE", headers: other })).status, 404,
+      "Other owner can delete private upload");
+    const otherList = await request("/api/v1/uploads", { headers: other });
+    assert.equal(otherList.status, 200, "Other owner cannot list private uploads");
+    assert.ok(!(await otherList.json()).items.some(item => item.id === upload.id),
+      "Other owner can list private upload metadata");
+    checkMetadata(await cliJson(origin, token, ["uploads", "get", upload.id]), upload.id);
+    const ownerMcp = await ownerClient.callTool({ name: "uploads_get", arguments: { id: upload.id } });
+    assert.notEqual(ownerMcp.isError, true, "Owner MCP upload read failed");
+    checkMetadata(JSON.parse(ownerMcp.content[0].text), upload.id);
+    foreignClient = new Client({ name: "hosted-upload-isolation", version: "1" });
+    await foreignClient.connect(new StreamableHTTPClientTransport(new URL(`${origin}/api/mcp`), {
+      requestInit: { headers: { ...protection, authorization: `Bearer ${otherToken}` } },
+    }));
+    const foreignMcp = await foreignClient.callTool({ name: "uploads_get", arguments: { id: upload.id } });
+    assert.equal(foreignMcp.isError, true, "Other owner can read private upload through MCP");
+    if (download) {
+      assert.equal((await request(`${path}/download`, { headers: other })).status, 404,
+        "Other owner can download private upload");
+      const ownDownload = await request(`${path}/download`, { headers: authorized, timeoutMs: 60_000 });
+      assert.equal(ownDownload.status, 200, "Owner scan-on-read download failed");
+      assert.equal(ownDownload.headers.get("content-type"), "application/octet-stream");
+      const received = Buffer.from(await ownDownload.arrayBuffer());
+      assert.equal(received.length, bytes.length, "Scanned private download size changed");
+      assert.ok(createHash("sha256").update(received).digest("hex") === digest,
+        "Scanned private download bytes changed");
+    }
+  } catch (error) { failure = error; }
+  finally {
+    try { await foreignClient?.close(); } catch (error) { cleanupFailure = error; }
+    if (!upload) {
+      // A lost POST response may have stored bytes. Reconcile by the unique
+      // filename and digest; never retry the write or delete another object.
+      try {
+        const listed = await request("/api/v1/uploads", { headers: authorized });
+        if (listed.status === 200) {
+          const matches = (await listed.json()).items.filter(item => item.name === name && item.sha256 === digest && uploadId.test(item.id));
+          if (matches.length === 1) upload = matches[0];
+          else if (matches.length > 1) throw new Error("Temporary upload cleanup found duplicate matches");
+        }
+      } catch (error) { cleanupFailure = error; }
+    }
+    if (upload) {
+      try {
+        const path = `/api/v1/uploads/${upload.id}`;
+        const deleted = await request(path, { method: "DELETE", headers: authorized });
+        assert.equal(deleted.status, 204, "Temporary upload cleanup failed");
+        assert.equal((await request(path, { headers: authorized })).status, 404,
+          "Temporary upload remains visible after deletion");
+      } catch (error) { cleanupFailure = error; }
+    }
+  }
+  if (failure && cleanupFailure) throw new Error(`${message(failure)}; cleanup: ${message(cleanupFailure)}`);
+  if (failure) throw failure;
+  if (cleanupFailure) throw cleanupFailure;
+  return upload.id;
 }
 
 async function browserRead({ origin, token, otherToken, protection, title }) {
@@ -184,9 +275,9 @@ async function runAgentSmoke({ origin, token, otherToken, protection, request })
 }
 
 /**
- * @param {{url: string,token: string,otherToken: string,accounts?: boolean,agent?: boolean,browser?: boolean,accountBrowser?: boolean,browserAccounts?: import("./helpers/hosted-account-browser.mjs").AccountBrowserCredentials}} options
+ * @param {{url: string,token: string,otherToken: string,accounts?: boolean,agent?: boolean,browser?: boolean,accountBrowser?: boolean,uploads?: boolean,uploadDownload?: boolean,browserAccounts?: import("./helpers/hosted-account-browser.mjs").AccountBrowserCredentials}} options
  */
-export async function runHostedSmoke({ url, token, otherToken, accounts = false, agent = false, browser = false,accountBrowser = false,browserAccounts }) {
+export async function runHostedSmoke({ url, token, otherToken, accounts = false, agent = false, browser = false,accountBrowser = false,uploads = false,uploadDownload = false,browserAccounts }) {
   const origin = targetOrigin(url);
   if (agent && !accounts) throw new Error("Agent smoke requires the two-account mode.");
   if (!token || !otherToken || token === otherToken) throw new Error("Set distinct APP_API_TOKEN and APP_API_OTHER_TOKEN with record read/write access for different owners.");
@@ -196,9 +287,9 @@ export async function runHostedSmoke({ url, token, otherToken, accounts = false,
   const authorized = { authorization: `Bearer ${token}` };
   const other = { authorization: `Bearer ${otherToken}` };
   const request = (path, options = {}) => {
-    const { headers, ...rest } = options;
+    const { headers, timeoutMs = 15_000, ...rest } = options;
     return fetch(new URL(path, origin), {
-      redirect: "error", signal: AbortSignal.timeout(15_000), ...rest,
+      redirect: "error", signal: AbortSignal.timeout(timeoutMs), ...rest,
       headers: { ...protection, ...headers },
     });
   };
@@ -229,7 +320,7 @@ export async function runHostedSmoke({ url, token, otherToken, accounts = false,
 
   const title = `Hosted smoke ${randomUUID()}`;
   console.log(`Temporary record: ${title}`);
-  let record, client, failure, cleanupFailure;
+  let record, client, failure, cleanupFailure, uploadId;
   try {
     const created = await request("/api/v1/records", {
       method: "POST", headers: { ...authorized, "content-type": "application/json" },
@@ -253,11 +344,12 @@ export async function runHostedSmoke({ url, token, otherToken, accounts = false,
     const otherList = await request("/api/v1/records?limit=100", { headers: other });
     assert.equal(otherList.status, 200, "Other owner's record list failed");
     assert.ok(!(await otherList.json()).items.some(item => item.id === record.id), "Other owner can list the temporary record");
-    assert.deepEqual(await cliGet(origin, token, record.id), record);
+    assert.deepEqual(await cliJson(origin, token, ["get", record.id]), record);
     client = new Client({ name: "hosted-smoke", version: "1" });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${origin}/api/mcp`), { requestInit: { headers: { ...protection, ...authorized } } }));
     const resource = await client.readResource({ uri: `records:///${record.id}` });
     assert.deepEqual(JSON.parse(resource.contents[0].text), record);
+    if (uploads || uploadDownload) uploadId = await runUploadSmoke({ request, origin, token, otherToken, protection, authorized, other, ownerClient: client, download: uploadDownload });
     if (browser) await browserRead({ origin, token, otherToken, protection, title });
     if (checkedAccounts) await accountBrowserRead({ origin,protection,accounts: checkedAccounts,title });
   } catch (error) { failure = error; }
@@ -275,20 +367,20 @@ export async function runHostedSmoke({ url, token, otherToken, accounts = false,
   if (cleanupFailure) throw cleanupFailure;
   const agentResult = agent ? await runAgentSmoke({ origin, token, otherToken, protection, request }) : undefined;
   if (checkedAccounts && agentResult) await accountBrowserRead({ origin,protection,accounts: checkedAccounts,operationId: agentResult.operationId });
-  return { origin, recordId: record.id, agent: agentResult, browser,accountBrowser };
+  return { origin, recordId: record.id, uploadId, agent: agentResult, browser,accountBrowser };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   const flags = new Set(args);
-  if (flags.size !== args.length || args.some(arg => !["--accounts", "--agent", "--browser","--account-browser"].includes(arg))) {
-    console.error("Supported options: --accounts (no model call), --agent (one owned model turn), --browser (token records UI), --account-browser (real sign-in, reload, logout and account isolation).");
+  if (flags.size !== args.length || args.some(arg => !["--accounts", "--agent", "--browser","--account-browser","--uploads","--upload-download"].includes(arg))) {
+    console.error("Supported options: --accounts (budget access, no model call), --agent (one owned model turn), --browser (token records UI), --account-browser (real sign-in, reload, logout and account isolation), --uploads (private upload isolation and cleanup), --upload-download (also require fresh-scanned exact bytes).");
     process.exitCode = 2;
   } else {
-    const agent = flags.has("--agent"),accountBrowser = flags.has("--account-browser"),accounts = agent || flags.has("--accounts"), browser = flags.has("--browser");
-    runHostedSmoke({ url: process.env.APP_API_URL, token: process.env.APP_API_TOKEN, otherToken: process.env.APP_API_OTHER_TOKEN, accounts, agent, browser,accountBrowser,
+    const agent = flags.has("--agent"),accountBrowser = flags.has("--account-browser"),accounts = agent || flags.has("--accounts"), browser = flags.has("--browser"),uploadDownload = flags.has("--upload-download"),uploads = flags.has("--uploads") || uploadDownload;
+    runHostedSmoke({ url: process.env.APP_API_URL, token: process.env.APP_API_TOKEN, otherToken: process.env.APP_API_OTHER_TOKEN, accounts, agent, browser,accountBrowser,uploads,uploadDownload,
       browserAccounts: accountBrowser ? { primary: { email: process.env.APP_SMOKE_EMAIL,password: process.env.APP_SMOKE_PASSWORD },other: { email: process.env.APP_SMOKE_OTHER_EMAIL,password: process.env.APP_SMOKE_OTHER_PASSWORD } } : undefined })
-      .then(({ origin }) => console.log(`Hosted smoke passed for ${origin}: readiness, Eve, web, ${accounts ? "Supabase accounts, " : ""}REST, owner isolation, CLI and MCP${browser ? ", Chromium records UI" : ""}${agent ? ", one owned agent turn and source-stream read" : ""}${accountBrowser ? ", real account sign-in/reload/logout and browser isolation" : ""}.`))
+      .then(({ origin }) => console.log(`Hosted smoke passed for ${origin}: readiness, Eve, web, ${accounts ? "Supabase accounts, " : ""}REST, owner isolation, CLI and MCP${uploads ? ", private upload and cleanup" : ""}${uploadDownload ? ", fresh-scanned exact download bytes" : ""}${browser ? ", Chromium records UI" : ""}${agent ? ", one owned agent turn and source-stream read" : ""}${accountBrowser ? ", real account sign-in/reload/logout and browser isolation" : ""}.`))
       .catch(error => { console.error(message(error)); process.exitCode = 1; });
   }
 }
