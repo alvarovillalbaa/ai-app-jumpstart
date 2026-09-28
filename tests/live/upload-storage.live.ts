@@ -138,8 +138,8 @@ if (process.env.TEST_DISPOSABLE_SUPABASE === "1") it("rehearses SQLite account r
       provider: "sqlite",rows: 1,objects: 2,status: "fenced-rehearsal" });
     expect(await verifyRehearsedAccountBundle(bundle,rehearsal)).toMatchObject({ rows: 1,objects: 2 });
     const local = localUploadObjects(join(rehearsal,"uploads"));
-    expect(await local.get(owner,id)).toEqual(bytes);
-    expect(await local.get(owner,orphan)).toEqual(new TextEncoder().encode("portable orphan bytes"));
+    expect(await local.get(owner,id)).toEqual(Buffer.from(bytes));
+    expect(await local.get(owner,orphan)).toEqual(Buffer.from("portable orphan bytes"));
     expect(await local.get(other,foreign)).toBeNull();
   } finally {
     await Promise.allSettled([raw.delete(owner,id),raw.delete(owner,orphan),raw.delete(other,foreign)]);
