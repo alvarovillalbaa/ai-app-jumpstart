@@ -24,6 +24,8 @@ import { exportAccountObjects } from "../../scripts/export-account-objects";
 import { listSupabaseOwnerObjectIds } from "../../lib/uploads/object-export";
 import { verifyExport } from "../../scripts/verify-export";
 import { exportAccountBundle,verifyAccountBundle } from "../../scripts/export-account-bundle";
+import { eraseSelectedAccountObjects } from "../../scripts/erase-account-objects";
+import { eraseAccountRows } from "../../scripts/erase-account-rows";
 import { setPostgresAccountFence,setSqliteAccountFence } from "../../scripts/fence-account-writes";
 import { rehearseAccountBundle,verifyRehearsedAccountBundle } from "../../scripts/rehearse-account-bundle";
 
@@ -98,6 +100,14 @@ if (process.env.TEST_DISPOSABLE_SUPABASE === "1") it("bundles real Supabase cata
     await expect(exportAccountBundle("postgres","supabase",mismatchOwner,join(dir,"mismatch"),env))
       .rejects.toThrow("differs from its catalog row");
     expect(readdirSync(dir)).not.toContain("mismatch");
+    await expect(eraseSelectedAccountObjects("supabase",owner,output,env)).resolves.toMatchObject({
+      remainingBefore: 2,deleted: 0,status: "private-object-erasure-planned" });
+    await expect(eraseSelectedAccountObjects("supabase",owner,output,env,true)).resolves.toMatchObject({
+      remainingBefore: 2,deleted: 2,status: "private-objects-erased" });
+    expect(await inspectSupabaseOwnerObjects(storage,owner)).toBe(0);
+    expect(await raw.get(other,foreign)).toEqual(new TextEncoder().encode("foreign owner bytes"));
+    await expect(eraseAccountRows("postgres",owner,output,env,true)).resolves.toMatchObject({
+      rows: 1,status: "application-rows-erased" });
   } finally {
     await Promise.allSettled([...(activeId ? [raw.delete(owner,activeId)] : []),raw.delete(owner,orphan),
       raw.delete(other,foreign),raw.delete(mismatchOwner,mismatch)]);
