@@ -16,9 +16,11 @@ const chat = process.argv.includes("--chat");
 const containerMode = process.argv.includes("--container");
 const uploads = process.argv.includes("--uploads");
 const supabaseData = process.argv.includes("--supabase");
+const postgresData = process.argv.includes("--postgres");
 if (containerMode && !chat) throw new Error("Container mode requires --chat.");
 if (uploads && (!chat || containerMode)) throw new Error("Reviewed uploads require host --chat mode.");
 if (supabaseData && containerMode) throw new Error("Supabase Auth/data mode requires the host browser harness; do not combine --supabase with --container.");
+if (postgresData && (supabaseData || containerMode)) throw new Error("PostgreSQL application-data mode requires the host browser harness and cannot combine with --supabase.");
 // Real isolated Supabase Auth, PostgreSQL and SMTP delivery. No hosted account.
 const name = `jumpstart-auth-${randomBytes(5).toString("hex")}`;
 const directory = await mkdtemp(join(tmpdir(), `${name}-`));
@@ -63,7 +65,7 @@ try {
     imageManifest = JSON.parse(await docker("run", "--rm", "--entrypoint", "cat", image, "/app/.next/routes-manifest.json"));
   }
   await docker("network", "create", name);
-  await runContainer("postgres", "postgres:17-bookworm", { POSTGRES_PASSWORD: password, POSTGRES_USER: "auth_test", POSTGRES_DB: "auth_test" },supabaseData ? ["--publish","127.0.0.1::5432"] : []);
+  await runContainer("postgres", "postgres:17-bookworm", { POSTGRES_PASSWORD: password, POSTGRES_USER: "auth_test", POSTGRES_DB: "auth_test" },supabaseData || postgresData ? ["--publish","127.0.0.1::5432"] : []);
   // TCP readiness excludes the image's temporary socket-only bootstrap server.
   await waitFor(async () => (await docker("exec", `${name}-postgres`, "pg_isready", "-h", "127.0.0.1", "-U", "auth_test", "-d", "auth_test")).includes("accepting"), "PostgreSQL", async () => {
     if (await docker("inspect", "--format", "{{.State.Running}}", `${name}-postgres`) === "true") return true;
@@ -71,9 +73,11 @@ try {
     throw new Error(`PostgreSQL startup failed: ${logs.replaceAll(password,"[redacted]").slice(-1200)}`);
   });
   await docker("exec", `${name}-postgres`, "psql", "-U", "auth_test", "-d", "auth_test", "-v", "ON_ERROR_STOP=1", "-c", "CREATE ROLE postgres NOLOGIN; CREATE SCHEMA auth AUTHORIZATION auth_test; ALTER ROLE auth_test SET search_path = auth, public;");
-  if (supabaseData) {
+  if (supabaseData || postgresData) {
     await docker("exec",`${name}-postgres`,"psql","-U","auth_test","-d","auth_test","-v","ON_ERROR_STOP=1","-c","CREATE DATABASE app_data_test;");
     databaseUrl = `postgresql://auth_test:${password}@127.0.0.1:${await portOf(`${name}-postgres`,5432)}/app_data_test`;
+  }
+  if (supabaseData) {
     dataFixture = await startSupabaseDataFixture({ directory,jwtSecret,databaseUrl,beforeMigrate: async () => {
       // Version from Supabase's official self-hosting compose. The service owns
       // both storage.objects and private bytes; this is not the app's local adapter.
@@ -140,6 +144,10 @@ try {
   const admin = await new SignJWT({ role: "service_role" }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("1h").sign(key);
   redactions.push(anon,admin);
   const env = { ...process.env, NODE_ENV: "production", AUTH_PROVIDER: "supabase", SUPABASE_AUTH_URL: publicAuthOrigin, SUPABASE_PUBLISHABLE_KEY: anon, APP_API_KEYS: "[]", APP_ORIGIN: appOrigin, DATA_PROVIDER: "sqlite", SQLITE_PATH: join(directory, "records.sqlite"), UPLOAD_STORAGE_PROVIDER: "local", UPLOAD_LOCAL_ROOT: join(directory, "uploads") };
+  if (postgresData) {
+    env.DATA_PROVIDER = "postgres";env.DATABASE_URL = databaseUrl;
+    await command(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/migrate.ts"],{ env,stdio: "inherit" });
+  }
   if (supabaseData) {
     env.DATA_PROVIDER = "supabase";env.SUPABASE_URL = publicAuthOrigin;env.SUPABASE_SECRET_KEY = admin;
     env.UPLOAD_STORAGE_PROVIDER = "supabase";
@@ -202,12 +210,14 @@ try {
   await waitFor(async () => {
     return (await fetch(`${appOrigin}/api/health/live`, { signal: AbortSignal.timeout(1000) })).ok;
   }, "Production application", async () => web.exitCode === null && web.signalCode === null);
-  await command(process.execPath, ["node_modules/@playwright/test/cli.js", "test", "--config", "playwright.auth.config.ts", ...process.argv.slice(2).filter(arg => !["--chat","--container","--uploads","--supabase"].includes(arg))], { env: { ...env, TEST_CHAT: chat ? "1" : "", TEST_CHAT_UPLOADS: uploads ? "1" : "", TEST_AUTH_ORIGIN: publicAuthOrigin, TEST_AUTH_ADMIN_KEY: admin, TEST_MAIL_ORIGIN: mailOrigin,
+  await command(process.execPath, ["node_modules/@playwright/test/cli.js", "test", "--config", "playwright.auth.config.ts", ...process.argv.slice(2).filter(arg => !["--chat","--container","--uploads","--supabase","--postgres"].includes(arg))], { env: { ...env, TEST_CHAT: chat ? "1" : "", TEST_CHAT_UPLOADS: uploads ? "1" : "", TEST_AUTH_ORIGIN: publicAuthOrigin, TEST_AUTH_ADMIN_KEY: admin, TEST_MAIL_ORIGIN: mailOrigin,
     TEST_RECEIPT_GATE_HOST: chat ? join(directory, "gate") : "", TEST_MODEL_RECEIPTS_HOST: chat ? join(directory, "models.txt") : "",
     TEST_FAILURE_RECEIPTS_HOST: chat ? join(directory, "failures.txt") : "", TEST_CHAT_CONTAINER: containerMode ? `${name}-app` : "" }, stdio: "inherit" });
   if (supabaseData && existsSync(env.SQLITE_PATH)) throw new Error("Supabase mode created an unexpected SQLite application database.");
   if (supabaseData && existsSync(env.UPLOAD_LOCAL_ROOT)) throw new Error("Supabase mode created unexpected local application upload bytes.");
+  if (postgresData && existsSync(env.SQLITE_PATH)) throw new Error("PostgreSQL mode created an unexpected SQLite application database.");
   console.log(supabaseData ? `Real Supabase Auth, migrated PostgREST and private Storage ${uploads ? "reviewed-upload" : chat ? "account-chat" : "account"} browser contract passed.`
+    : postgresData ? `Real Supabase Auth and migrated PostgreSQL ${uploads ? "reviewed-upload" : chat ? "account-chat" : "account"} browser contract passed.`
     : containerMode ? "Account chat browser contract passed through the production container." : chat ? "Account chat browser contract passed with real Auth and compiled Eve." : "Real Supabase Auth browser contract passed.");
 } catch (error) {
   failed = true;

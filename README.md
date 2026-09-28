@@ -55,6 +55,7 @@ The CLI can also create a private, paged [export of visible application data](do
 | --- | --- |
 | SQLite | `DATA_PROVIDER=sqlite`; one persistent instance; [consistent private backup command](docs/operations.md) |
 | PostgreSQL / managed PostgreSQL | `DATA_PROVIDER=postgres`, `DATABASE_URL`; adapter, migrations, contract tests and a [private archive/restore rehearsal](docs/operations.md) |
+| PostgreSQL with signed-in accounts | The same real-Auth account, chat and reviewed-file browser suites run against migrated PostgreSQL application data in CI; [commands and scope](docs/testing.md) |
 | Supabase PostgREST | `DATA_PROVIDER=supabase`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`; migrated project required |
 | Convex | `DATA_PROVIDER=convex`, `CONVEX_SITE_URL`, `CONVEX_BACKEND_SECRET`; internal functions behind an authenticated HTTP action |
 | AWS S3 private uploads | Optional `UPLOAD_STORAGE_PROVIDER=aws-s3`, region and private bucket; works with any application data provider on a Node host; [bucket requirements](docs/uploads.md#aws-s3-private-object-storage) |
@@ -86,6 +87,9 @@ npm run test:e2e
 npm run test:container
 npm run test:chat:container
 npm run test:chat:uploads
+npm run test:auth:postgres
+npm run test:chat:postgres
+npm run test:chat:uploads:postgres
 npm run test:auth:supabase
 npm run test:chat:supabase
 npm run test:chat:uploads:supabase
@@ -94,7 +98,7 @@ npm run test:workflow-compose
 npm run test:workflow-retention
 ```
 
-`test:ai` uses a dedicated fixture model through Eve's real runtime with no paid model calls. `eval:live` exercises the unchanged production model and requires credentials. `test:providers` starts isolated real PostgreSQL, PostgREST and Convex services without hosted accounts. Run `test:integration` against a disposable configured PostgreSQL/Supabase/Convex backend; missing configuration fails explicitly. Reuse `tests/contracts/records.ts` for new providers. The `test:auth:supabase`, `test:chat:supabase` and `test:chat:uploads:supabase` modes run real account/browser/runtime contracts with the Supabase application adapters against disposable PostgreSQL, JWT-verifying PostgREST and the real private Supabase Storage API. The account mode also runs the reusable live object contract and proves quarantine blocks anonymous and registered users even alongside a permissive fixture policy. They require Docker, Chromium and the production build, and use deterministic models without hosted credentials. See [testing](docs/testing.md).
+`test:ai` uses a dedicated fixture model through Eve's real runtime with no paid model calls. `eval:live` exercises the unchanged production model and requires credentials. `test:providers` starts isolated real PostgreSQL, PostgREST and Convex services without hosted accounts. Run `test:integration` against a disposable configured PostgreSQL/Supabase/Convex backend; missing configuration fails explicitly. Reuse `tests/contracts/records.ts` for new providers. The three `:postgres` browser modes run the real account, chat and reviewed-upload contracts with Supabase Auth, migrated PostgreSQL application data and local private uploads. The three `:supabase` modes run the same contracts with the Supabase application adapters against disposable PostgreSQL, JWT-verifying PostgREST and the real private Supabase Storage API. The Supabase account mode also runs the reusable live object contract and proves quarantine blocks anonymous and registered users even alongside a permissive fixture policy. These modes require Docker, Chromium and the production build, and use deterministic models without hosted credentials. See [testing](docs/testing.md).
 
 After deployment, run the provider-neutral [`smoke:hosted` check](docs/hosting.md#post-deployment-data-smoke) with two temporary record credentials. For enabled Supabase accounts, run its `--accounts` mode with two distinct signed-in users. Add `--browser` to verify the deployed records UI in Chromium. These modes verify the web, agent, REST, CLI and MCP surfaces without a model call; `--agent` explicitly adds one owned turn.
 
