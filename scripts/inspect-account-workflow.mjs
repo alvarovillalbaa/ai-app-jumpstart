@@ -65,6 +65,8 @@ export async function inspectAccountWorkflow(metadataProvider, owner, env) {
       throw new Error("Unsupported or restricted Workflow schema.");
     const result = await db.query(`WITH RECURSIVE linked(id) AS (
         SELECT id FROM workflow.workflow_runs WHERE id = ANY($1::text[])
+          OR attributes->>'$eve.root' = ANY($1::text[])
+          OR attributes->>'$eve.parent' = ANY($1::text[])
         UNION
         SELECT child.id FROM workflow.workflow_runs child JOIN linked parent
           ON child.attributes->>'$eve.parent' = parent.id OR child.attributes->>'$eve.root' = parent.id
