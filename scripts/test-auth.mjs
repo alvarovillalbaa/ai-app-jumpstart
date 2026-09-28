@@ -17,16 +17,29 @@ const containerMode = process.argv.includes("--container");
 const uploads = process.argv.includes("--uploads");
 const supabaseData = process.argv.includes("--supabase");
 const postgresData = process.argv.includes("--postgres");
+const convexData = process.argv.includes("--convex");
 if (containerMode && !chat) throw new Error("Container mode requires --chat.");
 if (uploads && (!chat || containerMode)) throw new Error("Reviewed uploads require host --chat mode.");
 if (supabaseData && containerMode) throw new Error("Supabase Auth/data mode requires the host browser harness; do not combine --supabase with --container.");
 if (postgresData && (supabaseData || containerMode)) throw new Error("PostgreSQL application-data mode requires the host browser harness and cannot combine with --supabase.");
+if (convexData) {
+  let site;
+  try { site = new URL(process.env.CONVEX_SITE_URL ?? ""); }
+  catch { throw new Error("Convex browser mode requires a disposable loopback backend."); }
+  if (supabaseData || postgresData || containerMode || process.env.TEST_DISPOSABLE_CONVEX !== "1" ||
+      site.protocol !== "http:" || site.hostname !== "127.0.0.1" || !site.port || site.username || site.password ||
+      site.pathname !== "/" || site.search || site.hash ||
+      !process.env.CONVEX_BACKEND_SECRET || process.env.CONVEX_BACKEND_SECRET.length < 32) {
+    throw new Error("Convex browser mode requires a disposable loopback backend.");
+  }
+}
 // Real isolated Supabase Auth, PostgreSQL and SMTP delivery. No hosted account.
 const name = `jumpstart-auth-${randomBytes(5).toString("hex")}`;
 const directory = await mkdtemp(join(tmpdir(), `${name}-`));
 const password = randomBytes(24).toString("base64url");
 const jwtSecret = randomBytes(32).toString("base64url");
 const redactions = [jwtSecret,password];
+if (convexData) redactions.push(process.env.CONVEX_BACKEND_SECRET);
 const containers = [];
 const image = process.env.TEST_CONTAINER_IMAGE ?? "ai-app-jumpstart:test";
 let web, proxy, runtime, scanner, dataFixture, storageOrigin, databaseUrl, imageManifest, failed = false, webOutput = "";
@@ -144,6 +157,7 @@ try {
   const admin = await new SignJWT({ role: "service_role" }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("1h").sign(key);
   redactions.push(anon,admin);
   const env = { ...process.env, NODE_ENV: "production", AUTH_PROVIDER: "supabase", SUPABASE_AUTH_URL: publicAuthOrigin, SUPABASE_PUBLISHABLE_KEY: anon, APP_API_KEYS: "[]", APP_ORIGIN: appOrigin, DATA_PROVIDER: "sqlite", SQLITE_PATH: join(directory, "records.sqlite"), UPLOAD_STORAGE_PROVIDER: "local", UPLOAD_LOCAL_ROOT: join(directory, "uploads") };
+  if (convexData) env.DATA_PROVIDER = "convex";
   if (postgresData) {
     env.DATA_PROVIDER = "postgres";env.DATABASE_URL = databaseUrl;
     await command(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/migrate.ts"],{ env,stdio: "inherit" });
@@ -210,21 +224,25 @@ try {
   await waitFor(async () => {
     return (await fetch(`${appOrigin}/api/health/live`, { signal: AbortSignal.timeout(1000) })).ok;
   }, "Production application", async () => web.exitCode === null && web.signalCode === null);
-  await command(process.execPath, ["node_modules/@playwright/test/cli.js", "test", "--config", "playwright.auth.config.ts", ...process.argv.slice(2).filter(arg => !["--chat","--container","--uploads","--supabase","--postgres"].includes(arg))], { env: { ...env, TEST_CHAT: chat ? "1" : "", TEST_CHAT_UPLOADS: uploads ? "1" : "", TEST_AUTH_ORIGIN: publicAuthOrigin, TEST_AUTH_ADMIN_KEY: admin, TEST_MAIL_ORIGIN: mailOrigin,
+  await command(process.execPath, ["node_modules/@playwright/test/cli.js", "test", "--config", "playwright.auth.config.ts", ...process.argv.slice(2).filter(arg => !["--chat","--container","--uploads","--supabase","--postgres","--convex"].includes(arg))], { env: { ...env, TEST_CHAT: chat ? "1" : "", TEST_CHAT_UPLOADS: uploads ? "1" : "", TEST_AUTH_ORIGIN: publicAuthOrigin, TEST_AUTH_ADMIN_KEY: admin, TEST_MAIL_ORIGIN: mailOrigin,
     TEST_RECEIPT_GATE_HOST: chat ? join(directory, "gate") : "", TEST_MODEL_RECEIPTS_HOST: chat ? join(directory, "models.txt") : "",
     TEST_FAILURE_RECEIPTS_HOST: chat ? join(directory, "failures.txt") : "", TEST_CHAT_CONTAINER: containerMode ? `${name}-app` : "" }, stdio: "inherit" });
   if (supabaseData && existsSync(env.SQLITE_PATH)) throw new Error("Supabase mode created an unexpected SQLite application database.");
   if (supabaseData && existsSync(env.UPLOAD_LOCAL_ROOT)) throw new Error("Supabase mode created unexpected local application upload bytes.");
   if (postgresData && existsSync(env.SQLITE_PATH)) throw new Error("PostgreSQL mode created an unexpected SQLite application database.");
+  if (convexData && existsSync(env.SQLITE_PATH)) throw new Error("Convex mode created an unexpected SQLite application database.");
   console.log(supabaseData ? `Real Supabase Auth, migrated PostgREST and private Storage ${uploads ? "reviewed-upload" : chat ? "account-chat" : "account"} browser contract passed.`
     : postgresData ? `Real Supabase Auth and migrated PostgreSQL ${uploads ? "reviewed-upload" : chat ? "account-chat" : "account"} browser contract passed.`
+    : convexData ? `Real Supabase Auth and disposable Convex ${uploads ? "reviewed-upload" : chat ? "account-chat" : "account"} browser contract passed.`
     : containerMode ? "Account chat browser contract passed through the production container." : chat ? "Account chat browser contract passed with real Auth and compiled Eve." : "Real Supabase Auth browser contract passed.");
 } catch (error) {
   failed = true;
   let diagnostic = error instanceof Error ? error.message : "Auth integration failed.";
   for (const secret of redactions) diagnostic = diagnostic.replaceAll(secret,"[redacted]");
   console.error(diagnostic);
-  console.error(webOutput);
+  let safeOutput = webOutput;
+  for (const secret of redactions) safeOutput = safeOutput.replaceAll(secret,"[redacted]");
+  console.error(safeOutput);
   // Only SQL diagnostics, never raw request logs or verification links.
   const logs = await docker("logs", "--tail", "100", `${name}-auth`).catch(() => "");
   for (const line of logs.split("\n")) {

@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const directory = await mkdtemp(join(tmpdir(), "jumpstart-convex-"));
 const cli = join(root, "node_modules/convex/bin/main.js");
+const browserAccounts = process.argv.includes("--accounts");
 const secret = randomBytes(32).toString("base64url");
 const auditSecret = randomBytes(32).toString("base64url");
 const env = { ...process.env, CONVEX_AGENT_MODE: "anonymous" };
@@ -151,6 +152,15 @@ try {
     body: JSON.stringify({ operation: "create",tenant: auditOwner.tenant,subject: "other",id: randomUUID(),title: "Other",content: "private" }),signal: AbortSignal.timeout(5000) });
   if (!otherWrite.ok) throw new Error("Local Convex fence blocked a different account.");
   console.log("Local Convex: real backend contract and internal-function isolation passed.");
+  if (browserAccounts) {
+    const browserEnv = { ...env,CONVEX_SITE_URL: siteUrl,CONVEX_BACKEND_SECRET: secret,TEST_DISPOSABLE_CONVEX: "1" };
+    for (const flags of [[],["--chat"],["--chat","--uploads"]]) {
+      await command([join(root,"scripts/test-auth.mjs"),"--convex",...flags],{
+        cwd: root,env: browserEnv,log: true,
+      });
+    }
+    console.log("Local Convex: signed-in account, chat and reviewed-upload browser contracts passed.");
+  }
 } catch (error) {
   // Only the local dev service output is included; key-setting commands are not logged.
   console.error(error instanceof Error ? error.message : "Convex validation failed.");

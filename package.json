@@ -65,6 +65,7 @@
     "test:upload-storage:live": "vitest run --config vitest.upload-live.config.ts",
     "test:upload-s3:live": "tsx --env-file-if-exists=.env.local scripts/test-upload-s3-live.ts",
     "test:convex": "node scripts/test-convex.mjs",
+    "test:convex:accounts": "node scripts/test-convex.mjs --accounts",
     "test:providers": "npm run test:postgres && npm run test:supabase && npm run test:convex",
     "test:container": "node scripts/test-container.mjs",
     "test:vercel-build": "node scripts/test-vercel-build.mjs",
