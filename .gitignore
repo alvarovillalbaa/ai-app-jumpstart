@@ -26,6 +26,7 @@ node_modules/
 # misc
 .DS_Store
 *.pem
+/dependency-sbom.cdx.json
 
 # debug
 npm-debug.log*

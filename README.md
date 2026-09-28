@@ -78,6 +78,8 @@ npm run typecheck
 npm run lint
 npm run check:docs
 npm test
+npm audit --audit-level=high
+npm run --silent sbom > dependency-sbom.cdx.json
 npm run test:providers
 npm run test:postgres-backup
 npm run test:workflow-postgres
