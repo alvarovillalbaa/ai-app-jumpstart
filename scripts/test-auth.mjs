@@ -143,7 +143,8 @@ try {
   if (supabaseData) {
     env.DATA_PROVIDER = "supabase";env.SUPABASE_URL = publicAuthOrigin;env.SUPABASE_SECRET_KEY = admin;
     env.UPLOAD_STORAGE_PROVIDER = "supabase";
-    const storageEnv = { ...env,DATABASE_URL: databaseUrl,SUPABASE_ANON_KEY: anon,TEST_STORAGE_PERMISSIVE: "1" };
+    const storageEnv = { ...env,DATABASE_URL: databaseUrl,SUPABASE_ANON_KEY: anon,
+      TEST_STORAGE_PERMISSIVE: "1",TEST_DISPOSABLE_SUPABASE: "1" };
     await command(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/check-upload-storage.ts","--create"],{ env: storageEnv,stdio: "inherit" });
     // Run the reusable real-object contract once, in the account mode. Chat modes
     // prove the production app and native reader against the same real service.

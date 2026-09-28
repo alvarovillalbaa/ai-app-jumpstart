@@ -1,8 +1,9 @@
 import { createHash,randomUUID } from "node:crypto";
-import { mkdtempSync,rmSync } from "node:fs";
+import { mkdtempSync,readFileSync,readdirSync,rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
+import { Client } from "pg";
 import { afterEach,beforeAll, expect, it,vi } from "vitest";
 import { uploadObjectKey, type PrivateUploadObjects } from "../../lib/uploads/contract";
 import { SUPABASE_UPLOAD_BUCKET, supabaseUploadObjects, uploadStorageClient, verifyPrivateUploadBucket } from "../../lib/uploads/supabase";
@@ -15,6 +16,8 @@ import { inspectSupabaseOwnerObjects } from "../../lib/uploads/object-inventory"
 import { exportAccountObjects } from "../../scripts/export-account-objects";
 import { listSupabaseOwnerObjectIds } from "../../lib/uploads/object-export";
 import { verifyExport } from "../../scripts/verify-export";
+import { exportAccountBundle,verifyAccountBundle } from "../../scripts/export-account-bundle";
+import { setPostgresAccountFence } from "../../scripts/fence-account-writes";
 
 const url = process.env.SUPABASE_URL,secret = process.env.SUPABASE_SECRET_KEY,anonKey = process.env.SUPABASE_ANON_KEY;
 const database = process.env.DATABASE_URL;
@@ -39,6 +42,57 @@ if (process.env.TEST_STORAGE_PERMISSIVE === "1") it("allows an unrelated bucket 
     expect((await storage.deleteBucket(bucket)).error).toBeNull();
   }
 });
+
+if (process.env.TEST_DISPOSABLE_SUPABASE === "1") it("bundles real Supabase catalog rows and Storage bytes for one fenced owner",async () => {
+  const target = new URL(database);
+  if (!["127.0.0.1","localhost","[::1]"].includes(target.hostname) || target.pathname !== "/app_data_test")
+    throw new Error("Account bundle fixture requires the disposable loopback application database.");
+  const owner = { tenant: randomUUID(),subject: "bundle-owner" },other = { tenant: owner.tenant,subject: "other" };
+  const mismatchOwner = { tenant: randomUUID(),subject: "bundle-mismatch" };
+  const orphan = randomUUID(),foreign = randomUUID(),mismatch = randomUUID();
+  const bytes = new TextEncoder().encode("real managed account bytes"),dir = mkdtempSync(join(tmpdir(),"jumpstart-managed-bundle-"));
+  const catalog = supabaseUploadCatalog(url,secret),intake = new UploadIntake(catalog,raw);
+  const pg = new Client({ connectionString: database,connectionTimeoutMillis: 5_000 });
+  let activeId: string | undefined;
+  try {
+    await pg.connect();
+    activeId = (await intake.accept(owner,"owned.txt","text/plain",bytes)).id;
+    await raw.put(owner,orphan,new TextEncoder().encode("catalog orphan bytes"));
+    await raw.put(other,foreign,new TextEncoder().encode("foreign owner bytes"));
+    const env = { DATABASE_URL: database,SUPABASE_URL: url,SUPABASE_SECRET_KEY: secret };
+    await expect(exportAccountBundle("postgres","supabase",owner,join(dir,"unfenced"),env))
+      .rejects.toThrow("fenced");
+    expect(readdirSync(dir)).not.toContain("unfenced");
+    expect((await setPostgresAccountFence(database,owner)).created).toBe(true);
+    const output = join(dir,"bundle");
+    expect(await exportAccountBundle("postgres","supabase",owner,output,env)).toEqual({
+      metadataProvider: "postgres",objectProvider: "supabase",rows: 1,objects: 2,
+      catalog: { catalogRows: 1,activeRows: 1,objectOrphans: 1,transitionalWithoutBytes: 0 } });
+    expect(await verifyAccountBundle(output)).toMatchObject({ rows: 1,objects: 2 });
+    const archived = readFileSync(join(output,"objects.ndjson"),"utf8");
+    expect(archived).toContain(orphan);
+    expect(archived).not.toContain(foreign);
+
+    const intended = new TextEncoder().encode("expected bytes");
+    expect(await catalog.reserve(mismatchOwner,{ id: mismatch,name: "mismatch.txt",mediaType: "text/plain",
+      size: intended.length,sha256: createHash("sha256").update(intended).digest("hex"),createdAt: Date.now() },
+      { maxBytes: 1000,maxFiles: 1 })).toBe("reserved");
+    await raw.put(mismatchOwner,mismatch,new TextEncoder().encode("different data"));
+    expect(await catalog.markStored(mismatchOwner,mismatch)).toBe(true);
+    expect((await setPostgresAccountFence(database,mismatchOwner)).created).toBe(true);
+    await expect(exportAccountBundle("postgres","supabase",mismatchOwner,join(dir,"mismatch"),env))
+      .rejects.toThrow("differs from its catalog row");
+    expect(readdirSync(dir)).not.toContain("mismatch");
+  } finally {
+    await Promise.allSettled([...(activeId ? [raw.delete(owner,activeId)] : []),raw.delete(owner,orphan),
+      raw.delete(other,foreign),raw.delete(mismatchOwner,mismatch)]);
+    if (activeId) await pg.query("DELETE FROM public.app_uploads WHERE id=$1",[activeId]).catch(() => {});
+    await pg.query("DELETE FROM public.app_uploads WHERE id=$1",[mismatch]).catch(() => {});
+    await pg.end().catch(() => {});
+    await catalog.close();
+    rmSync(dir,{ recursive: true,force: true });
+  }
+},60_000);
 
 uploadObjectContract("live Supabase Storage",async () => {
   const created: Array<{ owner: Parameters<PrivateUploadObjects["put"]>[0];id: string }> = [];
