@@ -2,11 +2,11 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { ZodError } from "zod";
 import { parseRuntimeBudgetSettings, runtimeReservationPolicy } from "../lib/budgets/runtime";
-import { quotedEnvelopeMicros } from "../lib/budgets/cost-basis";
+import { quotedEnvelopeMicros, requireRecentCostReview } from "../lib/budgets/cost-basis";
 import { defaultMaxInputBytes } from "../lib/budgets/input";
 
 /** Offline review of the same account-chat policy parsed by Next and Eve. */
-export function checkBudgetPolicy(env: NodeJS.ProcessEnv = process.env) {
+export function checkBudgetPolicy(env: NodeJS.ProcessEnv = process.env, now = new Date()) {
   if (!env.AI_BUDGET_POLICY_JSON) throw new Error("Set AI_BUDGET_POLICY_JSON to a reviewed server-side policy.");
   let raw: unknown;
   try { raw = JSON.parse(env.AI_BUDGET_POLICY_JSON); }
@@ -21,6 +21,7 @@ export function checkBudgetPolicy(env: NodeJS.ProcessEnv = process.env) {
     throw new Error("AI_BUDGET_POLICY_JSON needs a reviewed costBasis.");
   }
   const basis = settings.costBasis;
+  requireRecentCostReview(basis.reviewedAt, now);
   return { policyId: settings.policy.id, reservationPolicyId: runtimeReservationPolicy(settings).id, estimateMicros: settings.estimateMicros,
     quotedMicros: quotedEnvelopeMicros(basis, settings.maxModelCalls),
     maxInputBytes: settings.maxInputBytes ?? defaultMaxInputBytes,

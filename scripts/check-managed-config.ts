@@ -7,6 +7,7 @@ import { trustedHttpOrigin } from "../lib/security/origin";
 import { remoteScannerSettings } from "../lib/uploads/scanner";
 import { uploadLinkSettings } from "../lib/uploads/download-links";
 import { uploadReaderEnabled } from "../lib/uploads/agent-reader";
+import { requireRecentCostReview } from "../lib/budgets/cost-basis";
 import { requireReplayRetention } from "./workflow-retention.mjs";
 
 function httpsOrigin(value: string | undefined, name: string) {
@@ -77,8 +78,13 @@ export function checkManagedConfig(env: NodeJS.ProcessEnv, requireChat = false) 
     const chatMissing = chatRequired.filter(name => !env[name]?.trim());
     if (chatMissing.length) throw new Error(`Set ${chatMissing.join(", ")} before enabling account chat.`);
     httpsOrigin(env.AI_RUNTIME_ORIGIN, "AI_RUNTIME_ORIGIN");
-    try { if (!chatSettings(env)) throw new Error("missing"); }
-    catch { throw new Error("Account chat settings are invalid; check Auth, signing keyring and reviewed budget policy."); }
+    let reviewedAt: string;
+    try {
+      const chat = chatSettings(env);
+      if (!chat) throw new Error("missing");
+      reviewedAt = chat.budget.costBasis.reviewedAt;
+    } catch { throw new Error("Account chat settings are invalid; check Auth, signing keyring and reviewed budget policy."); }
+    requireRecentCostReview(reviewedAt);
   }
   return { target: "vercel-supabase" as const, origin, accountChat: env.AI_CHAT_ENABLED === "true" ? "enabled" as const : "disabled" as const };
 }

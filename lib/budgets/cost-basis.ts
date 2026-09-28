@@ -22,6 +22,22 @@ export const costBasis = z.object({
 }).strict();
 export type CostBasis = z.infer<typeof costBasis>;
 
+const maxReviewAgeDays = 30;
+const millisecondsPerDay = 24 * 60 * 60 * 1000;
+
+/** Release preflight only: prompt an operator to refresh dated pricing assumptions. */
+export function requireRecentCostReview(reviewedAt: string, now = new Date()): void {
+  const reviewDay = Date.parse(`${reviewedAt}T00:00:00Z`);
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  if (!Number.isFinite(reviewDay) || !Number.isFinite(today)) {
+    throw new Error("costBasis.reviewedAt must be a valid UTC date.");
+  }
+  if (reviewDay > today) throw new Error("costBasis.reviewedAt cannot be in the future.");
+  if (today - reviewDay > maxReviewAgeDays * millisecondsPerDay) {
+    throw new Error(`costBasis.reviewedAt is older than ${maxReviewAgeDays} UTC days; review current provider and Gateway prices.`);
+  }
+}
+
 const million = BigInt(1_000_000);
 function ceilDiv(numerator: bigint) { return (numerator + million - BigInt(1)) / million; }
 

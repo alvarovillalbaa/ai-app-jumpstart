@@ -10,6 +10,7 @@ const basis = { sourceUrl: "https://example.test/fixture-prices", reviewedAt: "2
   ] };
 const settings = { policy: { id: "review-v1", dailyMicros: 100, maxActive: 2, maxPerMinute: 10 },
   estimateMicros: 18, maxModelCalls: 3, modelIds: ["model-a", "model-b"], costBasis: basis };
+const reviewNow = new Date("2026-09-28T12:00:00Z");
 
 it("quotes the priciest permitted call, rounds components up and includes other costs", () => {
   // model-a: ceil(1.2) + ceil(2.4) = 5; model-b: 2 + 3 = 5.
@@ -37,15 +38,24 @@ it("rejects arithmetic overflow rather than trusting an unsafe floating-point qu
 });
 
 it("gives an operator a secret-free policy check using the production parser", () => {
-  expect(checkBudgetPolicy({ NODE_ENV: "production", AI_BUDGET_POLICY_JSON: JSON.stringify(settings) })).toMatchObject({
+  expect(checkBudgetPolicy({ NODE_ENV: "production", AI_BUDGET_POLICY_JSON: JSON.stringify(settings) }, reviewNow)).toMatchObject({
     policyId: "review-v1", quotedMicros: BigInt(18), estimateMicros: 18,
     models: ["model-a", "model-b"], sourceHost: "example.test", maxInputBytes: 262_144,
   });
   const secret = "private-fixture-value";
   const invalid = { NODE_ENV: "production" as const, AI_BUDGET_POLICY_JSON: JSON.stringify({ ...settings, costBasis: { ...basis, sourceUrl: `https://example.test/?key=${secret}` } }) };
-  expect(() => checkBudgetPolicy(invalid)).toThrow("costBasis.sourceUrl");
-  try { checkBudgetPolicy(invalid); }
+  expect(() => checkBudgetPolicy(invalid, reviewNow)).toThrow("costBasis.sourceUrl");
+  try { checkBudgetPolicy(invalid, reviewNow); }
   catch (error) { expect(String(error)).toContain("costBasis.sourceUrl"); expect(String(error)).not.toContain(secret); }
+});
+
+it("requires a pricing review within 30 UTC calendar days for release preflight", () => {
+  const withReview = (reviewedAt: string) => ({ NODE_ENV: "production" as const, AI_BUDGET_POLICY_JSON: JSON.stringify({
+    ...settings, costBasis: { ...basis, reviewedAt },
+  }) });
+  expect(checkBudgetPolicy(withReview("2026-08-29"), reviewNow).reviewedAt).toBe("2026-08-29");
+  expect(() => checkBudgetPolicy(withReview("2026-08-28"), reviewNow)).toThrow("older than 30 UTC days");
+  expect(() => checkBudgetPolicy(withReview("2026-09-29"), reviewNow)).toThrow("cannot be in the future");
 });
 
 it("binds reservations to a canonical envelope independent of object and model ordering", () => {
