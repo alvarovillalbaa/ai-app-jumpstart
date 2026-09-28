@@ -181,11 +181,12 @@ export function validateCloudManifest(provider: CloudProvider,raw: unknown,templ
     ...(dataProvider === "supabase" ? ["SUPABASE_URL","SUPABASE_SECRET_KEY"] :
       dataProvider === "postgres" ? ["DATABASE_URL"] : ["CONVEX_SITE_URL","CONVEX_BACKEND_SECRET"]),
     ...(uploadProvider === "supabase" && dataProvider !== "supabase" ? ["SUPABASE_URL","SUPABASE_SECRET_KEY"] : []),
+    ...(uploadProvider ? ["CRON_SECRET"] : []),
     ...(appEnv.has("UPLOAD_DOWNLOAD_SIGNING_JSON") ? ["UPLOAD_DOWNLOAD_SIGNING_JSON"] : []),
     ...["AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","AWS_SESSION_TOKEN"].filter(name => appEnv.has(name))];
   for (const name of ["WORKFLOW_POSTGRES_URL","SUPABASE_AUTH_URL","SUPABASE_PUBLISHABLE_KEY",
     "AI_CREATION_SIGNING_JSON","AI_BUDGET_POLICY_JSON","AI_GATEWAY_API_KEY",
-    "SUPABASE_SECRET_KEY","DATABASE_URL","CONVEX_BACKEND_SECRET","AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","AWS_SESSION_TOKEN"]) {
+    "SUPABASE_SECRET_KEY","DATABASE_URL","CONVEX_BACKEND_SECRET","CRON_SECRET","AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","AWS_SESSION_TOKEN"]) {
     if (appEnv.get(name)?.value !== undefined) fail(`${name} must not be a plaintext environment value.`);
   }
   for (const name of required) requireSecret(appEnv,name,provider,secretNames,template);
