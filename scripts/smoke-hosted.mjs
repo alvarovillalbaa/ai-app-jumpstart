@@ -318,18 +318,39 @@ export async function runHostedSmoke({ url, token, otherToken, accounts = false,
     }
   }
 
-  const title = `Hosted smoke ${randomUUID()}`;
+  const creationKey = randomUUID(), title = `Hosted smoke ${randomUUID()}`;
+  const recordInput = { title, content: "Portable REST, CLI and MCP acceptance check." };
+  const creationPath = `/api/v1/records/creation/${creationKey}`;
   console.log(`Temporary record: ${title}`);
   let record, client, failure, cleanupFailure, uploadId;
   try {
     const created = await request("/api/v1/records", {
-      method: "POST", headers: { ...authorized, "content-type": "application/json" },
-      body: JSON.stringify({ title, content: "Portable REST, CLI and MCP acceptance check." }),
+      method: "POST", headers: { ...authorized, "content-type": "application/json", "idempotency-key": creationKey },
+      body: JSON.stringify(recordInput),
     });
     assert.equal(created.status, 201, "Record creation failed");
     record = await created.json();
     assert.equal(record.title, title);
     assert.match(record.id, /^[0-9a-f-]{36}$/i);
+    assert.equal(created.headers.get("location"), `/api/v1/records/${record.id}`);
+    const recovered = await request(creationPath, { headers: authorized });
+    assert.equal(recovered.status, 200, "Owner cannot recover keyed record creation");
+    assert.deepEqual(await recovered.json(), { status: "created", record });
+    assert.equal((await request(creationPath, { headers: other })).status, 404,
+      "Other owner can recover keyed record creation");
+    const replay = await request("/api/v1/records", {
+      method: "POST", headers: { ...authorized, "content-type": "application/json", "idempotency-key": creationKey },
+      body: JSON.stringify(recordInput),
+    });
+    assert.equal(replay.status, 200, "Matching keyed record retry failed");
+    assert.equal(replay.headers.get("idempotency-replayed"), "true");
+    assert.equal(replay.headers.get("location"), `/api/v1/records/${record.id}`);
+    assert.deepEqual(await replay.json(), record);
+    const changed = await request("/api/v1/records", {
+      method: "POST", headers: { ...authorized, "content-type": "application/json", "idempotency-key": creationKey },
+      body: JSON.stringify({ ...recordInput, content: "Changed retry must fail." }),
+    });
+    assert.equal(changed.status, 409, "Changed keyed record retry was accepted");
     const ownRead = await request(`/api/v1/records/${record.id}`, { headers: authorized });
     assert.equal(ownRead.status, 200);
     assert.deepEqual(await ownRead.json(), record);
@@ -345,20 +366,47 @@ export async function runHostedSmoke({ url, token, otherToken, accounts = false,
     assert.equal(otherList.status, 200, "Other owner's record list failed");
     assert.ok(!(await otherList.json()).items.some(item => item.id === record.id), "Other owner can list the temporary record");
     assert.deepEqual(await cliJson(origin, token, ["get", record.id]), record);
+    assert.deepEqual(await cliJson(origin, token, ["creation", creationKey]), { status: "created", record });
     client = new Client({ name: "hosted-smoke", version: "1" });
     await client.connect(new StreamableHTTPClientTransport(new URL(`${origin}/api/mcp`), { requestInit: { headers: { ...protection, ...authorized } } }));
     const resource = await client.readResource({ uri: `records:///${record.id}` });
     assert.deepEqual(JSON.parse(resource.contents[0].text), record);
+    const mcpStatus = await client.callTool({ name: "records_creation_status", arguments: { creationKey } });
+    assert.notEqual(mcpStatus.isError, true, "MCP keyed creation recovery failed");
+    assert.deepEqual(JSON.parse(mcpStatus.content[0].text), { status: "created", record });
+    const mcpReplay = await client.callTool({ name: "records_create", arguments: { ...recordInput, creationKey } });
+    assert.notEqual(mcpReplay.isError, true, "MCP keyed creation replay failed");
+    assert.deepEqual(JSON.parse(mcpReplay.content[0].text), record);
     if (uploads || uploadDownload) uploadId = await runUploadSmoke({ request, origin, token, otherToken, protection, authorized, other, ownerClient: client, download: uploadDownload });
     if (browser) await browserRead({ origin, token, otherToken, protection, title });
     if (checkedAccounts) await accountBrowserRead({ origin,protection,accounts: checkedAccounts,title });
   } catch (error) { failure = error; }
   finally {
     try { await client?.close(); } catch (error) { cleanupFailure = error; }
+    if (!record) {
+      // A timed-out POST may have committed. Recover by its stable key before
+      // cleanup; do not resend the write or guess from another owner's data.
+      try {
+        const recovered = await request(creationPath, { headers: authorized });
+        if (recovered.status === 200) {
+          const result = await recovered.json();
+          if (result.status === "created" && /^[0-9a-f-]{36}$/i.test(result.record?.id) &&
+              Number.isSafeInteger(result.record.revision)) record = result.record;
+        }
+      } catch { /* Retain the original failure and printed unique title. */ }
+    }
     if (record) {
       try {
         const deleted = await request(`/api/v1/records/${record.id}?revision=${record.revision}`, { method: "DELETE", headers: authorized });
         assert.equal(deleted.status, 204, "Temporary record cleanup failed");
+        const tombstone = await request(creationPath, { headers: authorized });
+        assert.equal(tombstone.status, 200, "Deleted keyed record receipt is missing");
+        assert.deepEqual(await tombstone.json(), { status: "deleted", id: record.id });
+        const staleReplay = await request("/api/v1/records", {
+          method: "POST", headers: { ...authorized, "content-type": "application/json", "idempotency-key": creationKey },
+          body: JSON.stringify(recordInput),
+        });
+        assert.equal(staleReplay.status, 410, "Deleted keyed record was recreated");
       } catch (error) { cleanupFailure = error; }
     }
   }
@@ -380,7 +428,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const agent = flags.has("--agent"),accountBrowser = flags.has("--account-browser"),accounts = agent || flags.has("--accounts"), browser = flags.has("--browser"),uploadDownload = flags.has("--upload-download"),uploads = flags.has("--uploads") || uploadDownload;
     runHostedSmoke({ url: process.env.APP_API_URL, token: process.env.APP_API_TOKEN, otherToken: process.env.APP_API_OTHER_TOKEN, accounts, agent, browser,accountBrowser,uploads,uploadDownload,
       browserAccounts: accountBrowser ? { primary: { email: process.env.APP_SMOKE_EMAIL,password: process.env.APP_SMOKE_PASSWORD },other: { email: process.env.APP_SMOKE_OTHER_EMAIL,password: process.env.APP_SMOKE_OTHER_PASSWORD } } : undefined })
-      .then(({ origin }) => console.log(`Hosted smoke passed for ${origin}: readiness, Eve, web, ${accounts ? "Supabase accounts, " : ""}REST, owner isolation, CLI and MCP${uploads ? ", private upload and cleanup" : ""}${uploadDownload ? ", fresh-scanned exact download bytes" : ""}${browser ? ", Chromium records UI" : ""}${agent ? ", one owned agent turn and source-stream read" : ""}${accountBrowser ? ", real account sign-in/reload/logout and browser isolation" : ""}.`))
+      .then(({ origin }) => console.log(`Hosted smoke passed for ${origin}: readiness, Eve, web, ${accounts ? "Supabase accounts, " : ""}REST, keyed creation recovery/deletion, owner isolation, CLI and MCP${uploads ? ", private upload and cleanup" : ""}${uploadDownload ? ", fresh-scanned exact download bytes" : ""}${browser ? ", Chromium records UI" : ""}${agent ? ", one owned agent turn and source-stream read" : ""}${accountBrowser ? ", real account sign-in/reload/logout and browser isolation" : ""}.`))
       .catch(error => { console.error(message(error)); process.exitCode = 1; });
   }
 }
