@@ -1,4 +1,5 @@
 import { requestsPerMinute } from "../request-limits/settings";
+import { awsS3Settings } from "../uploads/aws-s3";
 export type CloudProvider = "aws" | "azure" | "gcp";
 type JsonObject = Record<string,unknown>;
 
@@ -167,14 +168,24 @@ export function validateCloudManifest(provider: CloudProvider,raw: unknown,templ
   const dataProvider = appEnv.get("DATA_PROVIDER")?.value;
   if (dataProvider !== "supabase" && dataProvider !== "postgres" && dataProvider !== "convex")
     fail("DATA_PROVIDER must be supabase, postgres or convex.");
+  const uploadProvider = appEnv.get("UPLOAD_STORAGE_PROVIDER")?.value;
+  if (appEnv.has("UPLOAD_STORAGE_PROVIDER") && uploadProvider !== "supabase" && uploadProvider !== "aws-s3")
+    fail("Cloud uploads need private Supabase Storage or AWS S3; local volumes are not durable in these manifests.");
+  if (uploadProvider === "aws-s3") {
+    try { awsS3Settings({ UPLOAD_S3_REGION: appEnv.get("UPLOAD_S3_REGION")?.value as string | undefined,
+      UPLOAD_S3_BUCKET: appEnv.get("UPLOAD_S3_BUCKET")?.value as string | undefined }); }
+    catch { fail("AWS S3 uploads need valid literal UPLOAD_S3_REGION and UPLOAD_S3_BUCKET values."); }
+  }
   const required = ["WORKFLOW_POSTGRES_URL","SUPABASE_AUTH_URL","SUPABASE_PUBLISHABLE_KEY",
     "AI_CREATION_SIGNING_JSON","AI_BUDGET_POLICY_JSON","AI_GATEWAY_API_KEY",
     ...(dataProvider === "supabase" ? ["SUPABASE_URL","SUPABASE_SECRET_KEY"] :
       dataProvider === "postgres" ? ["DATABASE_URL"] : ["CONVEX_SITE_URL","CONVEX_BACKEND_SECRET"]),
-    ...(appEnv.has("UPLOAD_DOWNLOAD_SIGNING_JSON") ? ["UPLOAD_DOWNLOAD_SIGNING_JSON"] : [])];
+    ...(uploadProvider === "supabase" && dataProvider !== "supabase" ? ["SUPABASE_URL","SUPABASE_SECRET_KEY"] : []),
+    ...(appEnv.has("UPLOAD_DOWNLOAD_SIGNING_JSON") ? ["UPLOAD_DOWNLOAD_SIGNING_JSON"] : []),
+    ...["AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","AWS_SESSION_TOKEN"].filter(name => appEnv.has(name))];
   for (const name of ["WORKFLOW_POSTGRES_URL","SUPABASE_AUTH_URL","SUPABASE_PUBLISHABLE_KEY",
     "AI_CREATION_SIGNING_JSON","AI_BUDGET_POLICY_JSON","AI_GATEWAY_API_KEY",
-    "SUPABASE_SECRET_KEY","DATABASE_URL","CONVEX_BACKEND_SECRET"]) {
+    "SUPABASE_SECRET_KEY","DATABASE_URL","CONVEX_BACKEND_SECRET","AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","AWS_SESSION_TOKEN"]) {
     if (appEnv.get(name)?.value !== undefined) fail(`${name} must not be a plaintext environment value.`);
   }
   for (const name of required) requireSecret(appEnv,name,provider,secretNames,template);

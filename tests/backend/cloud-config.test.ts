@@ -48,6 +48,46 @@ it("accepts PostgreSQL and Convex application data with unchanged Supabase ident
   }
 });
 
+it("requires private object settings when cloud uploads are enabled",() => {
+  for (const provider of providers) {
+    const manifest = filled(provider),application = app(provider,manifest);
+    const literals = provider === "aws" ? application.environment : application.env;
+    const secrets = provider === "aws" ? application.secrets : application.env;
+    const storage = { name: "UPLOAD_STORAGE_PROVIDER",value: "local" };
+    literals.push(storage);
+    expect(() => validateCloudManifest(provider,manifest)).toThrow("local volumes are not durable");
+
+    storage.value = "supabase";
+    expect(() => validateCloudManifest(provider,manifest)).not.toThrow();
+    literals.find(row => row.name === "DATA_PROVIDER")!.value = "postgres";
+    secrets.find(row => row.name === "SUPABASE_URL")!.name = "DATABASE_URL";
+    expect(() => validateCloudManifest(provider,manifest)).toThrow("SUPABASE_URL must use a managed secret reference");
+    const secret = secrets.find(row => row.name === "SUPABASE_SECRET_KEY")!;
+    secrets.push({ ...secret,name: "SUPABASE_URL" });
+    expect(() => validateCloudManifest(provider,manifest)).not.toThrow();
+    delete secret.secretRef;delete secret.valueFrom;secret.value = "private-storage-key";
+    expect(() => validateCloudManifest(provider,manifest)).toThrow("SUPABASE_SECRET_KEY must not be a plaintext");
+  }
+});
+
+it("checks S3 bucket settings and refuses plaintext AWS credentials",() => {
+  for (const provider of providers) {
+    const manifest = filled(provider),application = app(provider,manifest);
+    const literals = provider === "aws" ? application.environment : application.env;
+    literals.push({ name: "UPLOAD_STORAGE_PROVIDER",value: "aws-s3" });
+    expect(() => validateCloudManifest(provider,manifest)).toThrow("UPLOAD_S3_REGION and UPLOAD_S3_BUCKET");
+    literals.push({ name: "UPLOAD_S3_REGION",value: "eu-west-1" },{ name: "UPLOAD_S3_BUCKET",value: "private-upload-fixture" });
+    expect(() => validateCloudManifest(provider,manifest)).not.toThrow();
+    literals.push({ name: "AWS_SECRET_ACCESS_KEY",value: "private-aws-key" });
+    try { validateCloudManifest(provider,manifest);throw new Error("Expected rejection."); }
+    catch (error) { expect(String(error)).toContain("plaintext");expect(String(error)).not.toContain("private-aws-key"); }
+    literals.pop();
+    const secrets = provider === "aws" ? application.secrets : application.env;
+    secrets.push({ ...secrets.find(row => row.name === "AI_GATEWAY_API_KEY")!,name: "AWS_SECRET_ACCESS_KEY" });
+    expect(validateCloudManifest(provider,manifest)).toMatchObject({ secretReferences: 9 });
+  }
+});
+
 it("requires a canonical literal request limit and permits explicit disabling or legacy omission",() => {
   for (const provider of providers) {
     const manifest = filled(provider),application = app(provider,manifest);
