@@ -225,6 +225,20 @@ async function rehearseUpgrade() {
     const bundleRecord = randomUUID(),bundleSubject = "bundle-owner";
     await probe.query("INSERT INTO app_records(id,tenant,subject,title,content) VALUES($1,'upgrade-tenant',$2,'Bundle','private bundle fixture')",
       [bundleRecord,bundleSubject]);
+    const bundleOperation = randomUUID(),bundleConversation = randomUUID(),bundleEvent = `evt_${"A".repeat(26)}`;
+    await probe.query(`INSERT INTO app_conversations(id,tenant,subject,operation_id,request_hash,session_id,status,title,created_at)
+      VALUES($1,'upgrade-tenant',$2,$3,$4,'bundle-session','active','Bundle conversation',1)`,
+      [bundleConversation,bundleSubject,bundleOperation,"b".repeat(64)]);
+    const bundlePayload = JSON.stringify({ schemaVersion: 1,eventId: bundleEvent,at: "2026-09-28T00:00:00.000Z",
+      turnId: "bundle-turn",sequence: 0,payload: { kind: "run",state: "completed" } });
+    await probe.query(`INSERT INTO app_conversation_events(ordinal,operation_id,event_id,payload)
+      OVERRIDING SYSTEM VALUE VALUES($1,$2,$3,$4)`,["9007199254740993",bundleOperation,bundleEvent,bundlePayload]);
+    await probe.query("INSERT INTO app_budget_accounts(tenant,subject) VALUES('upgrade-tenant',$1)",[bundleSubject]);
+    await probe.query(`INSERT INTO app_budget_reservations(operation_id,tenant,subject,request_hash,policy_id,
+      estimate_micros,day,created_at,status) VALUES($1,'upgrade-tenant',$2,$3,'bundle-policy',42,1,1,'reserved')`,
+      [bundleOperation,bundleSubject,"c".repeat(64)]);
+    await probe.query("INSERT INTO app_budget_attempts(operation_id,attempt_id) VALUES($1,$2)",
+      [bundleOperation,"d".repeat(64)]);
     const bundleObjects = await mkdtemp(join(directory,"bundle-objects-"));
     const bundle = join(directory,"account-bundle");
     const bundleEnv = { ...upgradeEnv,ACCOUNT_AUDIT_TENANT: "upgrade-tenant",ACCOUNT_AUDIT_SUBJECT: bundleSubject,
@@ -235,6 +249,25 @@ async function rehearseUpgrade() {
     await run(["node_modules/tsx/dist/cli.mjs","scripts/export-account-bundle.ts","--verify",bundle]);
     assert.ok((await readFile(join(bundle,"rows.ndjson"),"utf8")).includes(bundleRecord));
     assert.equal(JSON.parse(await readFile(join(bundle,"manifest.json"),"utf8")).objects,0);
+    assert.equal(JSON.parse(await readFile(join(bundle,"manifest.json"),"utf8")).rows,7);
+    await database.createDatabase("app_account_rehearsal_upgrade");
+    const rehearsalUrl = upgradeEnv.DATABASE_URL.replace(/\/app_upgrade_test$/, "/app_account_rehearsal_upgrade");
+    await run(["scripts/migrate.ts"],0,{ ...upgradeEnv,DATABASE_URL: rehearsalUrl });
+    const rehearsalEnv = { ...bundleEnv,ACCOUNT_REHEARSAL_DATABASE_URL: rehearsalUrl };
+    await run(["node_modules/tsx/dist/cli.mjs","scripts/rehearse-postgres-account-bundle.ts","--source",bundle],0,rehearsalEnv);
+    await run(["node_modules/tsx/dist/cli.mjs","scripts/rehearse-postgres-account-bundle.ts","--source",bundle],1,
+      { ...rehearsalEnv,ACCOUNT_REHEARSAL_DATABASE_URL: `${rehearsalUrl}?dbname=app_upgrade_test` });
+    const rehearsalProbe = new Client({ connectionString: rehearsalUrl });
+    await rehearsalProbe.connect();
+    try {
+      assert.equal((await rehearsalProbe.query("SELECT count(*)::int AS count FROM app_records")).rows[0].count,0);
+      assert.equal((await rehearsalProbe.query("SELECT count(*)::int AS count FROM app_conversation_events")).rows[0].count,0);
+      assert.equal((await rehearsalProbe.query("SELECT count(*)::int AS count FROM app_private.account_fences")).rows[0].count,0);
+      await rehearsalProbe.query("INSERT INTO app_records(id,tenant,subject,title,content) VALUES($1,'other','owner','Unrelated','Keep')",
+        [randomUUID()]);
+      await run(["node_modules/tsx/dist/cli.mjs","scripts/rehearse-postgres-account-bundle.ts","--source",bundle],1,rehearsalEnv);
+      assert.equal((await rehearsalProbe.query("SELECT count(*)::int AS count FROM app_records")).rows[0].count,1);
+    } finally { await rehearsalProbe.end(); }
     await assert.rejects(() => probe.query("UPDATE app_records SET content='late' WHERE id=$1",[recordId]),/fenced/);
     await assert.rejects(() => probe.query("INSERT INTO app_records(id,tenant,subject,title,content) VALUES($1,'upgrade-tenant','upgrade-owner','Late','No')",[randomUUID()]),/fenced/);
     await assert.rejects(() => probe.query("UPDATE app_uploads SET state='deleting' WHERE id=$1",[uploadId]),/fenced/);
