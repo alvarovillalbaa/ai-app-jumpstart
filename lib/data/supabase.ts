@@ -14,7 +14,8 @@ export class SupabaseRepository implements RecordRepository {
   }
   private scoped(owner: Owner) { return this.client.from("app_records").select("*").eq("tenant", owner.tenant).eq("subject", owner.subject); }
   private row(r: Row): AppRecord {
-    return { id: r.id, title: r.title, content: r.content, revision: r.revision, createdAt: r.created_at, updatedAt: r.updated_at };
+    return { id: r.id, title: r.title, content: r.content, revision: r.revision,
+      createdAt: new Date(r.created_at).toISOString(), updatedAt: new Date(r.updated_at).toISOString() };
   }
   async list(owner: Owner, input: ListInput) {
     let query = this.scoped(owner).order("id").limit(input.limit + 1);

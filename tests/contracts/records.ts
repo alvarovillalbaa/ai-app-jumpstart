@@ -72,6 +72,7 @@ export function recordContract(name: string, factory: () => Promise<RecordReposi
       cleanup.push({ service: a,id: original.id });
       for (const result of results) expect(result.record).toEqual(original);
       expect(original.title).toBe("One draft");
+      expect(await a.creation(key)).toEqual({ status: "created",record: original });
       expect((await a.list()).items).toHaveLength(1);
     });
     it("rejects concurrent changed input for one key and retains only the winning record",async () => {
