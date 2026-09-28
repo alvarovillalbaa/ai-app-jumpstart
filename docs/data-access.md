@@ -10,6 +10,8 @@ Send `Authorization: Bearer TOKEN` over HTTPS. When `AUTH_PROVIDER=supabase`, a 
 
 ## REST
 
+The public [`/openapi.json`](../public/openapi.json) artifact describes all authored `/api/v1` methods, bearer requirements, path/query/header inputs, and the core record, preference, conversation metadata, artifact, upload, and usage payloads in OpenAPI 3.1. It uses a relative server URL so a copied template describes its own host. Runtime conversation projections, account profile, and generated-link responses remain open objects; their feature guides describe the versioned behavior. `npm run check:openapi` checks every route file and HTTP method against the committed artifact, and `npm run openapi:generate` refreshes it after a reviewed API edit. `/api/mcp` is a separate Streamable HTTP protocol surface, not an OpenAPI operation.
+
 | Operation | Request | Response |
 | --- | --- | --- |
 | List | `GET /api/v1/records?limit=25&after=UUID` | `{items,nextCursor}` |

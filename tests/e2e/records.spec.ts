@@ -72,6 +72,12 @@ test("health and access control are observable", async ({ request }) => {
   expect(page.headers()["content-security-policy"]).toContain("object-src 'none'");
   expect((await request.get("/api/health/ready")).status()).toBe(200);
   expect((await request.get("/api/v1/records")).status()).toBe(401);
+  const contract = await request.get("/openapi.json");
+  expect(contract.status()).toBe(200);
+  const openapi = await contract.json();
+  expect(openapi.openapi).toBe("3.1.0");
+  expect(openapi.paths["/api/v1/records"].post.operationId).toBe("createRecord");
+  expect(openapi.paths["/api/v1/uploads/{id}/download"].get.operationId).toBe("downloadUpload");
 });
 test("per-request CSP nonces allow hydration and theme changes", async ({ page }) => {
   await page.addInitScript(() => {

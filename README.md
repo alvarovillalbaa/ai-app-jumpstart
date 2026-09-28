@@ -77,6 +77,7 @@ The [account data inventory](docs/account-data-inventory.md) classifies owner-li
 npm run typecheck
 npm run lint
 npm run check:docs
+npm run check:openapi
 npm run check:container-pins
 npm test
 npm audit --audit-level=high
