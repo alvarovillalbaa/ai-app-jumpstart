@@ -28,6 +28,7 @@ export function convexAccessStore(url: string, secret: string, request: typeof f
     bind: (owner: AccessOwner, operationId: string, sessionId: string) => backend.call("access.bind", { ...owner, operationId, sessionId }, z.boolean()),
     cancelStarting: (owner: AccessOwner, operationId: string) => backend.call("access.cancelStarting", { ...owner, operationId }, z.boolean()),
     ownsSession: (owner: AccessOwner, sessionId: string) => backend.call("access.ownsSession", { ...owner, sessionId }, z.boolean()),
+    isFenced: (owner: AccessOwner) => backend.call("access.isFenced",owner,z.boolean()),
     revoke: (owner: AccessOwner, id: string) => backend.call("access.revoke", { ...owner, id }, z.boolean()),
     claimNonce: (id: string, expiresAt: number, now: number) => backend.call("access.claimNonce", { id, expiresAt, now }, z.boolean()),
     async close() {},

@@ -6,6 +6,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { Client } from "eve/client";
 import { reconcileProjections } from "../lib/agent-access/reconcile";
@@ -259,6 +260,17 @@ try {
   }
   assert.equal((await fetch(`${origin}/eve/v1/session/${recovered.sessionId}/stream`, { headers: bobHeaders })).status, 401);
   assert.equal((await fetch(`${origin}/eve/v1/session`, { method: "POST", headers: { authorization: `Bearer ${aliceToken}`, "content-type": "application/json" }, body: JSON.stringify({ message: "Unsigned" }) })).status, 401);
+  const fenceDb = new DatabaseSync(env.SQLITE_PATH!);
+  try { fenceDb.prepare("INSERT INTO app_account_fences(tenant,subject) VALUES(?,?)").run(alice.tenant,alice.subject); }
+  finally { fenceDb.close(); }
+  assert.equal(await store.isFenced(alice),true);
+  for (const suffix of ["","/clear","/compact"]) {
+    const response: Response = await fetch(`${origin}/eve/v1/session/${recovered.sessionId}${suffix}`,{
+      method: "POST",headers: { authorization: `Bearer ${aliceToken}`,"content-type": "application/json" },
+      body: JSON.stringify({ message: "Fenced account cannot resume" }) });
+    assert.equal(response.status,401,`Fenced Eve input was accepted at ${suffix || "follow-up"}.`);
+  }
+  assert.equal(await lines(receipts),3,"Fenced Eve input must not reach the model.");
   const bob = { ...alice,subject: "bob" },oversizeOperation = randomUUID(),beforeInputDenial = await lines(failures);
   await new BudgetedCreation(new ConversationBroker(store,realDispatch),budgets,runtimeReservationPolicy(budgetSettings),() => 20)
     .create(bob,{ message: "input-budget-test" + "x".repeat(20_000),operationId: oversizeOperation });

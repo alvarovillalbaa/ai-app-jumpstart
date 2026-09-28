@@ -579,6 +579,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      app_account_fence_status: {
+        Args: { p_subject: string; p_tenant: string }
+        Returns: boolean
+      }
       app_append_conversation_event: {
         Args: {
           p_event: string

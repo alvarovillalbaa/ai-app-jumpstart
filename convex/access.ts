@@ -293,6 +293,14 @@ export const ownsSession = internalQuery({
     return !!row && sameOwner(row, args) && row.status === "active";
   },
 });
+export const isFenced = internalQuery({
+  args: ownerFields,
+  handler: async (ctx,args) => {
+    const owner = accessOwner.parse(args);
+    return !!await ctx.db.query("accountFences").withIndex("by_owner",q =>
+      q.eq("tenant",owner.tenant).eq("subject",owner.subject)).unique();
+  },
+});
 export const cancelStarting = internalMutation({
   args: { ...ownerFields, operationId: v.string() },
   handler: async (ctx, args) => {

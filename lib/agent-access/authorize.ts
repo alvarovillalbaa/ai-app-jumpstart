@@ -17,7 +17,9 @@ export function sessionAuthorizer(options: SessionAuthorizerOptions): AuthFn<Req
     let owner: AccessOwner | null;
     let creationOperationId: string | undefined;
     let creationRequestId: string | undefined;
+    let newWork = false;
     if (pathname === "/eve/v1/session" && request.method === "POST") {
+      newWork = true;
       const verified = await verifyCreationContext(request, options.signing, options.store, options.clock);
       owner = verified?.owner ?? null;creationRequestId = verified?.creationRequestId;
       if (owner) creationOperationId = createMessage.parse(await request.clone().json()).operationId;
@@ -25,6 +27,7 @@ export function sessionAuthorizer(options: SessionAuthorizerOptions): AuthFn<Req
       const info = pathname === "/eve/v1/info" && request.method === "GET";
       const match = /^\/eve\/v1\/session\/([^/]+)(?:\/(stream|cancel|clear|compact|reset))?$/.exec(pathname);
       if (!info && (!match || (match[2] === "stream" ? request.method !== "GET" : request.method !== "POST"))) return null;
+      newWork = !!match && request.method === "POST" && match[2] !== "cancel" && match[2] !== "reset";
       owner = await options.identify(request);
       if (!owner) return null;
       owner = accessOwner.parse(owner);
@@ -35,6 +38,7 @@ export function sessionAuthorizer(options: SessionAuthorizerOptions): AuthFn<Req
       }
     }
     if (!owner) return null;
+    if (newWork && await options.store.isFenced(owner)) return null;
     return { authenticator: "jumpstart", principalType: "user", principalId: owner.subject,
       subject: owner.subject, issuer: owner.tenant, attributes: { tenant: owner.tenant, ...(creationOperationId ? { creationOperationId } : {}),
         ...(creationRequestId ? { creationRequestId } : {}) } };

@@ -31,6 +31,23 @@ it("rejects public creation even for a verified user, and accepts only signed re
     expect(await auth(new Request("https://app.test/eve/v1/session", { method: "POST", body, headers: signCreation(body, alice, signing) }))).toMatchObject({ principalId: "alice", attributes: { creationOperationId: operationId } });
   expect(identify).not.toHaveBeenCalled();
 });
+it("blocks new Eve turns and approvals for a fenced owner while allowing stream, cancel and reset",async () => {
+  const operationId = randomUUID(),body = JSON.stringify({ message: "Hello",operationId });
+  await store.reserve({ ...alice,id: randomUUID(),operationId,requestHash: requestHash(body) });
+  vi.spyOn(store,"isFenced").mockResolvedValue(true);
+  const auth = sessionAuthorizer({ store,signing,identify: async () => alice });
+  expect(await auth(new Request("https://app.test/eve/v1/session",{ method: "POST",body,headers: signCreation(body,alice,signing) }))).toBeNull();
+  for (const suffix of ["","/clear","/compact"]) {
+    expect(await auth(new Request(`https://app.test/eve/v1/session/private-session${suffix}`,{ method: "POST" }))).toBeNull();
+  }
+  for (const [method,suffix] of [["GET","/stream"],["POST","/cancel"],["POST","/reset"]]) {
+    expect(await auth(new Request(`https://app.test/eve/v1/session/private-session${suffix}`,{ method })))
+      .toMatchObject({ principalId: "alice" });
+  }
+  vi.spyOn(store,"isFenced").mockRejectedValue(new Error("fence store offline"));
+  await expect(auth(new Request("https://app.test/eve/v1/session/private-session",{ method: "POST" })))
+    .rejects.toThrow("fence store offline");
+});
 it("denies unknown paths, malformed IDs, subagent streams and unsupported methods", async () => {
   const auth = sessionAuthorizer({ store, signing, identify: async () => alice });
   for (const path of ["/session/private-session", "/session/private-session/other", "/session/%2F/stream", "/session/%/stream", "/session/missing/stream", "/session/private-session/subagents/call/child/stream", "/task-input/token"]) expect(await auth(new Request(`https://app.test/eve/v1${path}`))).toBeNull();

@@ -7,6 +7,7 @@ import { pageOfRuns, runOptions, runRepairOptions, type RunOptions } from "./run
 
 export interface AccessDatabase {
   lockBinding?: boolean;
+  accountFenceTable?: "app_account_fences" | "app_private.account_fences";
   query(sql: string, parameters: (string | number | null)[]): Promise<unknown[]>;
   close(): Promise<void>;
 }
@@ -172,6 +173,11 @@ export class SqlSessionAccessStore implements SessionAccessStore {
   async ownsSession(owner: AccessOwner, session: string) {
     const o = accessOwner.parse(owner);
     return (await this.db.query("SELECT id FROM app_conversations WHERE tenant=? AND subject=? AND session_id=? AND status='active'", [o.tenant, o.subject, sessionId.parse(session)])).length === 1;
+  }
+  async isFenced(owner: AccessOwner) {
+    const o = accessOwner.parse(owner);
+    if (!this.db.accountFenceTable) throw new Error("Account fence table is not configured.");
+    return (await this.db.query(`SELECT 1 FROM ${this.db.accountFenceTable} WHERE tenant=? AND subject=?`,[o.tenant,o.subject])).length === 1;
   }
   async cancelStarting(owner: AccessOwner, operation: string) {
     const o = accessOwner.parse(owner);

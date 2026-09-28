@@ -149,6 +149,12 @@ export function supabaseAccessStore(url: string, secret: string): SessionAccessS
       if (error) throw error;
       return !!data;
     },
+    async isFenced(owner: AccessOwner) {
+      const o = accessOwner.parse(owner);
+      const { data,error } = await client.rpc("app_account_fence_status",{ p_tenant: o.tenant,p_subject: o.subject });
+      if (error) throw error;
+      return data;
+    },
     async cancelStarting(owner: AccessOwner, operation: string) {
       const o = accessOwner.parse(owner);
       const { data, error } = await client.from("app_conversations").update({ status: "revoked" }).eq("tenant", o.tenant).eq("subject", o.subject).eq("operation_id", operationId.parse(operation)).eq("status", "starting").is("session_id", null).select("id");

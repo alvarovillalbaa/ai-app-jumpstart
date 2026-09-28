@@ -6,6 +6,7 @@ export function postgresAccessStore(connectionString: string) {
   pool.on("error", () => console.error(JSON.stringify({ event: "session_access_pool_error" })));
   return new SqlSessionAccessStore({
     lockBinding: true,
+    accountFenceTable: "app_private.account_fences",
     query: async (sql, parameters) => {
       let index = 0;
       return (await pool.query(sql.replace(/\?/g, () => `$${++index}`), parameters)).rows;

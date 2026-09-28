@@ -119,6 +119,10 @@ export function sessionAccessContract(name: string, factory: () => Promise<Sessi
       input = { ...owner, id: randomUUID(), operationId: randomUUID(), requestHash: randomBytes(32).toString("hex") };
     });
     afterEach(async () => { await store?.close(); });
+    it("treats an unfenced owner as open without confusing it with another owner",async () => {
+      expect(await store.isFenced(owner)).toBe(false);
+      for (const stranger of strangers) expect(await store.isFenced(stranger)).toBe(false);
+    });
     it("commits approved artifact calls once, isolates owners and denies writes after revocation",async () => {
       const draft = { title: "Private note",content: "Plain text content" };
       expect(await store.saveArtifact(owner,input.operationId,sid("artifact-session"),"call-1",draft)).toEqual({ status: "unavailable" });

@@ -8,6 +8,19 @@ import { sqliteAccessStore } from "../../lib/agent-access/sqlite";
 import { sessionAccessContract } from "../contracts/session-access";
 
 sessionAccessContract("SQLite", async () => sqliteAccessStore(":memory:"));
+it("reads the permanent SQLite fence for the exact owner",async () => {
+  const directory = await mkdtemp(join(tmpdir(),"jumpstart-access-fence-")),path = join(directory,"app.sqlite");
+  const owner = { tenant: "org",subject: "alice" },other = { ...owner,subject: "bob" };
+  const store = sqliteAccessStore(path);
+  try {
+    expect(await store.isFenced(owner)).toBe(false);
+    const db = new DatabaseSync(path);
+    try { db.prepare("INSERT INTO app_account_fences(tenant,subject) VALUES(?,?)").run(owner.tenant,owner.subject); }
+    finally { db.close(); }
+    expect(await store.isFenced(owner)).toBe(true);
+    expect(await store.isFenced(other)).toBe(false);
+  } finally { await store.close();await rm(directory,{ recursive: true,force: true }); }
+});
 it("upgrades legacy SQLite ownership without inventing a creation date", async () => {
   const directory = await mkdtemp(join(tmpdir(),"jumpstart-legacy-access-")), path = join(directory,"app.sqlite");
   const owner = { tenant: "org",subject: "alice" }, id = randomUUID(), operationId = randomUUID();

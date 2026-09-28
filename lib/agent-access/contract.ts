@@ -61,6 +61,8 @@ export interface SessionAccessStore {
   bind(owner: AccessOwner, operation: string, session: string): Promise<boolean>;
   cancelStarting(owner: AccessOwner, operation: string): Promise<boolean>;
   ownsSession(owner: AccessOwner, session: string): Promise<boolean>;
+  /** Permanent application-row fence; also blocks new Eve input for this owner. */
+  isFenced(owner: AccessOwner): Promise<boolean>;
   revoke(owner: AccessOwner, id: string): Promise<boolean>;
   claimNonce(id: string, expiresAt: number, now: number): Promise<boolean>;
   close(): Promise<void>;
@@ -87,6 +89,7 @@ export const accessCommand = z.discriminatedUnion("operation", [
   accessOwner.extend({ operation: z.literal("access.bind"), operationId, sessionId }).strict(),
   accessOwner.extend({ operation: z.literal("access.cancelStarting"), operationId }).strict(),
   accessOwner.extend({ operation: z.literal("access.ownsSession"), sessionId }).strict(),
+  accessOwner.extend({ operation: z.literal("access.isFenced") }).strict(),
   accessOwner.extend({ operation: z.literal("access.revoke"), id: z.uuid() }).strict(),
   z.object({ operation: z.literal("access.claimNonce"), id: bodyHash, expiresAt: z.number().int().positive(), now: z.number().int().positive() }).strict(),
 ]);

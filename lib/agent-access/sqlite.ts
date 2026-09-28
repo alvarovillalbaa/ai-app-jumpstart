@@ -92,5 +92,6 @@ export function sqliteAccessStore(path: string) {
     db.exec("CREATE INDEX IF NOT EXISTS conversations_history ON app_conversations(tenant,subject,archived,created_at DESC,id DESC); COMMIT");
   } catch (error) { db.exec("ROLLBACK"); db.close(); throw error; }
   installSqliteAccountFences(db,["app_conversations","app_conversation_events","app_conversation_runs","app_artifacts","app_artifact_versions"]);
-  return new SqlSessionAccessStore({ query: async (sql, parameters) => db.prepare(sql).all(...parameters), close: async () => db.close() });
+  return new SqlSessionAccessStore({ accountFenceTable: "app_account_fences",
+    query: async (sql, parameters) => db.prepare(sql).all(...parameters), close: async () => db.close() });
 }

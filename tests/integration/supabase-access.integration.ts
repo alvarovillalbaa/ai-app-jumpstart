@@ -50,6 +50,7 @@ it("denies table reads and forged inserts to anonymous and authenticated databas
     expect((await client.rpc("app_upload_scan_command",{ command: "record",input: { tenant: "victim",subject: "victim",id: crypto.randomUUID(),
       decision: { status: "clean",sha256: "a".repeat(64),checkedAt: Date.now(),policyVersion: 1 } } })).error?.code).toBe("42501");
     expect((await client.rpc("app_create_record_once",{ _tenant: "victim",_subject: "victim",_key: crypto.randomUUID(),_hash: "a".repeat(64),_id: crypto.randomUUID(),_title: "Forged",_content: "" })).error?.code).toBe("42501");
+    expect((await client.rpc("app_account_fence_status",{ p_tenant: "victim",p_subject: "victim" })).error?.code).toBe("42501");
     for (const command of ["claimAttempt","attemptCount"]) expect((await client.rpc("app_budget_attempt_command", { command, input: { tenant: "victim", subject: "victim", operationId: crypto.randomUUID() } })).error?.code).toBe("42501");
     expect((await client.rpc("app_budget_correct_settlement",{ input: { tenant: "victim",subject: "victim",
       operationId: crypto.randomUUID(),correctionId: crypto.randomUUID(),expectedActualMicros: null,

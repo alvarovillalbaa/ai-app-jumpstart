@@ -165,6 +165,7 @@ http.route({ path: "/app/records", method: "POST", handler: httpAction(async (ct
       case "access.bind": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.access.bind, input)); }
       case "access.cancelStarting": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.access.cancelStarting, input)); }
       case "access.ownsSession": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.access.ownsSession, input)); }
+      case "access.isFenced": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.access.isFenced, input)); }
       case "access.revoke": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.access.revoke, input)); }
       case "access.claimNonce": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.access.claimNonce, input)); }
       case "list": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.records.list, input)); }
