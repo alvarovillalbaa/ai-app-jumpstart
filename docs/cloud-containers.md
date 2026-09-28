@@ -40,7 +40,7 @@ Copy the appropriate example to an environment-owned file, replace every `REPLAC
 
 Before submitting a filled definition, run `npm run check:cloud-config -- --provider aws --file YOUR_TASK_DEFINITION.json`, changing `aws` to `azure` or `gcp` for the other examples. The offline preflight requires digest-pinned app/ingress images, no unresolved `REPLACE_` markers, provider-managed references for workflow, data/Auth and model secrets, a public HTTPS app origin, private app/Eve ports, one always-on replica where the manifest controls it, and the shared readiness/ingress contract. If uploads are enabled, it rejects `local` storage on these ephemeral cloud instances and requires a managed `CRON_SECRET` reference on the application container; Supabase Storage needs managed `SUPABASE_URL` and `SUPABASE_SECRET_KEY` references even when application data uses PostgreSQL or Convex, while S3 needs literal valid region/bucket settings. Supplied AWS credential environment variables must be managed secret references; prefer a workload role where available. The preflight does not check bucket privacy, IAM, credential validity, scanner behavior or object durability, so run the selected storage adapter's live acceptance before serving uploads. `npm run check:cloud-templates` checks the three committed examples in placeholder-permitting mode; `--template` is available for an individual example but is not a release check. The preflight prints only provider, data-provider and secret-reference counts. It does not contact cloud APIs, verify secret contents, IAM, registry digest availability, database access, Workflow image contents, load balancer behavior, deployed streaming or an installed cleanup schedule.
 
-When uploads are enabled, schedule a separate job using the same pinned production app image, with command `node scripts/run-upload-cleanup.mjs`, `APP_ORIGIN` set to the deployed HTTPS origin, and the same `CRON_SECRET` supplied through a managed secret reference. The image includes this no-build-dependency runner. Each invocation calls the protected cleanup endpoint, follows its `more` result for at most 20 bounded passes, prints aggregate counts and exits nonzero on endpoint failure or remaining backlog. It refuses HTTP origins, redirects and missing/weak secrets. Run it at least daily, alert on nonzero exit, and inspect the aggregate result. A persistent failed row needs object-store repair; retrying the job alone cannot release its quota. The runtime preflight checks the application secret reference, but the scheduler job and its secret access need separate review and live execution. See [upload cleanup behavior](uploads.md).
+When uploads are enabled, use the [cloud cleanup job generator and acceptance recipe](cloud-cleanup.md) to derive a separate scheduled job from the reviewed runtime manifest. It pins the same production app image, selects only the deployed HTTPS origin and managed `CRON_SECRET` reference, and runs the bounded protected-route caller. The runtime preflight checks the application secret reference; each scheduler job, its identity and its actual execution need separate review and live acceptance.
 
 ## AWS ECS/Fargate
 
@@ -54,7 +54,7 @@ aws ecs register-task-definition --cli-input-json file://YOUR_TASK_DEFINITION.js
 
 Create/update an ECS service with the returned task-definition revision, Fargate launch type, your reviewed network configuration and ALB target group. Keep desired count at least one. Run release migrations as a separate one-off task with the same image and secret references before updating the service. Do not run migrations concurrently in every app container. Follow [AWS task-definition parameters](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_definition_parameters.html).
 
-For uploads, create a separate one-container Fargate task definition for the cleanup command and schedule it with [EventBridge Scheduler](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/tasks-scheduled-eventbridge-scheduler.html). Give that task only image-pull/logging access and the `CRON_SECRET` reference; it calls the deployed HTTPS application rather than opening the catalog or bucket directly. Review the schedule's task-launch role and egress to the app origin.
+For uploads, generate the [one-container cleanup task definition](cloud-cleanup.md) and schedule its reviewed revision with EventBridge Scheduler.
 
 ## Azure Container Apps
 
@@ -67,7 +67,7 @@ az containerapp create --name YOUR_APP --resource-group YOUR_RESOURCE_GROUP \
 
 JSON is valid YAML input. For an existing application, use the reviewed `az containerapp update --yaml` path. Run migrations as a separately controlled job/process with the same database identity. Review the [Container Apps template specification](https://learn.microsoft.com/en-us/azure/container-apps/azure-resource-manager-api-spec) and [workload profiles](https://learn.microsoft.com/en-us/azure/container-apps/workload-profiles-overview).
 
-For uploads, run the cleanup command as a separate [scheduled Container Apps job](https://learn.microsoft.com/en-us/azure/container-apps/jobs) with its own Key Vault-backed `CRON_SECRET` reference, HTTPS application origin and egress. The job needs no application database or object-store credential.
+For uploads, generate the [scheduled Container Apps cleanup job](cloud-cleanup.md) with its selected Key Vault-backed `CRON_SECRET` reference.
 
 ## Google Cloud Run
 
@@ -79,7 +79,7 @@ gcloud run services replace YOUR_SERVICE.json --region YOUR_REGION --project YOU
 
 Configure the service invoker policy deliberately. A public browser application needs public HTTP ingress for sign-in, while the application still verifies every protected API/session operation. Adding `allUsers` as a service invoker is a separate reviewed IAM action; the manifest does not perform it. Run migrations in a separate controlled Cloud Run job or database release process. Cloud Run can replace instances even with a minimum configured, so persistence/reconnect checks are mandatory.
 
-For uploads, run the cleanup command as a separate [scheduled Cloud Run job](https://docs.cloud.google.com/run/docs/execute/jobs-on-schedule) with a Secret Manager-backed `CRON_SECRET`, the HTTPS application origin and egress. It needs no direct application database or object-store credential.
+For uploads, generate the [Cloud Run cleanup job](cloud-cleanup.md) and schedule it with Cloud Scheduler after reviewing its Secret Manager reference and identity.
 
 ## Acceptance for every provider
 
