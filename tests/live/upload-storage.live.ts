@@ -5,11 +5,18 @@ import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { Client } from "pg";
 import { afterEach,beforeAll, expect, it,vi } from "vitest";
+import { sqliteAccessStore } from "../../lib/agent-access/sqlite";
+import { sqliteBudgetStore } from "../../lib/budgets/sqlite";
+import { SqliteRepository } from "../../lib/data/sqlite";
+import { sqlitePreferenceStore } from "../../lib/preferences/sqlite";
+import { sqliteRequestLimitStore } from "../../lib/request-limits/sqlite";
 import { uploadObjectKey, type PrivateUploadObjects } from "../../lib/uploads/contract";
 import { SUPABASE_UPLOAD_BUCKET, supabaseUploadObjects, uploadStorageClient, verifyPrivateUploadBucket } from "../../lib/uploads/supabase";
 import { verifyUploadStoragePolicy } from "../../lib/uploads/storage-policy";
 import { supabaseUploadCatalog } from "../../lib/uploads/catalog-remote";
+import { sqliteUploadCatalog } from "../../lib/uploads/catalog-sqlite";
 import { UploadIntake } from "../../lib/uploads/intake";
+import { localUploadObjects } from "../../lib/uploads/local";
 import { uploadObjectContract } from "../contracts/uploads";
 import { uploadHandlers } from "../../lib/http/uploads";
 import { inspectSupabaseOwnerObjects } from "../../lib/uploads/object-inventory";
@@ -17,7 +24,8 @@ import { exportAccountObjects } from "../../scripts/export-account-objects";
 import { listSupabaseOwnerObjectIds } from "../../lib/uploads/object-export";
 import { verifyExport } from "../../scripts/verify-export";
 import { exportAccountBundle,verifyAccountBundle } from "../../scripts/export-account-bundle";
-import { setPostgresAccountFence } from "../../scripts/fence-account-writes";
+import { setPostgresAccountFence,setSqliteAccountFence } from "../../scripts/fence-account-writes";
+import { rehearseAccountBundle,verifyRehearsedAccountBundle } from "../../scripts/rehearse-account-bundle";
 
 const url = process.env.SUPABASE_URL,secret = process.env.SUPABASE_SECRET_KEY,anonKey = process.env.SUPABASE_ANON_KEY;
 const database = process.env.DATABASE_URL;
@@ -26,6 +34,15 @@ const storage = uploadStorageClient(url,secret).storage;
 const raw = supabaseUploadObjects(storage);
 beforeAll(async () => { await verifyUploadStoragePolicy(database);await verifyPrivateUploadBucket(storage); });
 afterEach(() => vi.unstubAllEnvs());
+
+function requireDisposableDatabase() {
+  if (!database || !url) throw new Error("Account bundle fixture requires disposable services.");
+  const target = new URL(database);
+  const service = new URL(url);
+  if (!["127.0.0.1","localhost","[::1]"].includes(target.hostname) || target.pathname !== "/app_data_test" ||
+      service.protocol !== "http:" || !["127.0.0.1","localhost","[::1]"].includes(service.hostname))
+    throw new Error("Account bundle fixture requires disposable loopback services.");
+}
 
 // Only the owned Auth harness adds a broad policy; never modify a configured
 // project's RLS to enable this positive control.
@@ -44,9 +61,7 @@ if (process.env.TEST_STORAGE_PERMISSIVE === "1") it("allows an unrelated bucket 
 });
 
 if (process.env.TEST_DISPOSABLE_SUPABASE === "1") it("bundles real Supabase catalog rows and Storage bytes for one fenced owner",async () => {
-  const target = new URL(database);
-  if (!["127.0.0.1","localhost","[::1]"].includes(target.hostname) || target.pathname !== "/app_data_test")
-    throw new Error("Account bundle fixture requires the disposable loopback application database.");
+  requireDisposableDatabase();
   const owner = { tenant: randomUUID(),subject: "bundle-owner" },other = { tenant: owner.tenant,subject: "other" };
   const mismatchOwner = { tenant: randomUUID(),subject: "bundle-mismatch" };
   const orphan = randomUUID(),foreign = randomUUID(),mismatch = randomUUID();
@@ -90,6 +105,44 @@ if (process.env.TEST_DISPOSABLE_SUPABASE === "1") it("bundles real Supabase cata
     await pg.query("DELETE FROM public.app_uploads WHERE id=$1",[mismatch]).catch(() => {});
     await pg.end().catch(() => {});
     await catalog.close();
+    rmSync(dir,{ recursive: true,force: true });
+  }
+},60_000);
+
+if (process.env.TEST_DISPOSABLE_SUPABASE === "1") it("rehearses SQLite account rows and real Supabase Storage bytes into isolated local storage",async () => {
+  requireDisposableDatabase();
+  const owner = { tenant: randomUUID(),subject: "portable-bundle" },other = { ...owner,subject: "other" };
+  const id = randomUUID(),orphan = randomUUID(),foreign = randomUUID();
+  const bytes = new TextEncoder().encode("portable real Storage bytes");
+  const dir = mkdtempSync(join(tmpdir(),"jumpstart-portable-bundle-"));
+  const path = join(dir,"app.sqlite"),bundle = join(dir,"bundle"),rehearsal = join(dir,"rehearsal");
+  try {
+    const stores = [new SqliteRepository(path),sqliteAccessStore(path),sqliteBudgetStore(path),
+      sqlitePreferenceStore(path),sqliteRequestLimitStore(path)];
+    for (const store of stores) await store.close();
+    const catalog = sqliteUploadCatalog(path);
+    try {
+      expect(await catalog.reserve(owner,{ id,name: "portable.txt",mediaType: "text/plain",size: bytes.length,
+        sha256: createHash("sha256").update(bytes).digest("hex"),createdAt: Date.now() },
+      { maxBytes: 1000,maxFiles: 1 })).toBe("reserved");
+      await raw.put(owner,id,bytes);
+      expect(await catalog.markStored(owner,id)).toBe(true);
+    } finally { await catalog.close(); }
+    await raw.put(owner,orphan,new TextEncoder().encode("portable orphan bytes"));
+    await raw.put(other,foreign,new TextEncoder().encode("foreign bytes"));
+    setSqliteAccountFence(path,owner);
+    expect(await exportAccountBundle("sqlite","supabase",owner,bundle,
+      { ACCOUNT_AUDIT_SQLITE_PATH: path,SUPABASE_URL: url,SUPABASE_SECRET_KEY: secret })).toMatchObject({
+      metadataProvider: "sqlite",objectProvider: "supabase",rows: 1,objects: 2 });
+    expect(await rehearseAccountBundle(bundle,rehearsal)).toEqual({
+      provider: "sqlite",rows: 1,objects: 2,status: "fenced-rehearsal" });
+    expect(await verifyRehearsedAccountBundle(bundle,rehearsal)).toMatchObject({ rows: 1,objects: 2 });
+    const local = localUploadObjects(join(rehearsal,"uploads"));
+    expect(await local.get(owner,id)).toEqual(bytes);
+    expect(await local.get(owner,orphan)).toEqual(new TextEncoder().encode("portable orphan bytes"));
+    expect(await local.get(other,foreign)).toBeNull();
+  } finally {
+    await Promise.allSettled([raw.delete(owner,id),raw.delete(owner,orphan),raw.delete(other,foreign)]);
     rmSync(dir,{ recursive: true,force: true });
   }
 },60_000);

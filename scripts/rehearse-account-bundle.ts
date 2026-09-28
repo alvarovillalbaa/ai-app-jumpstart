@@ -221,8 +221,8 @@ async function compareObjects(source: string,root: string,owner: AccessOwner) {
 export async function verifyRehearsedAccountBundle(sourceInput: string,outputInput: string) {
   const source = resolve(sourceInput),output = resolve(outputInput);
   const bundle = await verifyAccountBundle(source);
-  if (bundle.metadataProvider !== "sqlite" || bundle.objectProvider !== "local")
-    throw new Error("Account rehearsal requires a SQLite/local bundle.");
+  if (bundle.metadataProvider !== "sqlite")
+    throw new Error("Account rehearsal requires SQLite metadata.");
   await privateDirectory(output);
   if (JSON.stringify((await readdir(output)).sort()) !== JSON.stringify(["app.sqlite",marker,"uploads"].sort()))
     throw new Error("Account rehearsal has missing or unexpected files.");
@@ -245,8 +245,8 @@ export async function verifyRehearsedAccountBundle(sourceInput: string,outputInp
 /** Recover only to a new isolated directory. No existing application or object store is touched. */
 export async function rehearseAccountBundle(sourceInput: string,outputInput: string) {
   const source = await realpath(resolve(sourceInput)),bundle = await verifyAccountBundle(source);
-  if (bundle.metadataProvider !== "sqlite" || bundle.objectProvider !== "local")
-    throw new Error("Account rehearsal requires a SQLite/local bundle.");
+  if (bundle.metadataProvider !== "sqlite")
+    throw new Error("Account rehearsal requires SQLite metadata.");
   const destination = resolve(outputInput),parent = dirname(destination);
   await privateDirectory(parent);
   const output = join(await realpath(parent),basename(destination));
