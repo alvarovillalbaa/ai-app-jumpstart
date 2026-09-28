@@ -1,8 +1,8 @@
 import { v } from "convex/values";
-import { internalMutation,internalQuery,type QueryCtx } from "./_generated/server";
+import { internalMutation,internalQuery,type MutationCtx,type QueryCtx } from "./_generated/server";
 
 // Kept in lockstep with the classified Convex tables in account-data-inventory.mjs.
-// These queries return counts only; they never return application rows.
+// The operator-only endpoint uses this allowlist for counts, raw export and deletion.
 export const accountAuditEntities = [
   "records","recordCreates","conversations","conversationEvents","conversationRuns",
   "artifacts","artifactVersions","budgetAccounts","budgetDays","budgetReservations",
@@ -12,7 +12,7 @@ export const accountAuditEntities = [
 type Entity = typeof accountAuditEntities[number];
 const childEntities = new Set<Entity>(["conversationEvents","conversationRuns","artifacts","artifactVersions","budgetAttempts","uploadReviews"]);
 
-async function parentOwner(ctx: QueryCtx, entity: Entity, row: Record<string, unknown>) {
+async function parentOwner(ctx: QueryCtx | MutationCtx, entity: Entity, row: Record<string, unknown>) {
   if (entity === "conversationEvents" || entity === "conversationRuns" || entity === "artifacts") {
     const parent = await ctx.db.query("conversations").withIndex("by_operation",q => q.eq("operationId",row.operationId as string)).unique();
     if (entity === "artifacts" && parent && (row.tenant !== parent.tenant || row.subject !== parent.subject)) return null;
@@ -95,5 +95,33 @@ export const setAccountFence = internalMutation({
     if (existing) return { status: "fenced" as const,created: false };
     await ctx.db.insert("accountFences",{ ...args,createdAt: Date.now() });
     return { status: "fenced" as const,created: true };
+  },
+});
+
+/** Operator-only, bounded, retryable physical deletion; the permanent fence is never removed. */
+export const eraseAccountRows = internalMutation({
+  args: { entity: v.string(),tenant: v.string(),subject: v.string(),ids: v.array(v.string()) },
+  handler: async (ctx,args) => {
+    if (!accountAuditEntities.includes(args.entity as Entity) || !args.tenant || !args.subject ||
+        args.tenant.length > 200 || args.subject.length > 200 ||
+        args.ids.length < 1 || args.ids.length > 10 || new Set(args.ids).size !== args.ids.length)
+      throw new Error("Invalid account row erasure request.");
+    const entity = args.entity as Entity;
+    const fence = await ctx.db.query("accountFences").withIndex("by_owner",q =>
+      q.eq("tenant",args.tenant).eq("subject",args.subject)).unique();
+    if (!fence) throw new Error("Account rows must be permanently fenced before erasure.");
+    const found = [];
+    for (const rawId of args.ids) {
+      const id = ctx.db.normalizeId(entity,rawId);
+      if (!id) throw new Error("Account row ID does not belong to the selected table.");
+      const row = await ctx.db.get(entity,id);
+      if (!row) continue;
+      const owner = await parentOwner(ctx,entity,row as Record<string,unknown>);
+      if (!owner || owner.tenant !== args.tenant || owner.subject !== args.subject)
+        throw new Error("Account row does not belong to the selected owner.");
+      found.push(id);
+    }
+    for (const id of found) await ctx.db.delete(entity,id);
+    return { removed: found.length,missing: args.ids.length-found.length };
   },
 });

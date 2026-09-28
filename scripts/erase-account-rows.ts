@@ -9,8 +9,9 @@ import { accountDataInventory,accountOrphanCountQueries,accountOwnerCountQueries
   readAccountSchemaSources,verifyAccountDataInventory } from "./account-data-inventory.mjs";
 import { verifyAccountBundle } from "./export-account-bundle";
 import { verifyAccountRowExportDetails } from "./export-account-rows";
+import { eraseConvexAccountRows } from "./erase-convex-account-rows";
 
-type Provider = "sqlite" | "postgres";
+type Provider = "sqlite" | "postgres" | "convex";
 type Expected = Record<string,number>;
 const rows = accountDataInventory.filter(entry => entry.owner !== "global-expiring" && entry.owner !== "closure-control");
 
@@ -116,7 +117,7 @@ async function postgres(url: string,owner: AccessOwner,expected: Expected,execut
 
 /** Operator-only application-row erasure; the permanent fence survives. */
 export async function eraseAccountRows(provider: Provider,ownerInput: AccessOwner,bundlePath: string,
-  env: Record<string,string | undefined>,execute = false) {
+  env: Record<string,string | undefined>,execute = false,request: typeof fetch = fetch) {
   verifyAccountDataInventory(readAccountSchemaSources());
   const owner = accessOwner.parse(ownerInput);
   const bundle = await verifyAccountBundle(bundlePath);
@@ -124,15 +125,21 @@ export async function eraseAccountRows(provider: Provider,ownerInput: AccessOwne
   if (bundle.metadataProvider !== provider || archive.provider !== provider ||
       archive.owner.tenant !== owner.tenant || archive.owner.subject !== owner.subject || archive.rows !== bundle.rows)
     throw new Error("Verified account bundle does not match the selected owner and metadata provider.");
+  let convexResult: { remainingBefore: number;deleted: number } | undefined;
   if (provider === "sqlite") await sqlite(env.ACCOUNT_AUDIT_SQLITE_PATH ?? "",owner,archive.counts,execute);
-  else await postgres(env.DATABASE_URL ?? "",owner,archive.counts,execute);
+  else if (provider === "postgres") await postgres(env.DATABASE_URL ?? "",owner,archive.counts,execute);
+  else convexResult = await eraseConvexAccountRows(owner,bundlePath,archive.counts,
+    env.CONVEX_SITE_URL ?? "",env.CONVEX_AUDIT_SECRET ?? "",env.CONVEX_ERASURE_SECRET ?? "",execute,request);
   return { provider,rows: archive.rows,status: execute ? "application-rows-erased" : "application-row-erasure-planned",
-    scope: "application metadata rows only; permanent fence retained; objects, Auth, Eve/Workflow and external copies remain" };
+    ...convexResult,
+    scope: provider === "convex"
+      ? "resumable bounded application-row mutations; permanent fence retained; objects, Auth, Eve/Workflow and external copies remain"
+      : "transactional application metadata rows only; permanent fence retained; objects, Auth, Eve/Workflow and external copies remain" };
 }
 
 async function main(args: string[],env: NodeJS.ProcessEnv) {
-  const usage = "Usage: npm run account:erase:rows -- --metadata sqlite|postgres --source /private/bundle --stopped --plan|--erase-application-rows (set ACCOUNT_AUDIT_TENANT, ACCOUNT_AUDIT_SUBJECT and selected operator backend settings)";
-  if (args.length !== 6 || args[0] !== "--metadata" || !["sqlite","postgres"].includes(args[1]) ||
+  const usage = "Usage: npm run account:erase:rows -- --metadata sqlite|postgres|convex --source /private/bundle --stopped --plan|--erase-application-rows (set ACCOUNT_AUDIT_TENANT, ACCOUNT_AUDIT_SUBJECT and selected operator backend settings; Convex execution also needs a distinct CONVEX_ERASURE_SECRET)";
+  if (args.length !== 6 || args[0] !== "--metadata" || !["sqlite","postgres","convex"].includes(args[1]) ||
       args[2] !== "--source" || !args[3] || args[4] !== "--stopped" ||
       !["--plan","--erase-application-rows"].includes(args[5]) || !env.ACCOUNT_AUDIT_TENANT || !env.ACCOUNT_AUDIT_SUBJECT) {
     console.error(usage);process.exitCode = 2;return;

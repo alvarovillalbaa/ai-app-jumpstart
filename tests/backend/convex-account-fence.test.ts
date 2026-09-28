@@ -10,7 +10,7 @@ const auditSecret = "test-convex-write-fence-secret-".repeat(2);
 afterEach(() => vi.unstubAllEnvs());
 
 it("requires an in-transaction guard on every owner-writing Convex mutation",() => {
-  const exceptions = new Set(["audit:setAccountFence","access:claimNonce","records:remove"]),seen = new Set<string>();
+  const exceptions = new Set(["audit:setAccountFence","audit:eraseAccountRows","access:claimNonce","records:remove"]),seen = new Set<string>();
   for (const file of readdirSync("convex").filter(name => name.endsWith(".ts"))) {
     const source = readFileSync(`convex/${file}`,"utf8"),matches = [...source.matchAll(/export const (\w+)\s*=\s*internalMutation\(\{/gu)];
     expect(matches.length,`${file} has an unclassified mutation declaration`).toBe([...source.matchAll(/\binternalMutation\(\{/gu)].length);

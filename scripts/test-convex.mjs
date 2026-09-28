@@ -13,9 +13,11 @@ const cli = join(root, "node_modules/convex/bin/main.js");
 const browserAccounts = process.argv.includes("--accounts");
 const secret = randomBytes(32).toString("base64url");
 const auditSecret = randomBytes(32).toString("base64url");
+const erasureSecret = randomBytes(32).toString("base64url");
 const env = { ...process.env, CONVEX_AGENT_MODE: "anonymous" };
 // This harness must never inherit a real deployment or authentication context.
-for (const name of ["CONVEX_DEPLOY_KEY", "CONVEX_DEPLOYMENT", "CONVEX_SELF_HOSTED_URL", "CONVEX_SELF_HOSTED_ADMIN_KEY"]) delete env[name];
+for (const name of ["CONVEX_DEPLOY_KEY", "CONVEX_DEPLOYMENT", "CONVEX_SELF_HOSTED_URL", "CONVEX_SELF_HOSTED_ADMIN_KEY",
+  "CONVEX_BACKEND_SECRET","CONVEX_AUDIT_SECRET","CONVEX_ERASURE_SECRET"]) delete env[name];
 async function freePort() {
   const server = createServer(); server.listen(0, "127.0.0.1"); await once(server, "listening");
   const port = server.address().port; await new Promise(resolve => server.close(resolve)); return port;
@@ -34,7 +36,7 @@ async function command(args, options = {}) {
   activeChild.stdout.on("data", chunk => { diagnostic = (diagnostic + chunk.toString()).slice(-4000); if (options.log) process.stdout.write(chunk); });
   activeChild.stderr.on("data", chunk => { diagnostic = (diagnostic + chunk.toString()).slice(-4000); if (options.log) process.stderr.write(chunk); });
   const [code, signal] = await once(activeChild, "exit"); activeChild = undefined;
-  if (code !== 0 || signal) throw new Error(`Convex test command failed (${signal ?? code}). ${diagnostic.replaceAll(secret,"[redacted]").replaceAll(auditSecret,"[redacted]")}`);
+  if (code !== 0 || signal) throw new Error(`Convex test command failed (${signal ?? code}). ${diagnostic.replaceAll(secret,"[redacted]").replaceAll(auditSecret,"[redacted]").replaceAll(erasureSecret,"[redacted]")}`);
   return diagnostic;
 }
 try {
@@ -77,6 +79,7 @@ try {
   if (process.argv.includes("--update-codegen")) await cp(join(directory, "convex/_generated"), join(root, "convex/_generated"), { recursive: true });
   await command([cli, "env", "set", "CONVEX_BACKEND_SECRET"], { input: secret });
   await command([cli, "env", "set", "CONVEX_AUDIT_SECRET"], { input: auditSecret });
+  await command([cli, "env", "set", "CONVEX_ERASURE_SECRET"], { input: erasureSecret });
   const ready = await fetch(`${siteUrl}/app/records`, { method: "POST", headers: { "content-type": "application/json", "x-jumpstart-backend-key": secret }, body: JSON.stringify({ operation: "health" }), signal: AbortSignal.timeout(5000) });
   if (!ready.ok) throw new Error(`Local Convex readiness failed (${ready.status}).`);
   // Real deployment boundary: anonymous clients must not bypass the HTTP action
@@ -129,6 +132,15 @@ try {
   if (verifiedRows.provider !== "convex" || verifiedRows.rows !== 1 ||
       !(await readFile(rowArchive,"utf8")).includes(auditId))
     throw new Error("Local Convex raw row archive did not verify.");
+  const archivedRecord = (await readFile(rowArchive,"utf8")).split("\n")
+    .filter(Boolean).map(line => JSON.parse(line)).find(item => item.type === "row" && item.value.entity === "records");
+  const internalRecordId = JSON.parse(archivedRecord.value.rowJson)._id;
+  const directErase = await fetch(`http://127.0.0.1:${cloudPort}/api/mutation`,{ method: "POST",
+    headers: { "content-type": "application/json" },body: JSON.stringify({ path: "audit:eraseAccountRows",
+      args: { entity: "records",...auditOwner,ids: [internalRecordId] },format: "json" }),signal: AbortSignal.timeout(5000) });
+  const directEraseResult = await directErase.json();
+  if (directErase.ok && directEraseResult.status !== "error")
+    throw new Error("Internal Convex erasure mutation was publicly accessible.");
   const bundle = join(directory,"account-bundle");
   const bundleEnv = { ...env,CONVEX_SITE_URL: siteUrl,CONVEX_AUDIT_SECRET: auditSecret,
     ACCOUNT_AUDIT_TENANT: auditOwner.tenant,ACCOUNT_AUDIT_SUBJECT: auditOwner.subject,
@@ -151,6 +163,23 @@ try {
   const otherWrite = await fetch(`${siteUrl}/app/records`,{ method: "POST",headers: { "content-type": "application/json","x-jumpstart-backend-key": secret },
     body: JSON.stringify({ operation: "create",tenant: auditOwner.tenant,subject: "other",id: randomUUID(),title: "Other",content: "private" }),signal: AbortSignal.timeout(5000) });
   if (!otherWrite.ok) throw new Error("Local Convex fence blocked a different account.");
+  const deniedErase = await fetch(`${siteUrl}/app/audit`,{ method: "POST",headers: {
+    "content-type": "application/json","x-jumpstart-audit-key": auditSecret },
+    body: JSON.stringify({ operation: "eraseAccountRows",entity: "records",...auditOwner,ids: ["invalid"] }),
+    signal: AbortSignal.timeout(5000) });
+  if (deniedErase.status !== 401) throw new Error("Convex audit credential alone could erase account rows.");
+  const planOutput = await command([join(root,"node_modules/tsx/dist/cli.mjs"),"scripts/erase-account-rows.ts",
+    "--metadata","convex","--source",bundle,"--stopped","--plan"],{ cwd: root,env: bundleEnv });
+  if (JSON.parse(planOutput).remainingBefore !== 1 || planOutput.includes(auditOwner.subject))
+    throw new Error("Local Convex erasure plan did not verify its fenced bundle privately.");
+  const erasedOutput = await command([join(root,"node_modules/tsx/dist/cli.mjs"),"scripts/erase-account-rows.ts",
+    "--metadata","convex","--source",bundle,"--stopped","--erase-application-rows"],{
+    cwd: root,env: { ...bundleEnv,CONVEX_ERASURE_SECRET: erasureSecret } });
+  if (JSON.parse(erasedOutput).deleted !== 1 || erasedOutput.includes(auditOwner.subject))
+    throw new Error("Local Convex operator erasure failed or exposed its owner.");
+  const afterErase = await command([join(root,"node_modules/tsx/dist/cli.mjs"),"scripts/inspect-convex-account-data.ts","--read-only"],{
+    cwd: root,env: { ...bundleEnv } });
+  if (JSON.parse(afterErase).ownerRowTotal !== 0) throw new Error("Local Convex owner rows remain after erasure.");
   console.log("Local Convex: real backend contract and internal-function isolation passed.");
   if (browserAccounts) {
     const browserEnv = { ...env,CONVEX_SITE_URL: siteUrl,CONVEX_BACKEND_SECRET: secret,TEST_DISPOSABLE_CONVEX: "1" };
@@ -165,7 +194,7 @@ try {
 } catch (error) {
   // Only the local dev service output is included; key-setting commands are not logged.
   console.error(error instanceof Error ? error.message : "Convex validation failed.");
-  console.error(output.replaceAll(secret,"[redacted]").replaceAll(auditSecret,"[redacted]"));
+  console.error(output.replaceAll(secret,"[redacted]").replaceAll(auditSecret,"[redacted]").replaceAll(erasureSecret,"[redacted]"));
   process.exitCode = 1;
 } finally {
   if (backend && backend.exitCode === null && backend.signalCode === null) {

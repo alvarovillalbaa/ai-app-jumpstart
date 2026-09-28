@@ -65,11 +65,22 @@ http.route({ path: "/app/audit", method: "POST", handler: httpAction(async (ctx,
       subject: z.string().min(1).max(200) }).strict(),
     z.object({ operation: z.literal("setAccountFence"),tenant: z.string().min(1).max(200),
       subject: z.string().min(1).max(200) }).strict(),
+    z.object({ operation: z.literal("eraseAccountRows"),entity: z.enum(accountAuditEntities),
+      tenant: z.string().min(1).max(200),subject: z.string().min(1).max(200),
+      ids: z.array(z.string().min(1).max(100)).min(1).max(10) }).strict(),
   ]).safeParse(raw);
   if (!parsed.success) return json({ error: "invalid_input" },400);
   try {
     if (parsed.data.operation === "setAccountFence")
       return json(await ctx.runMutation(internal.audit.setAccountFence,{ tenant: parsed.data.tenant,subject: parsed.data.subject }));
+    if (parsed.data.operation === "eraseAccountRows") {
+      if (!process.env.CONVEX_ERASURE_SECRET || process.env.CONVEX_ERASURE_SECRET === process.env.CONVEX_AUDIT_SECRET)
+        return json({ error: "erasure_unavailable" },503);
+      if (!await authorized(request,"CONVEX_ERASURE_SECRET","x-jumpstart-erasure-key"))
+        return json({ error: "unauthorized" },401);
+      return json(await ctx.runMutation(internal.audit.eraseAccountRows,{ entity: parsed.data.entity,
+        tenant: parsed.data.tenant,subject: parsed.data.subject,ids: parsed.data.ids }));
+    }
     if (parsed.data.operation === "accountFenceStatus")
       return json(await ctx.runQuery(internal.audit.accountFenceStatus,{ tenant: parsed.data.tenant,subject: parsed.data.subject }));
     if (parsed.data.operation === "accountRowPage")
