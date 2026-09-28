@@ -9,6 +9,7 @@
  */
 
 import type * as access from "../access.js";
+import type * as audit from "../audit.js";
 import type * as budgets from "../budgets.js";
 import type * as http from "../http.js";
 import type * as preferences from "../preferences.js";
@@ -24,6 +25,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   access: typeof access;
+  audit: typeof audit;
   budgets: typeof budgets;
   http: typeof http;
   preferences: typeof preferences;

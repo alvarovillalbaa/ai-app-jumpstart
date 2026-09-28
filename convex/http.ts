@@ -4,6 +4,7 @@ import { httpRouter } from "convex/server";
 import { z } from "zod";
 import { httpAction } from "./_generated/server";
 import { internal } from "./_generated/api";
+import { accountAuditEntities } from "./audit";
 import { listInput, recordId, recordInput, recordUpdate,recordCreationKey } from "../lib/data/contract";
 import { accessCommand } from "../lib/agent-access/contract";
 import { budgetCommand } from "../lib/budgets/contract";
@@ -22,10 +23,10 @@ const command = z.discriminatedUnion("operation", [
 ]);
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "cache-control": "no-store" } });
 
-async function authorized(request: Request) {
-  const expected = process.env.CONVEX_BACKEND_SECRET;
+async function authorized(request: Request, secretName = "CONVEX_BACKEND_SECRET", header = "x-jumpstart-backend-key") {
+  const expected = process.env[secretName];
   if (!expected || expected.length < 32) return false;
-  const supplied = request.headers.get("x-jumpstart-backend-key") ?? "";
+  const supplied = request.headers.get(header) ?? "";
   if (supplied.length < 32 || supplied.length > 512) return false;
   // Web Crypto is supported by the Convex isolate; do not import Node crypto.
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(expected), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
@@ -35,6 +36,34 @@ async function authorized(request: Request) {
 }
 
 const http = httpRouter();
+http.route({ path: "/app/audit", method: "POST", handler: httpAction(async (ctx, request) => {
+  if (!await authorized(request,"CONVEX_AUDIT_SECRET","x-jumpstart-audit-key")) return json({ error: "unauthorized" },401);
+  if (!request.headers.get("content-type")?.startsWith("application/json")) return json({ error: "unsupported_media_type" },415);
+  const reader = request.body?.getReader();
+  if (!reader) return json({ error: "invalid_input" },400);
+  let body = "",size = 0;
+  try {
+    const decoder = new TextDecoder();
+    while (true) {
+      const { value,done } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 4096) { await reader.cancel();return json({ error: "body_too_large" },413); }
+      body += decoder.decode(value,{ stream: true });
+    }
+    body += decoder.decode();
+  } catch { return json({ error: "invalid_input" },400); }
+  finally { reader.releaseLock(); }
+  let raw: unknown;
+  try { raw = JSON.parse(body); } catch { return json({ error: "invalid_input" },400); }
+  const parsed = z.object({ operation: z.literal("accountPage"),entity: z.enum(accountAuditEntities),
+    tenant: z.string().min(1).max(200),subject: z.string().min(1).max(200),cursor: z.string().nullable() }).strict().safeParse(raw);
+  if (!parsed.success) return json({ error: "invalid_input" },400);
+  try {
+    const { operation: _,...input } = parsed.data;void _;
+    return json(await ctx.runQuery(internal.audit.accountPage,input));
+  } catch { return json({ error: "storage_error" },500); }
+}) });
 http.route({ path: "/app/records", method: "POST", handler: httpAction(async (ctx, request) => {
   if (!await authorized(request)) return json({ error: "unauthorized" }, 401);
   if (!request.headers.get("content-type")?.startsWith("application/json")) return json({ error: "unsupported_media_type" }, 415);

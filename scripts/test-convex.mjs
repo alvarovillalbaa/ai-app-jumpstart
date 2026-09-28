@@ -2,7 +2,7 @@ import { cp, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/pr
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
+import { randomBytes,randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,7 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const directory = await mkdtemp(join(tmpdir(), "jumpstart-convex-"));
 const cli = join(root, "node_modules/convex/bin/main.js");
 const secret = randomBytes(32).toString("base64url");
+const auditSecret = randomBytes(32).toString("base64url");
 const env = { ...process.env, CONVEX_AGENT_MODE: "anonymous" };
 // This harness must never inherit a real deployment or authentication context.
 for (const name of ["CONVEX_DEPLOY_KEY", "CONVEX_DEPLOYMENT", "CONVEX_SELF_HOSTED_URL", "CONVEX_SELF_HOSTED_ADMIN_KEY"]) delete env[name];
@@ -32,7 +33,8 @@ async function command(args, options = {}) {
   activeChild.stdout.on("data", chunk => { diagnostic = (diagnostic + chunk.toString()).slice(-4000); if (options.log) process.stdout.write(chunk); });
   activeChild.stderr.on("data", chunk => { diagnostic = (diagnostic + chunk.toString()).slice(-4000); if (options.log) process.stderr.write(chunk); });
   const [code, signal] = await once(activeChild, "exit"); activeChild = undefined;
-  if (code !== 0 || signal) throw new Error(`Convex test command failed (${signal ?? code}). ${diagnostic.replaceAll(secret,"[redacted]")}`);
+  if (code !== 0 || signal) throw new Error(`Convex test command failed (${signal ?? code}). ${diagnostic.replaceAll(secret,"[redacted]").replaceAll(auditSecret,"[redacted]")}`);
+  return diagnostic;
 }
 try {
   await cp(join(root, "convex"), join(directory, "convex"), { recursive: true });
@@ -73,6 +75,7 @@ try {
   // Opt-in regeneration uses the disposable deployment, never operator credentials.
   if (process.argv.includes("--update-codegen")) await cp(join(directory, "convex/_generated"), join(root, "convex/_generated"), { recursive: true });
   await command([cli, "env", "set", "CONVEX_BACKEND_SECRET"], { input: secret });
+  await command([cli, "env", "set", "CONVEX_AUDIT_SECRET"], { input: auditSecret });
   const ready = await fetch(`${siteUrl}/app/records`, { method: "POST", headers: { "content-type": "application/json", "x-jumpstart-backend-key": secret }, body: JSON.stringify({ operation: "health" }), signal: AbortSignal.timeout(5000) });
   if (!ready.ok) throw new Error(`Local Convex readiness failed (${ready.status}).`);
   // Real deployment boundary: anonymous clients must not bypass the HTTP action
@@ -86,11 +89,22 @@ try {
   await command([join(root, "node_modules/vitest/vitest.mjs"), "run", "--config", "vitest.integration.config.ts"], {
     cwd: root, env: { ...env, DATA_PROVIDER: "convex", CONVEX_SITE_URL: siteUrl, CONVEX_BACKEND_SECRET: secret }, log: true,
   });
+  const auditOwner = { tenant: "test-convex-audit",subject: "test-convex-audit" };
+  const auditSeed = await fetch(`${siteUrl}/app/records`,{ method: "POST",headers: { "content-type": "application/json","x-jumpstart-backend-key": secret },
+    body: JSON.stringify({ operation: "create",...auditOwner,id: randomUUID(),title: "Audit fixture",content: "private" }),signal: AbortSignal.timeout(5000) });
+  if (!auditSeed.ok) throw new Error("Local Convex audit fixture could not be created.");
+  const auditOutput = await command([join(root,"node_modules/tsx/dist/cli.mjs"),"scripts/inspect-convex-account-data.ts","--read-only"],{
+    cwd: root,env: { ...env,CONVEX_SITE_URL: siteUrl,CONVEX_AUDIT_SECRET: auditSecret,
+      ACCOUNT_AUDIT_TENANT: auditOwner.tenant,ACCOUNT_AUDIT_SUBJECT: auditOwner.subject },
+  });
+  const auditReport = JSON.parse(auditOutput);
+  if (auditReport.provider !== "convex" || auditReport.ownerRows.records !== 1 || auditReport.ownerRowTotal < 1)
+    throw new Error("Local Convex audit did not count its persisted private record.");
   console.log("Local Convex: real backend contract and internal-function isolation passed.");
 } catch (error) {
   // Only the local dev service output is included; key-setting commands are not logged.
   console.error(error instanceof Error ? error.message : "Convex validation failed.");
-  console.error(output);
+  console.error(output.replaceAll(secret,"[redacted]").replaceAll(auditSecret,"[redacted]"));
   process.exitCode = 1;
 } finally {
   if (backend && backend.exitCode === null && backend.signalCode === null) {
