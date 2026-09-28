@@ -66,8 +66,10 @@ The committed `vercel.json` runs the protected [upload cleanup trigger](uploads.
 The same read/write smoke works against Vercel, a self-hosted Node service, or any of the cloud container targets. From a source checkout with `npm ci` installed, provision two temporary `APP_API_KEYS` credentials with `records:read` and `records:write` scopes for different subjects in the same tenant. Export their raw tokens as `APP_API_TOKEN` and `APP_API_OTHER_TOKEN`, and set `APP_API_URL` to the exact HTTPS deployment origin. Keep tokens in your secret manager or shell environment, not command arguments or committed files. Then run:
 
 ```sh
-npm run smoke:hosted
+npm run smoke:hosted -- --contract
 ```
+
+`--contract` first requires the deployed `/openapi.json` bytes to match this checkout, before the smoke writes a record. It then validates every successful JSON `/api/v1` response it reads against the matching operation and status schema. A mismatch stops the run with an operation name, not private response content. Run it from the exact source revision intended for release; this checks the exposed REST contract and deployment revision, not the internal state of every route or the separate MCP protocol. The other modes below can be combined with `--contract`.
 
 For a deployment with Supabase accounts and `AI_CHAT_ENABLED=true`, sign in two distinct temporary staging users through the configured Auth provider and put their current access tokens into the same two shell variables. Run:
 

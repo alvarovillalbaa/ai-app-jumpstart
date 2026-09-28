@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { runHostedSmoke } from "../../scripts/smoke-hosted.mjs";
 test("unknown pages show a useful 404", async ({ page }) => {
   const response = await page.goto("/a-page-that-does-not-exist");
   expect(response?.status()).toBe(404);
@@ -78,6 +79,13 @@ test("health and access control are observable", async ({ request }) => {
   expect(openapi.openapi).toBe("3.1.0");
   expect(openapi.paths["/api/v1/records"].post.operationId).toBe("createRecord");
   expect(openapi.paths["/api/v1/uploads/{id}/download"].get.operationId).toBe("downloadUpload");
+});
+test("the release checkout validates deployed REST responses before the owner smoke", async () => {
+  const result = await runHostedSmoke({ url: test.info().project.use.baseURL!,
+    token: "isolated-playwright-token-".repeat(3),
+    otherToken: "isolated-playwright-other-".repeat(3),contract: true,uploads: true });
+  expect(result.contract).toBe(true);
+  expect(result.uploadId).toMatch(/^[0-9a-f-]{36}$/i);
 });
 test("per-request CSP nonces allow hydration and theme changes", async ({ page }) => {
   await page.addInitScript(() => {

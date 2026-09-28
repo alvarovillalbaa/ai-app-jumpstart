@@ -98,7 +98,7 @@ try {
   assert.equal(restored.status, 200);
   assert.deepEqual(await restored.json(), record);
   assert.equal((await fetch(`${origin}/api/v1/records/${record.id}`, { headers: { authorization: `Bearer ${tokens[1]}` } })).status, 404);
-  const smoke = await command("npm", ["run", "smoke:hosted"], {
+  const smoke = await command("npm", ["run", "smoke:hosted", "--", "--contract"], {
     env: { ...process.env, APP_API_URL: origin, APP_API_TOKEN: tokens[0], APP_API_OTHER_TOKEN: tokens[1] },
   });
   assert.match(smoke, /Hosted smoke passed for/);

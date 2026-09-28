@@ -100,7 +100,7 @@ try {
   await server.stop(); server = start(); await ready(origin);
   assert.deepEqual(await list(), before); assert.equal((await seed()).created, 0);
   phase("two-owner browser, REST, CLI and MCP");
-  await command("npm", ["run", "smoke:hosted", "--", "--browser"], { cwd: checkout, env: clientEnv });
+  await command("npm", ["run", "smoke:hosted", "--", "--browser", "--contract"], { cwd: checkout, env: clientEnv });
   phase("closed production runtime");
   assert.equal((await fetch(`${origin}/api/v1/conversations`, { method: "POST", headers: { authorization: `Bearer ${credentials[0].token}`, "content-type": "application/json", origin }, body: "{}", signal: AbortSignal.timeout(5000) })).status, 503);
   await server.stop(); server = undefined;

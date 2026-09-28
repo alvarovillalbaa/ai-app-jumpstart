@@ -76,7 +76,7 @@ try {
   const cleanup = await fetch(cleanupUrl, { headers: { authorization: `Bearer ${cronSecret}` }, signal: AbortSignal.timeout(5000) });
   assert.equal(cleanup.status, 200); assert.deepEqual(await cleanup.json(), { status: "storage_disabled" });
   console.log("Invoking the generated Lambda handler with PostgreSQL and the compiled Eve worker...");
-  await testCommand(process.execPath, ["scripts/smoke-hosted.mjs", "--browser"], { cwd: root,
+  await testCommand(process.execPath, ["scripts/smoke-hosted.mjs", "--browser", "--contract"], { cwd: root,
     env: { ...process.env, APP_API_URL: origin, APP_API_TOKEN: token, APP_API_OTHER_TOKEN: otherToken }, timeout: 120_000 }, [password, token, otherToken]);
   const configPath = join(root, ".amplify-build/playwright.config.mjs");
   await writeFile(configPath, `export default { testDir: ${JSON.stringify(join(root, "tests/e2e"))}, workers: 1, retries: 0, use: { baseURL: ${JSON.stringify(origin)} }, reporter: 'list' };\n`);

@@ -623,7 +623,7 @@ test("an approved tool saves one private artifact; denial saves none",async ({ p
 
 test("hosted smoke verifies real browser sign-in, replay, logout, account isolation and one owned turn",async ({ request }) => {
   const alice = await user(request),bob = await user(request);
-  const result = await runHostedSmoke({ url: process.env.APP_ORIGIN!,token: alice.token,otherToken: bob.token,accounts: true,agent: true,browser: true,accountBrowser: true,requestLimit: true,uploads: true,
+  const result = await runHostedSmoke({ url: process.env.APP_ORIGIN!,token: alice.token,otherToken: bob.token,accounts: true,agent: true,browser: true,accountBrowser: true,requestLimit: true,uploads: true,contract: true,
     browserAccounts: { primary: { email: alice.email,password },other: { email: bob.email,password } } });
   expect(result.agent?.operationId).toMatch(/^[a-f0-9-]{36}$/);
   expect(result.agent?.sourceEvents).toBeGreaterThan(0);

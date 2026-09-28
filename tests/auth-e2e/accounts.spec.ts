@@ -89,7 +89,7 @@ if (process.env.DATA_PROVIDER === "supabase") test("real Auth user tokens cannot
 test("portable account-browser smoke verifies login, records, reload and logout with chat disabled",async ({ request }) => {
   const alice = `smoke-alice-${randomUUID()}@example.test`,bob = `smoke-bob-${randomUUID()}@example.test`;
   await confirmedUser(request,alice);await confirmedUser(request,bob);
-  const result = await runHostedSmoke({ url: process.env.APP_ORIGIN!,token: await tokenFor(request,alice),otherToken: await tokenFor(request,bob),accountBrowser: true,uploads: true,
+  const result = await runHostedSmoke({ url: process.env.APP_ORIGIN!,token: await tokenFor(request,alice),otherToken: await tokenFor(request,bob),accountBrowser: true,uploads: true,contract: true,
     browserAccounts: { primary: { email: alice,password },other: { email: bob,password } } });
   expect(result.accountBrowser).toBe(true);expect(result.agent).toBeUndefined();expect(result.uploadId).toMatch(/^[0-9a-f-]{36}$/i);
 });

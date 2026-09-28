@@ -17,7 +17,7 @@ async function user(request: APIRequestContext) {
 const headers = (token: string) => ({ authorization: `Bearer ${token}` });
 test("portable hosted upload smoke verifies scanner-backed private bytes and cleanup",async ({ request }) => {
   const alice = await user(request),bob = await user(request);
-  const result = await runHostedSmoke({ url: process.env.APP_ORIGIN!,token: alice.token,otherToken: bob.token,uploadDownload: true });
+  const result = await runHostedSmoke({ url: process.env.APP_ORIGIN!,token: alice.token,otherToken: bob.token,uploadDownload: true,contract: true });
   expect(result.uploadId).toMatch(/^[0-9a-f-]{36}$/i);
 });
 async function login(page: Page,email: string) {

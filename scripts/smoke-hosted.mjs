@@ -8,6 +8,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Client as EveClient } from "eve/client";
 import { checkedBrowserAccounts,verifyBrowserAccounts,accountBrowserRead } from "./helpers/hosted-account-browser.mjs";
+import { checkDeployedOpenApi } from "./helpers/hosted-openapi.mjs";
 
 function targetOrigin(value) {
   let url;
@@ -319,9 +320,9 @@ async function runAgentSmoke({ origin, token, otherToken, protection, request })
 }
 
 /**
- * @param {{url: string,token: string,otherToken: string,accounts?: boolean,agent?: boolean,browser?: boolean,accountBrowser?: boolean,requestLimit?: boolean,uploads?: boolean,uploadDownload?: boolean,browserAccounts?: import("./helpers/hosted-account-browser.mjs").AccountBrowserCredentials}} options
+ * @param {{url: string,token: string,otherToken: string,accounts?: boolean,agent?: boolean,browser?: boolean,accountBrowser?: boolean,requestLimit?: boolean,uploads?: boolean,uploadDownload?: boolean,contract?: boolean,browserAccounts?: import("./helpers/hosted-account-browser.mjs").AccountBrowserCredentials}} options
  */
-export async function runHostedSmoke({ url, token, otherToken, accounts = false, agent = false, browser = false,accountBrowser = false,requestLimit = false,uploads = false,uploadDownload = false,browserAccounts }) {
+export async function runHostedSmoke({ url, token, otherToken, accounts = false, agent = false, browser = false,accountBrowser = false,requestLimit = false,uploads = false,uploadDownload = false,contract = false,browserAccounts }) {
   const origin = targetOrigin(url);
   if (agent && !accounts) throw new Error("Agent smoke requires the two-account mode.");
   if (!token || !otherToken || token === otherToken) throw new Error("Set distinct APP_API_TOKEN and APP_API_OTHER_TOKEN with record read/write access for different owners.");
@@ -330,12 +331,18 @@ export async function runHostedSmoke({ url, token, otherToken, accounts = false,
   const protection = bypass ? { "x-vercel-protection-bypass": bypass } : {};
   const authorized = { authorization: `Bearer ${token}` };
   const other = { authorization: `Bearer ${otherToken}` };
-  const request = (path, options = {}) => {
+  const rawRequest = (path, options = {}) => {
     const { headers, timeoutMs = 15_000, ...rest } = options;
     return fetch(new URL(path, origin), {
       redirect: "error", signal: AbortSignal.timeout(timeoutMs), ...rest,
       headers: { ...protection, ...headers },
     });
+  };
+  const verifyContract = contract ? await checkDeployedOpenApi(rawRequest) : null;
+  const request = async (path, options = {}) => {
+    const response = await rawRequest(path, options);
+    if (verifyContract) await verifyContract(path, options.method ?? "GET", response);
+    return response;
   };
   if (checkedAccounts) await verifyBrowserAccounts(checkedAccounts,token,otherToken,request);
   const live = await request("/api/health/live");
@@ -460,20 +467,20 @@ export async function runHostedSmoke({ url, token, otherToken, accounts = false,
   if (cleanupFailure) throw cleanupFailure;
   const agentResult = agent ? await runAgentSmoke({ origin, token, otherToken, protection, request }) : undefined;
   if (checkedAccounts && agentResult) await accountBrowserRead({ origin,protection,accounts: checkedAccounts,operationId: agentResult.operationId });
-  return { origin, recordId: record.id, uploadId, agent: agentResult, browser,accountBrowser,requestLimit };
+  return { origin, recordId: record.id, uploadId, agent: agentResult, browser,accountBrowser,requestLimit,contract };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   const flags = new Set(args);
-  if (flags.size !== args.length || args.some(arg => !["--accounts", "--agent", "--browser","--account-browser","--request-limit","--uploads","--upload-download"].includes(arg))) {
-    console.error("Supported options: --accounts (budget access, no model call), --agent (one owned model turn), --browser (token records UI), --account-browser (real sign-in, reload, logout and account isolation), --request-limit (active registered-owner admission across REST/CLI/MCP), --uploads (private upload isolation and cleanup), --upload-download (also require fresh-scanned exact bytes).");
+  if (flags.size !== args.length || args.some(arg => !["--accounts", "--agent", "--browser","--account-browser","--request-limit","--uploads","--upload-download","--contract"].includes(arg))) {
+    console.error("Supported options: --accounts (budget access, no model call), --agent (one owned model turn), --browser (token records UI), --account-browser (real sign-in, reload, logout and account isolation), --request-limit (active registered-owner admission across REST/CLI/MCP), --uploads (private upload isolation and cleanup), --upload-download (also require fresh-scanned exact bytes), --contract (exact deployed OpenAPI revision and successful REST response schemas).");
     process.exitCode = 2;
   } else {
-    const agent = flags.has("--agent"),accountBrowser = flags.has("--account-browser"),accounts = agent || flags.has("--accounts"), browser = flags.has("--browser"),requestLimit = flags.has("--request-limit"),uploadDownload = flags.has("--upload-download"),uploads = flags.has("--uploads") || uploadDownload;
-    runHostedSmoke({ url: process.env.APP_API_URL, token: process.env.APP_API_TOKEN, otherToken: process.env.APP_API_OTHER_TOKEN, accounts, agent, browser,accountBrowser,requestLimit,uploads,uploadDownload,
+    const agent = flags.has("--agent"),accountBrowser = flags.has("--account-browser"),accounts = agent || flags.has("--accounts"), browser = flags.has("--browser"),requestLimit = flags.has("--request-limit"),uploadDownload = flags.has("--upload-download"),uploads = flags.has("--uploads") || uploadDownload,contract = flags.has("--contract");
+    runHostedSmoke({ url: process.env.APP_API_URL, token: process.env.APP_API_TOKEN, otherToken: process.env.APP_API_OTHER_TOKEN, accounts, agent, browser,accountBrowser,requestLimit,uploads,uploadDownload,contract,
       browserAccounts: accountBrowser ? { primary: { email: process.env.APP_SMOKE_EMAIL,password: process.env.APP_SMOKE_PASSWORD },other: { email: process.env.APP_SMOKE_OTHER_EMAIL,password: process.env.APP_SMOKE_OTHER_PASSWORD } } : undefined })
-      .then(({ origin }) => console.log(`Hosted smoke passed for ${origin}: readiness, Eve, web, ${accounts ? "Supabase accounts, " : ""}REST, keyed creation recovery/deletion, owner isolation, CLI and MCP${requestLimit ? ", active owner request admission" : ""}${uploads ? ", private upload and cleanup" : ""}${uploadDownload ? ", fresh-scanned exact download bytes" : ""}${browser ? ", Chromium records UI" : ""}${agent ? ", one owned agent turn and source-stream read" : ""}${accountBrowser ? ", real account sign-in/reload/logout and browser isolation" : ""}.`))
+      .then(({ origin }) => console.log(`Hosted smoke passed for ${origin}: readiness, Eve, web, ${accounts ? "Supabase accounts, " : ""}REST, keyed creation recovery/deletion, owner isolation, CLI and MCP${contract ? ", exact OpenAPI revision and REST response schemas" : ""}${requestLimit ? ", active owner request admission" : ""}${uploads ? ", private upload and cleanup" : ""}${uploadDownload ? ", fresh-scanned exact download bytes" : ""}${browser ? ", Chromium records UI" : ""}${agent ? ", one owned agent turn and source-stream read" : ""}${accountBrowser ? ", real account sign-in/reload/logout and browser isolation" : ""}.`))
       .catch(error => { console.error(message(error)); process.exitCode = 1; });
   }
 }
