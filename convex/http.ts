@@ -121,6 +121,7 @@ http.route({ path: "/app/records", method: "POST", handler: httpAction(async (ct
       case "limit.claim": { const { operation: _,...input } = parsed.data;void _;return json(await ctx.runMutation(internal.requestLimits.claim,input)); }
       case "preferences.get": { const { operation: _,...input } = parsed.data;void _;return json(await ctx.runQuery(internal.preferences.get,input)); }
       case "preferences.update": { const { operation: _,...input } = parsed.data;void _;return json(await ctx.runMutation(internal.preferences.update,input)); }
+      case "upload.isFenced": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runQuery(internal.uploads.isFenced, input)); }
       case "upload.reserve": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.uploads.reserve,input)); }
       case "upload.markStored": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.uploads.markStored,input)); }
       case "upload.recordScan": { const { operation: _, ...input } = parsed.data; void _; return json(await ctx.runMutation(internal.uploads.recordScan,input)); }

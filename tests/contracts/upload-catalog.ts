@@ -12,6 +12,11 @@ export function uploadCatalogContract(name: string, factory: () => Promise<Uploa
     beforeEach(async () => { catalog = await factory();owner = { tenant: randomUUID(),subject: "alice" }; });
     afterEach(async () => { await catalog?.close(); });
 
+    it("reports both unfenced owners as open",async () => {
+      expect(await catalog.isFenced(owner)).toBe(false);
+      expect(await catalog.isFenced({ ...owner,subject: "bob" })).toBe(false);
+    });
+
     it("binds review to owner, digest, current scan and an optimistic revision",async () => {
       const row = input(),other = { ...owner,subject: "bob" };
       expect(await catalog.getReview(owner,row.id)).toBeNull();

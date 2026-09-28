@@ -6,7 +6,7 @@ import { accessOwner, reservation, operationId, sessionId, bodyHash, type Access
 import { conversation, conversationTitle, conversationSummary, historyOptions, historyPatch, pageOfHistory } from "../lib/agent-access/contract";
 import { projectionEntry, projectionOptions, projectionSourceIndex, pageOfProjections } from "../lib/agent-access/projection-contract";
 import { artifactPatch, artifactVersionOptions, pageOfArtifactVersions, artifactInput, artifactCallId, artifactOptions, artifact, pageOfArtifacts } from "../lib/agent-access/artifact-contract";
-import { assertAccountOpen } from "./accountFence";
+import { assertAccountOpen,isAccountFenced } from "./accountFence";
 
 const ownerFields = { tenant: v.string(), subject: v.string() };
 async function captureRun(ctx: MutationCtx,operation: string,entry: ProjectionEntry,ordinal: number,source?: number) {
@@ -297,8 +297,7 @@ export const isFenced = internalQuery({
   args: ownerFields,
   handler: async (ctx,args) => {
     const owner = accessOwner.parse(args);
-    return !!await ctx.db.query("accountFences").withIndex("by_owner",q =>
-      q.eq("tenant",owner.tenant).eq("subject",owner.subject)).unique();
+    return isAccountFenced(ctx,owner);
   },
 });
 export const cancelStarting = internalMutation({

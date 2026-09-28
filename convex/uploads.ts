@@ -4,7 +4,7 @@ import { internalMutation, internalQuery, type QueryCtx,type MutationCtx } from 
 import { accessOwner, type AccessOwner } from "../lib/agent-access/contract";
 import { uploadCleanupCandidates, uploadCleanupLimit, withUploadScan, uploadScanDecision, uploadList, uploadQuota, uploadReservation, uploadUsage, staleUploadCutoff } from "../lib/uploads/catalog-contract";
 import { uploadId } from "../lib/uploads/schema";
-import { assertAccountOpen } from "./accountFence";
+import { assertAccountOpen,isAccountFenced } from "./accountFence";
 
 const ownerFields = { tenant: v.string(),subject: v.string() };
 const sameOwner = (row: AccessOwner,owner: AccessOwner) => row.tenant === owner.tenant && row.subject === owner.subject;
@@ -21,6 +21,14 @@ async function activeRows(ctx: QueryCtx, owner: AccessOwner) {
 }
 const publicEntry = (row: { id: string;name: string;mediaType: string;size: number;sha256: string;createdAt: number;state: string;scan?: unknown }) =>
   withUploadScan({ id: row.id,name: row.name,mediaType: row.mediaType,size: row.size,sha256: row.sha256,createdAt: row.createdAt,state: row.state },row.scan);
+
+export const isFenced = internalQuery({
+  args: ownerFields,
+  handler: async (ctx,args) => {
+    const owner = accessOwner.parse(args);
+    return isAccountFenced(ctx,owner);
+  },
+});
 
 async function invalidateReview(ctx: MutationCtx,id: string) {
   const receipt = await ctx.db.query("uploadReviews").withIndex("by_upload",q => q.eq("uploadId",id)).unique();

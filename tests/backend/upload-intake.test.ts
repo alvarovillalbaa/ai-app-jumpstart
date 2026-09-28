@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { AppError } from "../../lib/http/errors";
+import type { UploadCatalog } from "../../lib/uploads/catalog-contract";
 import { uploadObjectKey, type PrivateUploadObjects } from "../../lib/uploads/contract";
 import { sqliteUploadCatalog } from "../../lib/uploads/catalog-sqlite";
 import { UploadIntake } from "../../lib/uploads/intake";
@@ -77,6 +79,89 @@ it("compensates an ambiguous blob write, and holds quota if cleanup fails",async
     await expect(intake.accept(owner,"bad.svg","image/svg+xml",encoder.encode("<svg/>"))).rejects.toBeDefined();
     expect(await intake.usage(owner)).toEqual({ files: 0,bytes: 0 });
   } finally { log.mockRestore();await catalog.close(); }
+});
+
+it("removes bytes when a permanent fence lands after upload reservation",async () => {
+  const root = await mkdtemp(join(tmpdir(),"jumpstart-fenced-intake-"));roots.push(root);
+  const path = join(root,"app.sqlite"),catalog = sqliteUploadCatalog(path),stored = new Map<string,Uint8Array>();
+  const log = vi.spyOn(console,"error").mockImplementation(() => {});
+  let interruptedId = "";
+  const objects: PrivateUploadObjects = {
+    async put(forOwner,id,bytes) {
+      interruptedId = id;
+      stored.set(uploadObjectKey(forOwner,id),bytes);
+      const db = new DatabaseSync(path);
+      try { db.prepare("INSERT INTO app_account_fences(tenant,subject) VALUES(?,?)").run(forOwner.tenant,forOwner.subject); }
+      finally { db.close(); }
+    },
+    async get(forOwner,id) { return stored.get(uploadObjectKey(forOwner,id)) ?? null; },
+    async delete(forOwner,id) { return stored.delete(uploadObjectKey(forOwner,id)); },
+  };
+  try {
+    const intake = new UploadIntake(catalog,objects);
+    await expect(intake.accept(owner,"racing.txt","text/plain",encoder.encode("private"))).rejects.toThrow("fenced");
+    expect(await catalog.isFenced(owner)).toBe(true);
+    expect(await catalog.isFenced(other)).toBe(false);
+    expect(stored.size).toBe(0);
+    expect(await catalog.get(owner,interruptedId)).toMatchObject({ state: "pending" });
+    expect(log).toHaveBeenCalledWith(JSON.stringify({ event: "upload_cleanup_pending",uploadId: interruptedId }));
+  } finally { log.mockRestore();await catalog.close(); }
+});
+
+it("skips object storage when a fence lands during the upload scan",async () => {
+  const root = await mkdtemp(join(tmpdir(),"jumpstart-fenced-scan-"));roots.push(root);
+  const path = join(root,"app.sqlite"),catalog = sqliteUploadCatalog(path);
+  const log = vi.spyOn(console,"error").mockImplementation(() => {});
+  let writes = 0;
+  const objects: PrivateUploadObjects = {
+    async put() { writes++; },
+    async get() { return null; },
+    async delete() { return false; },
+  };
+  const scanner = { async scan() {
+    const db = new DatabaseSync(path);
+    try { db.prepare("INSERT INTO app_account_fences(tenant,subject) VALUES(?,?)").run(owner.tenant,owner.subject); }
+    finally { db.close(); }
+    return "clean" as const;
+  } };
+  try {
+    const intake = new UploadIntake(catalog,objects,undefined,scanner);
+    await expect(intake.accept(owner,"scan.txt","text/plain",encoder.encode("private")))
+      .rejects.toMatchObject({ status: 409,code: "upload_conflict" });
+    expect(writes).toBe(0);
+    expect(await catalog.isFenced(owner)).toBe(true);
+    expect(await catalog.usage(owner)).toEqual({ files: 1,bytes: 7 });
+    expect(log).toHaveBeenCalledOnce();
+  } finally { log.mockRestore();await catalog.close(); }
+});
+
+it("retains bytes paired with a quarantined row if a later read and fence interrupt intake",async () => {
+  const root = await mkdtemp(join(tmpdir(),"jumpstart-fenced-quarantine-"));roots.push(root);
+  const path = join(root,"app.sqlite"),base = sqliteUploadCatalog(path),stored = new Map<string,Uint8Array>();
+  const log = vi.spyOn(console,"error").mockImplementation(() => {});
+  let interruptedId = "",firstRead = true;
+  const catalog: UploadCatalog = { ...base,async get(forOwner,id) {
+    if (firstRead) {
+      firstRead = false;
+      const db = new DatabaseSync(path);
+      try { db.prepare("INSERT INTO app_account_fences(tenant,subject) VALUES(?,?)").run(forOwner.tenant,forOwner.subject); }
+      finally { db.close(); }
+      throw new Error("quarantine acknowledgement lost");
+    }
+    return base.get(forOwner,id);
+  } };
+  const objects: PrivateUploadObjects = {
+    async put(forOwner,id,bytes) { interruptedId = id;stored.set(uploadObjectKey(forOwner,id),bytes); },
+    async get(forOwner,id) { return stored.get(uploadObjectKey(forOwner,id)) ?? null; },
+    async delete(forOwner,id) { return stored.delete(uploadObjectKey(forOwner,id)); },
+  };
+  try {
+    await expect(new UploadIntake(catalog,objects).accept(owner,"stored.txt","text/plain",encoder.encode("private")))
+      .rejects.toThrow("quarantine acknowledgement lost");
+    expect(await base.get(owner,interruptedId)).toMatchObject({ state: "quarantined" });
+    expect(stored.size).toBe(1);
+    expect(log).toHaveBeenCalledOnce();
+  } finally { log.mockRestore();await base.close(); }
 });
 
 it("holds quota after a failed stale-pending cleanup and permits deletion retry",async () => {

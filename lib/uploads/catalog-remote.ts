@@ -9,10 +9,12 @@ import { uploadCleanupCandidates, uploadCleanupLimit, uploadEntry, uploadScanDec
 import { uploadId } from "./schema";
 
 function adapter(call: (command: string, input: object) => Promise<unknown>, list: (owner: object) => Promise<unknown>,
+  isFenced: UploadCatalog["isFenced"],
   claimStalePending: UploadCatalog["claimStalePending"],listCleanupCandidates: UploadCatalog["listCleanupCandidates"],
   close: () => Promise<void>): UploadCatalog {
   const owned = (owner: Parameters<UploadCatalog["get"]>[0]) => accessOwner.parse(owner);
   return {
+    isFenced: owner => isFenced(owned(owner)),
     async reserve(owner, input, quota) {
       return uploadReserveResult.parse(await call("reserve", { ...owned(owner),input: uploadReservation.parse(input),quota: uploadQuota.parse(quota) }));
     },
@@ -38,6 +40,8 @@ export function postgresUploadCatalog(connectionString: string): UploadCatalog {
     const fn = ["getReview","recordReview"].includes(command) ? "app_upload_review_command" : ["get","recordScan","markStored","beginDelete"].includes(command) ? "app_upload_scan_command" : "app_upload_command";
     return (await pool.query(`SELECT public.${fn}($1,$2::jsonb) AS result`,[command === "recordScan" ? "record" : command,JSON.stringify(input)])).rows[0].result;
   },async owner => (await pool.query("SELECT public.app_upload_scan_command('list',$1::jsonb) AS result",[JSON.stringify(owner)])).rows[0].result,
+    async owner => (await pool.query("SELECT EXISTS(SELECT 1 FROM app_private.account_fences WHERE tenant=$1 AND subject=$2) AS fenced",
+      [owner.tenant,owner.subject])).rows[0].fenced,
     async (owner,rawId,rawCutoff) => {
       const checked = accessOwner.parse(owner),id = uploadId.parse(rawId),cutoff = staleUploadCutoff.parse(rawCutoff);
       const result = await pool.query(`UPDATE public.app_uploads SET state='deleting'
@@ -67,6 +71,10 @@ export function supabaseUploadCatalog(url: string, secret: string): UploadCatalo
     const { data,error } = await client.rpc("app_upload_scan_command",{ command: "list",input: z.json().parse(owner) });
     if (error) throw error;
     return data;
+  },async owner => {
+    const { data,error } = await client.rpc("app_account_fence_status",{ p_tenant: owner.tenant,p_subject: owner.subject });
+    if (error) throw error;
+    return data;
   },async (owner,rawId,rawCutoff) => {
     const checked = accessOwner.parse(owner),id = uploadId.parse(rawId),cutoff = staleUploadCutoff.parse(rawCutoff);
     const { data,error } = await client.from("app_uploads").update({ state: "deleting" })
@@ -84,10 +92,11 @@ export function supabaseUploadCatalog(url: string, secret: string): UploadCatalo
   },async () => {});
 }
 
-export function convexUploadCatalog(url: string, secret: string): UploadCatalog {
-  const backend = new ConvexBackend(url,secret);
+export function convexUploadCatalog(url: string, secret: string, request: typeof fetch = fetch): UploadCatalog {
+  const backend = new ConvexBackend(url,secret,request);
   return adapter((command,input) => backend.call(`upload.${command}`,input,z.unknown()),
     owner => backend.call("upload.list",owner,z.unknown()),
+    owner => backend.call("upload.isFenced",owner,z.boolean()),
     async (owner,id,cutoff) => z.boolean().parse(await backend.call("upload.claimStalePending",{ ...accessOwner.parse(owner),id: uploadId.parse(id),cutoff: staleUploadCutoff.parse(cutoff) },z.unknown())),
     async (cutoff,limit) => uploadCleanupCandidates.parse(await backend.call("upload.listCleanupCandidates",{
       cutoff: staleUploadCutoff.parse(cutoff),limit: uploadCleanupLimit.parse(limit) },z.unknown())),

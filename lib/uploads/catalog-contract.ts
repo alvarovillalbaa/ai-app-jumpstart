@@ -46,6 +46,8 @@ export type UploadQuota = z.infer<typeof uploadQuota>;
 
 /** Quota stays reserved through deletion until object removal is confirmed. */
 export interface UploadCatalog {
+  /** Read the permanent owner fence when compensating an in-flight object write. */
+  isFenced(owner: AccessOwner): Promise<boolean>;
   reserve(owner: AccessOwner, input: UploadReservation, quota: UploadQuota): Promise<z.infer<typeof uploadReserveResult>>;
   markStored(owner: AccessOwner, id: string): Promise<boolean>;
   recordScan(owner: AccessOwner,id: string,decision: UploadScanDecision): Promise<boolean>;
@@ -62,6 +64,7 @@ export interface UploadCatalog {
 }
 
 export const uploadCatalogCommand = z.discriminatedUnion("operation", [
+  accessOwner.extend({ operation: z.literal("upload.isFenced") }).strict(),
   accessOwner.extend({ operation: z.literal("upload.reserve"), input: uploadReservation, quota: uploadQuota }).strict(),
   accessOwner.extend({ operation: z.literal("upload.markStored"), id: uploadId }).strict(),
   accessOwner.extend({ operation: z.literal("upload.recordScan"),id: uploadId,decision: uploadScanDecision }).strict(),

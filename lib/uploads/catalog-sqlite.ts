@@ -67,6 +67,11 @@ export function sqliteUploadCatalog(path: string): UploadCatalog {
     return (owned.get(checked.tenant,checked.subject,id) as Row | undefined)?.state === to;
   }
   return {
+    async isFenced(owner) {
+      const checked = accessOwner.parse(owner);
+      return !!db.prepare("SELECT 1 FROM app_account_fences WHERE tenant=? AND subject=?")
+        .get(checked.tenant,checked.subject);
+    },
     async reserve(owner, rawInput, rawQuota) {
       const checked = accessOwner.parse(owner),input = uploadReservation.parse(rawInput),quota = uploadQuota.parse(rawQuota);
       db.exec("BEGIN IMMEDIATE");

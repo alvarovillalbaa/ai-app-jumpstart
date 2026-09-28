@@ -9,6 +9,7 @@ import { eraseAccountRows } from "../../scripts/erase-account-rows";
 import { exportAccountBundle,verifyAccountBundle } from "../../scripts/export-account-bundle";
 import { setConvexAccountFence } from "../../scripts/fence-account-writes";
 import { convexAccessStore } from "../../lib/agent-access/convex";
+import { convexUploadCatalog } from "../../lib/uploads/catalog-remote";
 
 const modules = import.meta.glob("../../convex/**/*.ts");
 const auditSecret = "test-convex-audit-secret-".repeat(2);
@@ -45,6 +46,9 @@ it("preflights exact Convex rows, denies foreign IDs, and resumes bounded deleti
     const access = convexAccessStore(site,process.env.CONVEX_BACKEND_SECRET!,request);
     expect(await access.isFenced(owner)).toBe(true);
     expect(await access.isFenced(foreign)).toBe(false);
+    const uploads = convexUploadCatalog(site,process.env.CONVEX_BACKEND_SECRET!,request);
+    expect(await uploads.isFenced(owner)).toBe(true);
+    expect(await uploads.isFenced(foreign)).toBe(false);
     const env = { CONVEX_SITE_URL: site,CONVEX_AUDIT_SECRET: auditSecret,
       CONVEX_ERASURE_SECRET: erasureSecret,UPLOAD_LOCAL_ROOT: root };
     await exportAccountBundle("convex","local",owner,bundle,env,request);

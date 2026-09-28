@@ -34,6 +34,9 @@ export class UploadIntake {
         if (verdict === "infected") throw new AppError(422,"upload_rejected","Upload did not pass malware scanning.");
         if (verdict !== "clean") throw new AppError(503,"scanner_unavailable","Upload scanner is unavailable.");
       }
+      if (await this.catalog.isFenced(owner)) {
+        throw new AppError(409,"upload_conflict","This account cannot accept another upload.");
+      }
       writeStarted = true;
       await this.objects.put(owner,id,file.bytes);
       if (!await this.catalog.markStored(owner,id)) throw new Error("Upload metadata could not enter quarantine.");
@@ -43,14 +46,33 @@ export class UploadIntake {
     } catch (error) {
       // A timed-out write may still have stored bytes. Hold quota in `deleting`
       // until cleanup succeeds; a later remove() can retry the same object ID.
+      // If a permanent fence landed after reservation, row transitions fail.
+      // Remove fresh bytes only while the row is still pending. A quarantined
+      // row must keep its matching bytes for the operator's account archive.
+      let cleanupComplete = false, objectRemovalAttempted = false;
+      const pendingUnderFence = async () => await this.catalog.isFenced(owner) &&
+        (await this.catalog.get(owner,id))?.state === "pending";
       try {
-        if (await this.catalog.beginDelete(owner,id)) {
-          if (writeStarted) await this.objects.delete(owner,id);
-          await this.catalog.finishDelete(owner,id);
+        const claimed = await this.catalog.beginDelete(owner,id);
+        const fenced = !claimed && writeStarted && await pendingUnderFence();
+        if (writeStarted && (claimed || fenced)) {
+          objectRemovalAttempted = true;
+          await this.objects.delete(owner,id);
         }
+        if (claimed) cleanupComplete = await this.catalog.finishDelete(owner,id);
       } catch {
-        // This ID remains visible as `deleting` to the owner so deletion can
-        // be retried; avoid logging the filename, owner or stored bytes.
+        if (writeStarted && !objectRemovalAttempted) {
+          try {
+            if (await pendingUnderFence()) {
+              objectRemovalAttempted = true;
+              await this.objects.delete(owner,id);
+            }
+          } catch { /* The operator inventory must detect any remaining bytes. */ }
+        }
+      }
+      if (!cleanupComplete) {
+        // The row remains pending/deleting for inspection or later cleanup.
+        // Avoid logging the filename, owner or stored bytes.
         console.error(JSON.stringify({ event: "upload_cleanup_pending",uploadId: id }));
       }
       throw error;
