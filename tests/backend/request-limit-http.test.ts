@@ -44,12 +44,12 @@ it("shares one owner quota across REST, CLI, MCP and rotated keys, with foreign-
 it("fails closed on provider errors or invalid responses without returning private diagnostics",async () => {
   vi.spyOn(console,"info").mockImplementation(() => {});
   const owner = { tenant: "org",subject: "alice" },env = { APP_REQUESTS_PER_MINUTE: "120" };
-  const store = { claim: vi.fn(async () => { throw new Error("postgresql://private-secret@database"); }),health: async () => {},close: async () => {} };
+  const store = { claim: vi.fn(async () => { throw new Error("postgresql://private-secret@database"); }),snapshot: async () => null,health: async () => {},close: async () => {} };
   const response = await handle(new Request("http://localhost:3000/api/v1/records"),async () => {
     await admitDataRequest(owner,env,async () => store);return Response.json({ unexpected: true });
   });
   expect(response.status).toBe(503);expect(JSON.stringify(await response.json())).not.toContain("private-secret");
-  await expect(admitDataRequest(owner,env,async () => ({ claim: async () => ({ allowed: false,remaining: 1,resetAt: new Date().toISOString(),retryAfterSeconds: 0 }),health: async () => {},close: async () => {} }))).rejects.toMatchObject({ code: "request_limit_unavailable" });
+  await expect(admitDataRequest(owner,env,async () => ({ claim: async () => ({ allowed: false,remaining: 1,resetAt: new Date().toISOString(),retryAfterSeconds: 0 }),snapshot: async () => null,health: async () => {},close: async () => {} }))).rejects.toMatchObject({ code: "request_limit_unavailable" });
   const factory = vi.fn(async () => store);
   await admitDataRequest(owner,{},factory);await admitDataRequest(owner,{ APP_REQUESTS_PER_MINUTE: "0" },factory);
   expect(factory).not.toHaveBeenCalled();

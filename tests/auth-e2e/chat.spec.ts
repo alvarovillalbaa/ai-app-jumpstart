@@ -267,6 +267,10 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
   const aliceProfile = await profileResponse.json();
   expect(aliceProfile).toMatchObject({ id: alice.id,email: alice.email });
   expect(await runCli(["account","profile"],{ APP_API_URL: process.env.APP_ORIGIN!,APP_API_TOKEN: alice.token })).toEqual(aliceProfile);
+  expect(await (await request.get("/api/v1/account/request-limit",{ headers: { authorization: `Bearer ${alice.token}` } })).json())
+    .toMatchObject({ snapshot: { admitted: expect.any(Number),windowStartAt: expect.any(String) } });
+  expect(await runCli(["account","request-limit"],{ APP_API_URL: process.env.APP_ORIGIN!,APP_API_TOKEN: alice.token }))
+    .toMatchObject({ snapshot: { admitted: expect.any(Number),windowStartAt: expect.any(String) } });
   const exportDirectory = await mkdtemp(join(tmpdir(),"jumpstart-account-export-"));
   try {
     const aliceFile = join(exportDirectory,"alice.ndjson"),bobFile = join(exportDirectory,"bob.ndjson");
@@ -278,7 +282,8 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
     expect(aliceLines.some(line => line.type === "record" && line.value.id === exportRecordId)).toBe(true);
     expect(aliceLines.some(line => line.type === "conversation" && line.value.operationId === receipt.operationId)).toBe(true);
     expect(aliceLines.find(line => line.type === "account_preferences")?.value).toMatchObject({ schemaVersion: 1,soundEnabled: false });
-    expect(aliceLines[0].value.format).toBe("ai-app-jumpstart-visible-data-v10");
+    expect(aliceLines[0].value.format).toBe("ai-app-jumpstart-visible-data-v11");
+    expect(aliceLines.find(line => line.type === "request_limit")?.value).toMatchObject({ admitted: expect.any(Number),windowStartAt: expect.any(String) });
     expect(aliceLines.find(line => line.type === "run" && line.value.operationId === receipt.operationId)?.value.run).toMatchObject({ turnId: capturedRuns.items[0].turnId,state: "completed",models: capturedRuns.items[0].models,boundaryCount: 2 });
     expect(aliceLines.some(line => line.type === "projection" && line.value.operationId === receipt.operationId)).toBe(true);
     expect(aliceLines.some(line => line.type === "upload" && line.value.id === exportUploadId && line.value.state === "quarantined")).toBe(true);
@@ -303,6 +308,12 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
     expect(JSON.parse((profileTool.content as { text: string }[])[0].text)).toEqual(aliceProfile);
     const profileResource = await usageMcp.readResource({ uri: "account:///profile" });
     expect("text" in profileResource.contents[0] && JSON.parse(profileResource.contents[0].text)).toEqual(aliceProfile);
+    const requestLimitTool = await usageMcp.callTool({ name: "account_request_limit",arguments: {} });
+    expect(requestLimitTool.isError).not.toBe(true);
+    expect(JSON.parse((requestLimitTool.content as { text: string }[])[0].text)).toMatchObject({ snapshot: { admitted: expect.any(Number),windowStartAt: expect.any(String) } });
+    const requestLimitResource = await usageMcp.readResource({ uri: "account:///request-limit" });
+    expect("text" in requestLimitResource.contents[0] && JSON.parse(requestLimitResource.contents[0].text))
+      .toMatchObject({ snapshot: { admitted: expect.any(Number),windowStartAt: expect.any(String) } });
     const tool = await usageMcp.callTool({ name: "usage_get",arguments: {} });
     expect(tool.isError).not.toBe(true);
     expect(JSON.parse((tool.content as { text: string }[])[0].text)).toEqual(usageView);

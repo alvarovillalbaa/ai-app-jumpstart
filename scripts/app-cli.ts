@@ -18,6 +18,7 @@ import { MAX_API_UPLOAD_BYTES } from "../lib/uploads/validation";
 import { uploadId } from "../lib/uploads/schema";
 import { uploadDownloadLink } from "../lib/uploads/download-link-contract";
 import { readPublicFailure } from "../lib/http/public-failure";
+import { limitSnapshot } from "../lib/request-limits/contract";
 
 const seedPage = z.object({
   items: z.array(recordInput.extend({ id: recordId }).passthrough()),
@@ -32,7 +33,7 @@ export async function run(args: string[], env: Record<string, string | undefined
     conversations: "npm run app -- conversations <list [--archived] [--limit N] [--cursor CURSOR] | get OPERATION_UUID | events OPERATION_UUID [AFTER_INGESTION_INDEX] | runs OPERATION_UUID [AFTER_INGESTION_INDEX] | source-events OPERATION_UUID [START_SOURCE_INDEX] | reconcile OPERATION_UUID [START_SOURCE_INDEX] | update OPERATION_UUID JSON_FILE>",
     artifacts: "npm run app -- artifacts <list [--limit N] [--cursor CURSOR] | get ARTIFACT_UUID | update ARTIFACT_UUID patch.json | versions ARTIFACT_UUID [--limit N] [--before N] | delete ARTIFACT_UUID>",
     uploads: "npm run app -- uploads <list | get UPLOAD_UUID | review UPLOAD_UUID | review-update UPLOAD_UUID decision.json | text UPLOAD_UUID | put FILE | scan UPLOAD_UUID | link UPLOAD_UUID | download UPLOAD_UUID OUTPUT_FILE | download-link LINK_JSON_FILE OUTPUT_FILE | delete UPLOAD_UUID> (scan/download/link/text require uploads:download and scan-on-read; processing approval also requires uploads:write)",
-    account: "npm run app -- account <profile | preferences | preferences update JSON_FILE> (current registered-user token required)",
+    account: "npm run app -- account <profile | preferences | preferences update JSON_FILE | request-limit> (current registered-user token required)",
     usage: "npm run app -- usage [reservations|corrections [--limit N] [--cursor CURSOR]] (verified user token required)",
     export: "npm run app -- export <records OUTPUT.ndjson | application OUTPUT.ndjson | source-events OPERATION_UUID OUTPUT.ndjson | verify FILE.ndjson> (private, no-clobber; verification works offline)",
     environment: "APP_API_URL (default http://localhost:3000), APP_API_TOKEN (server-issued credential)",
@@ -104,6 +105,7 @@ export async function run(args: string[], env: Record<string, string | undefined
     return exportApplication("source-events",rest[2],path => call(path),checked.data);
   }
   if (command === "account" && rest.length === 1 && rest[0] === "profile") return call("/api/v1/account/profile");
+  if (command === "account" && rest.length === 1 && rest[0] === "request-limit") return z.object({ snapshot: limitSnapshot }).strict().parse(await call("/api/v1/account/request-limit"));
   if (command === "account" && rest.length === 1 && rest[0] === "preferences") return preferences.parse(await call("/api/v1/account/preferences"));
   if (command === "account" && rest.length === 3 && rest[0] === "preferences" && rest[1] === "update") {
     const info = await stat(rest[2]);if (!info.isFile() || info.size > 4096) throw new Error("Use a preference JSON file of at most 4 KiB.");

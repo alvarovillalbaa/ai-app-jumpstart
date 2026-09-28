@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { limitInput,limitOwner,windowResult,type RequestLimitStore } from "./contract";
+import { limitInput,limitOwner,snapshotFromRow,windowResult,type RequestLimitStore } from "./contract";
 import { installSqliteAccountFences } from "../account-closure/sqlite-fences";
 
 export function sqliteRequestLimitStore(path: string,clock = Date.now): RequestLimitStore {
@@ -22,6 +22,11 @@ export function sqliteRequestLimitStore(path: string,clock = Date.now): RequestL
       const admitted = claim.get(input.tenant,input.subject,bucket,input.limit);
       const row = (admitted ?? read.get(input.tenant,input.subject)) as { bucket: number;counter: number };
       return windowResult(Boolean(admitted),row.counter,row.bucket,input.limit,now);
+    },
+    async snapshot(owner) {
+      const input = limitOwner.parse(owner);
+      const row = read.get(input.tenant,input.subject) as { bucket: number;counter: number } | undefined;
+      return snapshotFromRow(row ?? null);
     },
     async health() { db.prepare("SELECT bucket FROM app_request_limits LIMIT 1").get(); },
     async close() { db.close(); },

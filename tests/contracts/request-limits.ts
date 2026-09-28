@@ -8,7 +8,9 @@ export function requestLimitContract(name: string,factory: () => Promise<Request
     beforeEach(async () => { store = await factory();owner = { tenant: randomUUID(),subject: randomUUID() }; });
     afterEach(async () => store?.close());
     it("probes readiness without consuming owner capacity",async () => {
-      await store.health();await store.health();expect(await store.claim(owner,2)).toMatchObject({ allowed: true,remaining: 1 });
+      await store.health();await store.health();expect(await store.snapshot(owner)).toBeNull();
+      expect(await store.claim(owner,2)).toMatchObject({ allowed: true,remaining: 1 });
+      expect(await store.snapshot(owner)).toMatchObject({ admitted: 1,windowStartAt: expect.any(String) });
     });
     it("admits at most the configured count per window under concurrent claims",async () => {
       const results = await Promise.all(Array.from({ length: 30 },() => store.claim(owner,7)));
@@ -34,6 +36,10 @@ export function requestLimitContract(name: string,factory: () => Promise<Request
         if (raised.resetAt === second.resetAt) expect(raised).toMatchObject({ allowed: true,remaining: second.remaining });
       }
       for (const other of [{ ...owner,subject: "other" },{ ...owner,tenant: "other" }]) expect(await store.claim(other,2)).toMatchObject({ allowed: true,remaining: 1 });
+      expect((await store.snapshot(owner))?.admitted).toBeGreaterThanOrEqual(1);
+      for (const other of [{ ...owner,subject: "other" },{ ...owner,tenant: "other" }]) {
+        expect(await store.snapshot(other)).toMatchObject({ admitted: 1 });
+      }
     });
     it("rejects invalid limits and owner injection before consuming a slot",async () => {
       for (const limit of [0,-1,1.5,10001,NaN]) await expect(store.claim(owner,limit)).rejects.toBeDefined();

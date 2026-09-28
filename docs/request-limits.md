@@ -20,9 +20,11 @@ The AWS ECS, Azure Container Apps and Cloud Run examples use `120`; their manife
 
 ## Operations and data
 
+The latest stored owner counter is readable with a current registered-user token at `GET /api/v1/account/request-limit`, `npm run app -- account request-limit`, MCP `account_request_limit` and `account:///request-limit`. The response is `{snapshot:{windowStartAt,admitted}}`, or `{snapshot:null}` if no row has ever been recorded. It remains readable when admission is disabled, so a retained row may describe an older window. When admission is enabled, the read itself consumes one request; repeated reads and an application export can return increasing counts. Record API keys cannot read it. The visible application export includes one `request_limit` line, but older windows and individual request logs are not stored here.
+
 Monitor `429` separately from `503` and inspect safe request references in [application logs](operations.md). Review polling/export volume before tuning the cap. Readiness checks schema access, not a real write or hosted capacity; perform the deployment's authenticated acceptance checks too. Disable with `0` only as an intentional operator choice, since it removes application admission.
 
-Storage retains one row per observed owner: tenant, subject, window timestamp and admitted count. It stores no token, IP, body or request transcript. SQL RLS and grants deny anonymous/authenticated roles direct reads and function execution; Supabase service-role access and Convex's private backend dispatcher enforce server-side use. Counters are not usage costs or an invoice. They are currently omitted from owner exports, and a complete account-erasure policy remains open. Database backups include these rows; apply the deployment's retention/access policy to backups too.
+Storage retains one row per observed owner: tenant, subject, window timestamp and admitted count. It stores no token, IP, body or request transcript. SQL RLS and grants deny anonymous/authenticated roles direct reads and function execution; Supabase service-role access and Convex's private backend dispatcher enforce server-side use. Counters are not usage costs or an invoice. The current stored row is included in owner-visible export v11; prior windows are overwritten, and a complete account-erasure policy remains open. Database backups include these rows; apply the deployment's retention/access policy to backups too.
 
 ## Verification
 

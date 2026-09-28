@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { z } from "zod";
 import { MAX_UPLOAD_BYTES } from "../lib/uploads/validation";
+import { limitSnapshot } from "../lib/request-limits/contract";
 
 const maximumLineBytes = 32 * 1024 * 1024;
 const applicationCounts = {
@@ -14,6 +15,7 @@ const applicationCountsV6 = { ...applicationCounts,run: "runs" } as const;
 const applicationCountsV7 = { ...applicationCountsV6,account_preferences: "preferences" } as const;
 const applicationCountsV8 = { ...applicationCountsV7,artifact_version: "artifactVersions" } as const;
 const applicationCountsV9 = { ...applicationCountsV8,upload_review: "uploadReviews" } as const;
+const applicationCountsV11 = { ...applicationCountsV9,request_limit: "requestLimit" } as const;
 const recordCounts = { record: "records" } as const;
 const sourceCounts = { source_event: "sourceEvents" } as const;
 const objectCounts = { object: "objects" } as const;
@@ -45,7 +47,8 @@ export async function verifyExport(path: string) {
         : manifest.format === "ai-app-jumpstart-visible-data-v6" ? applicationCountsV6
         : manifest.format === "ai-app-jumpstart-visible-data-v7" ? applicationCountsV7
         : manifest.format === "ai-app-jumpstart-visible-data-v8" ? applicationCountsV8
-        : ["ai-app-jumpstart-visible-data-v9","ai-app-jumpstart-visible-data-v10"].includes(String(manifest.format)) ? applicationCountsV9 : undefined;
+        : ["ai-app-jumpstart-visible-data-v9","ai-app-jumpstart-visible-data-v10"].includes(String(manifest.format)) ? applicationCountsV9
+        : manifest.format === "ai-app-jumpstart-visible-data-v11" ? applicationCountsV11 : undefined;
       expected = manifest.format === "ai-app-jumpstart-private-objects-v1" ? objectCounts
         : manifest.format === "ai-app-jumpstart-source-events-v1" ? sourceCounts
         : sections && manifest.mode === "application" ? sections
@@ -64,6 +67,7 @@ export async function verifyExport(path: string) {
     } else {
       const key = expected?.[row.type];
       if (!key) throw new Error(`Export line ${lineNumber} has an unexpected type.`);
+      if (row.type === "request_limit") limitSnapshot.parse(row.value);
       counts[key]++;
       if (row.type === "source_event") {
         const index = (row.value as { sourceIndex?: unknown } | null)?.sourceIndex;

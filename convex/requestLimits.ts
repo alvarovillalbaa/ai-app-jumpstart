@@ -1,9 +1,15 @@
 import { v } from "convex/values";
 import { internalMutation,internalQuery } from "./_generated/server";
-import { limitInput,windowResult } from "../lib/request-limits/contract";
+import { limitInput,limitOwner,snapshotFromRow,windowResult } from "../lib/request-limits/contract";
 import { assertAccountOpen } from "./accountFence";
 
 export const health = internalQuery({ args: {},handler: async ctx => { await ctx.db.query("requestLimits").take(1);return true; } });
+
+export const snapshot = internalQuery({ args: { tenant: v.string(),subject: v.string() },handler: async (ctx,args) => {
+  const input = limitOwner.parse(args);
+  const row = await ctx.db.query("requestLimits").withIndex("by_owner",q => q.eq("tenant",input.tenant).eq("subject",input.subject)).unique();
+  return snapshotFromRow(row);
+} });
 
 export const claim = internalMutation({ args: { tenant: v.string(),subject: v.string(),limit: v.number() },handler: async (ctx,args) => {
   await assertAccountOpen(ctx,args);

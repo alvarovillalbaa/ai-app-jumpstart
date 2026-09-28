@@ -6,16 +6,26 @@ export const requestLimit = z.number().int().min(1).max(10000);
 export const limitInput = limitOwner.extend({ limit: requestLimit }).strict();
 export const limitCommand = z.discriminatedUnion("operation",[
   limitInput.extend({ operation: z.literal("limit.claim") }).strict(),
+  limitOwner.extend({ operation: z.literal("limit.snapshot") }).strict(),
   z.object({ operation: z.literal("limit.health") }).strict(),
 ]);
+export const limitSnapshot = z.object({ windowStartAt: z.iso.datetime(),admitted: z.number().int().min(1).max(10000) }).strict().nullable();
+export type LimitSnapshot = z.infer<typeof limitSnapshot>;
 export const limitResult = z.object({ allowed: z.boolean(),remaining: z.number().int().min(0).max(10000),
   resetAt: z.iso.datetime(),retryAfterSeconds: z.number().int().min(0).max(60) }).strict()
   .refine(value => value.allowed ? value.retryAfterSeconds === 0 : value.remaining === 0 && value.retryAfterSeconds >= 1);
 export type LimitResult = z.infer<typeof limitResult>;
 export interface RequestLimitStore {
   claim(owner: Owner,limit: number): Promise<LimitResult>;
+  snapshot(owner: Owner): Promise<LimitSnapshot>;
   health(): Promise<void>;
   close(): Promise<void>;
+}
+export function snapshotFromRow(row: { bucket: number | string;counter: number } | null): LimitSnapshot {
+  if (!row) return null;
+  const bucket = Number(row.bucket);
+  if (!Number.isSafeInteger(bucket) || bucket < 0 || bucket % 60000 !== 0) throw new Error("Invalid request-limit window.");
+  return limitSnapshot.parse({ windowStartAt: new Date(bucket).toISOString(),admitted: row.counter });
 }
 export function windowResult(allowed: boolean,count: number,bucket: number,limit: number,now: number): LimitResult {
   return limitResult.parse({ allowed,remaining: allowed ? Math.max(0,limit-count) : 0,resetAt: new Date(bucket+60000).toISOString(),

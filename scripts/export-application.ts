@@ -15,6 +15,7 @@ import { usageView } from "../lib/budgets/usage";
 import { recordId, recordInput } from "../lib/data/contract";
 import { uploadReview } from "../lib/uploads/review-contract";
 import { uploadPage } from "../lib/uploads/catalog-contract";
+import { limitSnapshot } from "../lib/request-limits/contract";
 
 type Mode = "records" | "application" | "source-events";
 type Call = (path: string) => Promise<unknown>;
@@ -35,12 +36,13 @@ export async function exportApplication(mode: Mode, output: string, call: Call, 
   // a local file. Neither a record API key nor a stale token can export a profile.
   const profile = mode === "application" ? accountProfile.parse(await call("/api/v1/account/profile")) : null;
   const accountPreferences = mode === "application" ? preferences.parse(await call("/api/v1/account/preferences")) : null;
+  const requestLimit = mode === "application" ? z.object({ snapshot: limitSnapshot }).strict().parse(await call("/api/v1/account/request-limit")) : null;
   const usage = mode === "application" ? usageView.parse(await call("/api/v1/usage")) : null;
   const directory = await mkdtemp(join(dirname(destination), ".jumpstart-export-"));
   const temporary = join(directory, `${randomUUID()}.ndjson`);
   let file: Awaited<ReturnType<typeof open>> | undefined;
   const digest = createHash("sha256");
-  const counts = { profile: 0, preferences: 0, records: 0, conversations: 0, projections: 0, runs: 0, artifacts: 0, artifactVersions: 0, uploads: 0, uploadReviews: 0, uploadUsage: 0, reservations: 0, corrections: 0, usage: 0 };
+  const counts = { profile: 0, preferences: 0, requestLimit: 0, records: 0, conversations: 0, projections: 0, runs: 0, artifacts: 0, artifactVersions: 0, uploads: 0, uploadReviews: 0, uploadUsage: 0, reservations: 0, corrections: 0, usage: 0 };
   async function write(type: string, value: unknown) {
     if (!file) throw new Error("Export file is unavailable.");
     const line = `${JSON.stringify({ type, value })}\n`;
@@ -97,12 +99,13 @@ export async function exportApplication(mode: Mode, output: string, call: Call, 
       throw new Error("Export exceeded 10,000 source event pages.");
     }
     await write("manifest", {
-      format: "ai-app-jumpstart-visible-data-v10", mode, exportedAt: new Date().toISOString(),
+      format: "ai-app-jumpstart-visible-data-v11", mode, exportedAt: new Date().toISOString(),
       consistency: "paged-live-reads; concurrent changes may appear or be missed",
       exclusions: mode === "application" ? [
         "Auth credentials, sessions, MFA factors, linked identity details and provider logs; profile is selected fields only",
         "Eve session/model history, workflow checkpoints, sandboxes and traces",
         "Budget model-attempt IDs, operator correction notes/evidence and historical daily aggregate rows; owner-visible reservation and correction histories are included",
+        "Request-limit history beyond the current stored window; no per-request log is retained in this counter",
         "Deleted artifact tombstones and database backups",
         "Conversation projections and run summaries are selected events, not a canonical transcript; private run cache facts are omitted",
         "Private upload object bytes and extracted text, deleted upload tombstones and retained scan decisions, and derived data",
@@ -111,6 +114,7 @@ export async function exportApplication(mode: Mode, output: string, call: Call, 
     });
     if (profile) { await write("account_profile", profile); counts.profile = 1; }
     if (accountPreferences) { await write("account_preferences",accountPreferences);counts.preferences = 1; }
+    if (requestLimit) { await write("request_limit",requestLimit.snapshot);counts.requestLimit = 1; }
     await walk(
       (cursor: string | null) => `/api/v1/records?${new URLSearchParams({ limit: "100", ...(cursor ? { after: cursor } : {}) })}`,
       value => recordPage.parse(value),

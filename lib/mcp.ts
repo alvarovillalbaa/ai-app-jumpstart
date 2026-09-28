@@ -36,9 +36,12 @@ import { verifySupabaseIdentity } from "./auth/identity";
 import { profileSnapshot, type AccountProfile } from "./auth/profile";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { failureDiagnostic } from "./observability/request";
+import { getRequestLimitStore } from "./request-limits/store";
+import { limitSnapshot,type LimitSnapshot } from "./request-limits/contract";
 
 export function createMcpServer(service: RecordService, history?: ConversationHistoryService,artifacts?: ArtifactService,usage?: UsageService,uploads?: UploadService,
-  profile?: () => Promise<AccountProfile>,sourceEvents?: (operationId: string,options: unknown) => Promise<unknown>,reconcile?: (operationId: string,options: unknown) => Promise<unknown>,accountPreferences?: PreferenceService) {
+  profile?: () => Promise<AccountProfile>,sourceEvents?: (operationId: string,options: unknown) => Promise<unknown>,reconcile?: (operationId: string,options: unknown) => Promise<unknown>,accountPreferences?: PreferenceService,
+  requestLimit?: () => Promise<LimitSnapshot>) {
   const server = new McpServer({ name: "ai-app-jumpstart-data", version: "1.0.0" });
   async function result(action: () => Promise<unknown>) {
     try { return { content: [{ type: "text" as const, text: JSON.stringify(await action()) }] }; }
@@ -233,6 +236,19 @@ export function createMcpServer(service: RecordService, history?: ConversationHi
       catch (error) { throw new McpError(ErrorCode.InternalError, "Account profile unavailable.", { requestId: failureDiagnostic("mcp_resource_failed", error).requestId }); }
     });
   }
+  if (requestLimit) {
+    const snapshot = async () => ({ snapshot: limitSnapshot.parse(await requestLimit()) });
+    server.registerTool("account_request_limit",{
+      description: "Read the signed-in account's latest authenticated application request window and admitted count. This is a live counter, not AI spending or a full request history.",
+      inputSchema: z.object({}).strict(),annotations: { readOnlyHint: true,openWorldHint: false },
+    },() => result(snapshot));
+    server.registerResource("account-request-limit","account:///request-limit",{
+      description: "Current account request-window snapshot",mimeType: "application/json",
+    },async uri => {
+      try { return { contents: [{ uri: uri.href,mimeType: "application/json",text: JSON.stringify(await snapshot()) }] }; }
+      catch (error) { throw new McpError(ErrorCode.InternalError,"Request usage unavailable.",{ requestId: failureDiagnostic("mcp_resource_failed",error).requestId }); }
+    });
+  }
   return server;
 }
 
@@ -263,7 +279,9 @@ export function mcpHandler(repository: () => Promise<RecordRepository> = getRepo
       readSourceEvents(ownedStore,owner,operation,options,settings.origin,bearerToken(request),request.signal) : undefined;
     const reconcile = settings && ownedStore ? (operation: string,options: unknown) =>
       reconcileProjections(ownedStore,owner,operation,options,settings.origin,bearerToken(request),request.signal) : undefined;
-    const server = createMcpServer(new RecordService(await repository(), principal), history, artifacts, usage,uploads,profile,sourceEvents,reconcile,principal.credentialType === "user" ? new PreferenceService(preferenceStore,owner) : undefined);
+    const requestLimit = principal.credentialType === "user" ? async () => (await getRequestLimitStore()).snapshot(owner) : undefined;
+    const server = createMcpServer(new RecordService(await repository(), principal), history, artifacts, usage,uploads,profile,sourceEvents,reconcile,
+      principal.credentialType === "user" ? new PreferenceService(preferenceStore,owner) : undefined,requestLimit);
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     await server.connect(transport);
     try { return await transport.handleRequest(request, { parsedBody }); }

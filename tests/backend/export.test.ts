@@ -27,7 +27,7 @@ it("exports every paged record for one owner to a private file without replacing
     expect(await run(["export", "records", output], env, request)).toMatchObject({ mode: "records", counts: { records: 105 } });
     const exported = await lines(output);
     expect(exported).toHaveLength(107);
-    expect(exported[0].value).toMatchObject({ format: "ai-app-jumpstart-visible-data-v10", mode: "records" });
+    expect(exported[0].value).toMatchObject({ format: "ai-app-jumpstart-visible-data-v11", mode: "records" });
     expect(exported.filter(line => line.type === "record").map(line => line.value.title)).not.toContain("Foreign");
     expect(exported.at(-1).value.counts.records).toBe(105);
     expect((await stat(output)).mode & 0o077).toBe(0);
@@ -59,6 +59,7 @@ it.each([100,null])("exports all visible account collections with daily limit %s
       email: "alice@example.test", phone: null, createdAt: "2026-09-24T10:00:00.000Z", updatedAt: null,
       lastSignInAt: null, emailConfirmedAt: null, phoneConfirmedAt: null, providers: ["email"], userMetadata: { displayName: "Alice" } });
     if (path.pathname === "/api/v1/account/preferences") return Response.json({ schemaVersion: 1,revision: 2,theme: "dark",soundEnabled: false,soundVolume: 0.25,updatedAt: "2026-09-27T10:00:00.000Z" });
+    if (path.pathname === "/api/v1/account/request-limit") return Response.json({ snapshot: { windowStartAt: "2026-09-28T10:00:00.000Z",admitted: 3 } });
     if (path.pathname === "/api/v1/usage") return Response.json({ day: 1, reservedMicros: 0, chargedMicros: 5,
       active: 0, recent: 0, unknownCosts: 0, dailyLimitMicros });
     if (path.pathname === "/api/v1/records") return Response.json({ items: [{ id: record, title: "Record", content: "private",
@@ -101,21 +102,27 @@ it.each([100,null])("exports all visible account collections with daily limit %s
       counts: { profile: 1, preferences: 1, records: 1, conversations: 2, projections: 2, runs: 1, artifacts: 1, artifactVersions: 2, uploads: 1, uploadReviews: 1, uploadUsage: 1, reservations: 2, corrections: 2, usage: 1 },
     });
     const exported = await lines(output);
-    expect(exported.map(line => line.type)).toEqual(["manifest", "account_profile", "account_preferences", "record", "conversation", "projection", "projection", "run", "conversation", "artifact", "artifact_version", "artifact_version", "upload", "upload_review", "upload_usage", "budget_reservation", "budget_reservation", "budget_correction", "budget_correction", "usage", "end"]);
+    expect(exported.map(line => line.type)).toEqual(["manifest", "account_profile", "account_preferences", "request_limit", "record", "conversation", "projection", "projection", "run", "conversation", "artifact", "artifact_version", "artifact_version", "upload", "upload_review", "upload_usage", "budget_reservation", "budget_reservation", "budget_correction", "budget_correction", "usage", "end"]);
     expect(exported.find(line => line.type === "account_profile")?.value).toMatchObject({ email: "alice@example.test", userMetadata: { displayName: "Alice" } });
     expect(exported[0].value.exclusions).toEqual(expect.arrayContaining([expect.stringContaining("Eve session/model history")]));
     expect(exported.find(line => line.type === "run")?.value.run).toMatchObject({ state: "completed",models: ["fixture-model"] });
     expect(exported.some(line => line.type === "run" && "facts" in line.value.run)).toBe(false);
     expect(exported.find(line => line.type === "account_preferences")?.value).toMatchObject({ revision: 2,theme: "dark",soundEnabled: false,soundVolume: 0.25 });
+    expect(exported.find(line => line.type === "request_limit")?.value).toEqual({ windowStartAt: "2026-09-28T10:00:00.000Z",admitted: 3 });
     expect(exported.find(line => line.type === "artifact")?.value.content).toBe("artifact text");
     expect(exported.filter(line => line.type === "artifact_version").map(line => [line.value.revision,line.value.content])).toEqual([[2,"artifact text"],[1,"approved original"]]);
     expect(exported.find(line => line.type === "upload")?.value).toMatchObject({ id: upload,state: "rejected",
       scan: { status: "rejected",reason: "malware",checkedAt: 2,policyVersion: 1 } });
     expect(exported.find(line => line.type === "upload_usage")?.value).toEqual({ files: 1, bytes: 4 });
     expect(exported.find(line => line.type === "budget_reservation")?.value).toMatchObject({ operationId: operation,actualMicros: 5 });
-    expect(exported[0].value.format).toBe("ai-app-jumpstart-visible-data-v10");
+    expect(exported[0].value.format).toBe("ai-app-jumpstart-visible-data-v11");
     expect(exported.find(line => line.type === "usage")?.value).toMatchObject({ dailyLimitMicros,chargedMicros: 5 });
-    expect(await run(["export", "verify", output], {})).toMatchObject({ mode: "application", counts: { reservations: 2, corrections: 2 } });
+    expect(await run(["export", "verify", output], {})).toMatchObject({ mode: "application", counts: { requestLimit: 1,reservations: 2, corrections: 2 } });
+    const malformed = exported.map(line => line.type === "request_limit" ? { ...line,value: { windowStartAt: "2026-09-28T10:00:00.000Z",admitted: -1 } } : line);
+    const content = malformed.slice(0,-1).map(line => JSON.stringify(line)+"\n").join("");
+    const badFile = join(directory,"bad-request-limit.ndjson");
+    await writeFile(badFile,content+JSON.stringify({ type: "end",value: { ...malformed.at(-1)!.value,contentSha256: createHash("sha256").update(content).digest("hex") } })+"\n");
+    await expect(run(["export","verify",badFile],{})).rejects.toThrow();
     expect(exported.filter(line => line.type === "budget_reservation")[1].value).toMatchObject({ operationId: archivedOperation,status: "reserved" });
     expect(exported.filter(line => line.type === "budget_correction").map(line => line.value.correctionId)).toEqual([firstCorrection,secondCorrection]);
     expect(request.mock.calls[0]?.[0].toString()).toContain("/api/v1/account/profile");
@@ -146,6 +153,7 @@ it.each(["current","ledger"])("publishes no paused application export when %s us
     if (path.pathname === "/api/v1/account/profile") return Response.json({ id: randomUUID(),email: "alice@example.test",phone: null,
       createdAt: "2026-09-27T10:00:00.000Z",updatedAt: null,lastSignInAt: null,emailConfirmedAt: null,phoneConfirmedAt: null,providers: ["email"],userMetadata: {} });
     if (path.pathname === "/api/v1/account/preferences") return Response.json(defaultPreferences);
+    if (path.pathname === "/api/v1/account/request-limit") return Response.json({ snapshot: null });
     if (path.pathname === "/api/v1/usage") return failure === "current" ? Response.json({ error: { code: "chat_unconfigured" } },{ status: 503 })
       : Response.json({ day: 1,reservedMicros: 0,chargedMicros: 5,active: 0,recent: 0,unknownCosts: 0,dailyLimitMicros: null });
     if (path.pathname === "/api/v1/uploads") return Response.json({ items: [],usage: { files: 0,bytes: 0 } });
@@ -235,5 +243,16 @@ it("continues verifying v9 exports with review sections and a positive daily lim
   try {
     await writeFile(path,content+JSON.stringify({ type: "end",value: { counts,contentSha256: createHash("sha256").update(content).digest("hex") } })+"\n");
     expect(await run(["export","verify",path],{})).toMatchObject({ format: "ai-app-jumpstart-visible-data-v9",counts });
+  } finally { await rm(directory,{ recursive: true,force: true }); }
+});
+
+it("continues verifying v10 exports without a request-limit section",async () => {
+  const directory = await mkdtemp(join(tmpdir(),"jumpstart-export-v10-")),path = join(directory,"old.ndjson");
+  const counts = { profile: 0,records: 0,conversations: 0,projections: 0,artifacts: 0,uploads: 0,uploadUsage: 0,reservations: 0,
+    corrections: 0,usage: 0,runs: 0,preferences: 0,artifactVersions: 0,uploadReviews: 0 };
+  const content = JSON.stringify({ type: "manifest",value: { format: "ai-app-jumpstart-visible-data-v10",mode: "application" } })+"\n";
+  try {
+    await writeFile(path,content+JSON.stringify({ type: "end",value: { counts,contentSha256: createHash("sha256").update(content).digest("hex") } })+"\n");
+    expect(await run(["export","verify",path],{})).toMatchObject({ format: "ai-app-jumpstart-visible-data-v10",counts });
   } finally { await rm(directory,{ recursive: true,force: true }); }
 });
