@@ -6,7 +6,7 @@ const baseline = {
   DATA_PROVIDER: "supabase", AUTH_PROVIDER: "supabase", AI_CHAT_ENABLED: "false",
   APP_ORIGIN: "https://app.example.org", SUPABASE_URL: "https://data.example.org",
   SUPABASE_SECRET_KEY: "sb_secret_fixture_backend_key", SUPABASE_PUBLISHABLE_KEY: "sb_publishable_fixture_public_key",
-  CRON_SECRET: "s".repeat(40),
+  CRON_SECRET: "s".repeat(40),APP_REQUESTS_PER_MINUTE: "120",
 };
 const chat = {
   ...baseline, AI_CHAT_ENABLED: "true", AI_RUNTIME_ORIGIN: "https://app.example.org",
@@ -27,9 +27,18 @@ it("requires account chat, private storage and remote scan-on-read for the opt-i
 });
 
 it("accepts an explicit records-first managed setup and a fully shaped account-chat setup", () => {
-  expect(checkManagedConfig(baseline)).toEqual({ target: "vercel-supabase", origin: baseline.APP_ORIGIN, accountChat: "disabled" });
+  expect(checkManagedConfig(baseline)).toEqual({ target: "vercel-supabase", origin: baseline.APP_ORIGIN, accountChat: "disabled",requestLimitPerMinute: 120 });
+  expect(checkManagedConfig({ ...baseline,APP_REQUESTS_PER_MINUTE: "0" })).toMatchObject({ accountChat: "disabled",requestLimitPerMinute: 0 });
   expect(() => checkManagedConfig(baseline, true)).toThrow("Enable and configure AI_CHAT_ENABLED=true");
   expect(checkManagedConfig(chat, true)).toMatchObject({ accountChat: "enabled" });
+});
+
+it("requires an explicit bounded owner-request admission choice for managed releases",() => {
+  expect(() => checkManagedConfig({ ...baseline,APP_REQUESTS_PER_MINUTE: undefined })).toThrow("Set APP_REQUESTS_PER_MINUTE explicitly");
+  for (const value of ["","01","1.5","-1","10001","private-secret-value"]) {
+    try { checkManagedConfig({ ...baseline,APP_REQUESTS_PER_MINUTE: value });throw new Error("Expected rejection."); }
+    catch (error) { expect(String(error)).toContain("APP_REQUESTS_PER_MINUTE");if (value) expect(String(error)).not.toContain(value); }
+  }
 });
 
 it("checks native retention and refuses zero-retention account replay",() => {

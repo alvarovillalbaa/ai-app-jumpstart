@@ -1,6 +1,6 @@
 # Authenticated application request limits
 
-Set `APP_REQUESTS_PER_MINUTE` to a canonical decimal integer from `1` to `10000`. The environment example enables **120** requests per verified owner per UTC minute. An unset value or `0` disables admission for existing installations. Empty values, leading zeros, fractions and whitespace fail configuration validation. Use the same setting on every application instance.
+Set `APP_REQUESTS_PER_MINUTE` to a canonical decimal integer from `1` to `10000`. The environment example enables **120** requests per verified owner per UTC minute. An unset value or `0` disables admission for existing installations. Managed Vercel and AWS/Azure/GCP release preflights require an explicit choice: `0` to disable or a value from `1` to `10000`. Empty values, leading zeros, fractions and whitespace fail configuration validation. Use the same setting on every application instance.
 
 The quota belongs to the authenticated `(tenant, subject)`, not a token, browser, IP address or request body. Rotated keys for the same owner share it. REST, CLI and MCP share one persistent counter through the selected SQLite, PostgreSQL, Supabase or Convex data provider. Separate owners have independent counters. Every admitted HTTP request counts once, including MCP initialization, notifications, polling and export pages; it is not a per-record or per-tool allowance. Authenticated requests that later fail scope, body or business validation still count. Invalid credentials do not count.
 
@@ -16,7 +16,7 @@ Eve follow/stop controls and the REST **Cancel pending start** endpoint remain a
 
 Before enabling a SQL deployment, apply `20260927180000_request_limits.sql` through the serial [migration process](databases.md). Deploy the updated schema and internal functions first for Convex. SQLite initializes its table on connection; continue using one instance on durable local storage. `/api/health/ready` performs a read-only limiter table/function check when the setting is enabled, without claiming an owner's slot. A missing migration or inaccessible limiter fails the data readiness check.
 
-The AWS ECS, Azure Container Apps and Cloud Run examples use `120`; their manifest preflight accepts an explicit `0` or a valid literal limit. Native Amplify authoring uses `requestsPerMinute` (default `120`, explicit `0` to disable), which becomes the same server environment variable. Configure it explicitly for a managed Vercel release. No quota storage uses ephemeral Lambda/Vercel memory.
+The AWS ECS, Azure Container Apps and Cloud Run examples use `120`; their manifest preflight rejects an omitted or invalid limit and accepts an explicit `0`. Native Amplify authoring uses `requestsPerMinute` (default `120`, explicit `0` to disable), which becomes the same server environment variable. The managed Vercel preflight also rejects omission. No quota storage uses ephemeral Lambda/Vercel memory.
 
 ## Operations and data
 

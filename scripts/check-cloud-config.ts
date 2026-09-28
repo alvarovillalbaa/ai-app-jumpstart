@@ -31,7 +31,7 @@ async function main(args: string[]) {
   const provider = options[1] as CloudProvider;
   const result = validateCloudManifest(provider,await readManifest(options[3]),template);
   console.log(JSON.stringify({ provider: result.provider,dataProvider: result.dataProvider,
-    secretReferences: result.secretReferences,template }));
+    secretReferences: result.secretReferences,requestLimitPerMinute: result.requestLimitPerMinute,template }));
   if (template) console.log("Template mode permits placeholders; rerun without --template on the filled deployment file.");
 }
 

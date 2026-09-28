@@ -151,10 +151,10 @@ export function validateCloudManifest(provider: CloudProvider,raw: unknown,templ
   expectValue(ingressEnv,"NEXT_UPSTREAM","127.0.0.1:3000");
   expectValue(ingressEnv,"EVE_UPSTREAM","127.0.0.1:4274");
   expectValue(appEnv,"AUTH_PROVIDER","supabase");
-  if (appEnv.has("APP_REQUESTS_PER_MINUTE")) {
-    try { requestsPerMinute({ APP_REQUESTS_PER_MINUTE: string(appEnv.get("APP_REQUESTS_PER_MINUTE")?.value,"APP_REQUESTS_PER_MINUTE") }); }
-    catch { fail("APP_REQUESTS_PER_MINUTE must be a literal 0 or integer from 1 to 10000."); }
-  }
+  if (!appEnv.has("APP_REQUESTS_PER_MINUTE")) fail("APP_REQUESTS_PER_MINUTE must be an explicit literal 0 or integer from 1 to 10000.");
+  let requestLimitPerMinute: number;
+  try { requestLimitPerMinute = requestsPerMinute({ APP_REQUESTS_PER_MINUTE: string(appEnv.get("APP_REQUESTS_PER_MINUTE")?.value,"APP_REQUESTS_PER_MINUTE") }); }
+  catch { fail("APP_REQUESTS_PER_MINUTE must be a literal 0 or integer from 1 to 10000."); }
   expectValue(appEnv,"AI_CHAT_ENABLED","true");
   expectValue(appEnv,"APP_AGENT_READINESS","local");
   expectValue(appEnv,"AI_RUNTIME_ORIGIN","http://127.0.0.1:4274");
@@ -190,5 +190,5 @@ export function validateCloudManifest(provider: CloudProvider,raw: unknown,templ
     if (appEnv.get(name)?.value !== undefined) fail(`${name} must not be a plaintext environment value.`);
   }
   for (const name of required) requireSecret(appEnv,name,provider,secretNames,template);
-  return { provider,dataProvider,appOrigin: origin,secretReferences: required.length };
+  return { provider,dataProvider,appOrigin: origin,secretReferences: required.length,requestLimitPerMinute };
 }

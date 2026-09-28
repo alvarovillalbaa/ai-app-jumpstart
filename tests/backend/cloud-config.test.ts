@@ -29,7 +29,7 @@ function app(provider: CloudProvider,manifest: FixtureManifest) {
 it("accepts the three authored templates and filled release-shaped manifests",() => {
   for (const provider of providers) {
     expect(validateCloudManifest(provider,templates[provider],true)).toMatchObject({ provider,dataProvider: "supabase" });
-    expect(validateCloudManifest(provider,filled(provider))).toMatchObject({ provider,dataProvider: "supabase",secretReferences: 8 });
+    expect(validateCloudManifest(provider,filled(provider))).toMatchObject({ provider,dataProvider: "supabase",secretReferences: 8,requestLimitPerMinute: 120 });
   }
 });
 
@@ -97,18 +97,18 @@ it("checks S3 bucket settings and refuses plaintext AWS credentials",() => {
   }
 });
 
-it("requires a canonical literal request limit and permits explicit disabling or legacy omission",() => {
+it("requires a canonical literal request limit and permits explicit disabling",() => {
   for (const provider of providers) {
     const manifest = filled(provider),application = app(provider,manifest);
     const values = provider === "aws" ? application.environment : application.env;
     const row = values.find(item => item.name === "APP_REQUESTS_PER_MINUTE")!;
-    row.value = "0";expect(() => validateCloudManifest(provider,manifest)).not.toThrow();
+    row.value = "0";expect(validateCloudManifest(provider,manifest)).toMatchObject({ requestLimitPerMinute: 0 });
     for (const value of ["-1","1.5","10001","01", "private-quota-value"]) {
       row.value = value;
       try { validateCloudManifest(provider,manifest);throw new Error("Expected rejection."); }
       catch (error) { expect(String(error)).toContain("APP_REQUESTS_PER_MINUTE");expect(String(error)).not.toContain(value); }
     }
-    values.splice(values.indexOf(row),1);expect(() => validateCloudManifest(provider,manifest)).not.toThrow();
+    values.splice(values.indexOf(row),1);expect(() => validateCloudManifest(provider,manifest)).toThrow("APP_REQUESTS_PER_MINUTE");
   }
 });
 

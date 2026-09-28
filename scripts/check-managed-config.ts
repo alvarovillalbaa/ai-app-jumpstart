@@ -8,6 +8,7 @@ import { remoteScannerSettings } from "../lib/uploads/scanner";
 import { uploadLinkSettings } from "../lib/uploads/download-links";
 import { uploadReaderEnabled } from "../lib/uploads/agent-reader";
 import { requireRecentCostReview } from "../lib/budgets/cost-basis";
+import { requestsPerMinute } from "../lib/request-limits/settings";
 import { requireReplayRetention } from "./workflow-retention.mjs";
 
 function httpsOrigin(value: string | undefined, name: string) {
@@ -27,6 +28,12 @@ export function checkManagedConfig(env: NodeJS.ProcessEnv, requireChat = false) 
   if (env.AI_CHAT_ENABLED !== "true" && env.AI_CHAT_ENABLED !== "false") {
     throw new Error("Set AI_CHAT_ENABLED explicitly to true or false.");
   }
+  if (env.APP_REQUESTS_PER_MINUTE === undefined) {
+    throw new Error("Set APP_REQUESTS_PER_MINUTE explicitly to 0 or an integer from 1 to 10000 for a managed release.");
+  }
+  let requestLimitPerMinute: number;
+  try { requestLimitPerMinute = requestsPerMinute(env); }
+  catch { throw new Error("APP_REQUESTS_PER_MINUTE must be 0 or an integer from 1 to 10000."); }
   if (requireChat && env.AI_CHAT_ENABLED !== "true") throw new Error("Enable and configure AI_CHAT_ENABLED=true before requiring an agent turn.");
   if ((env.EVE_WORKFLOW_PROVIDER && env.EVE_WORKFLOW_PROVIDER !== "default") ||
       (env.WORKFLOW_EXPECTED_PROVIDER && env.WORKFLOW_EXPECTED_PROVIDER !== "default")) {
@@ -86,7 +93,8 @@ export function checkManagedConfig(env: NodeJS.ProcessEnv, requireChat = false) 
     } catch { throw new Error("Account chat settings are invalid; check Auth, signing keyring and reviewed budget policy."); }
     requireRecentCostReview(reviewedAt);
   }
-  return { target: "vercel-supabase" as const, origin, accountChat: env.AI_CHAT_ENABLED === "true" ? "enabled" as const : "disabled" as const };
+  return { target: "vercel-supabase" as const, origin, accountChat: env.AI_CHAT_ENABLED === "true" ? "enabled" as const : "disabled" as const,
+    requestLimitPerMinute };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -97,7 +105,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   } else {
     try {
       const result = checkManagedConfig(process.env, args[0] === "--require-chat");
-      console.log(`Managed Vercel + Supabase configuration shape passed; account chat ${result.accountChat}.`);
+      console.log(`Managed Vercel + Supabase configuration shape passed; account chat ${result.accountChat}; authenticated request admission ${result.requestLimitPerMinute === 0 ? "disabled (explicit)" : `${result.requestLimitPerMinute}/min per owner`}.`);
       console.log("Still required: migration dry run/review, Vercel project setup, deployment, hosted data and owned-turn smoke.");
     } catch (error) {
       console.error(error instanceof Error ? error.message : "Managed configuration is invalid.");
