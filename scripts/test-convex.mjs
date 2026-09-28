@@ -128,6 +128,19 @@ try {
   if (verifiedRows.provider !== "convex" || verifiedRows.rows !== 1 ||
       !(await readFile(rowArchive,"utf8")).includes(auditId))
     throw new Error("Local Convex raw row archive did not verify.");
+  const bundle = join(directory,"account-bundle");
+  const bundleEnv = { ...env,CONVEX_SITE_URL: siteUrl,CONVEX_AUDIT_SECRET: auditSecret,
+    ACCOUNT_AUDIT_TENANT: auditOwner.tenant,ACCOUNT_AUDIT_SUBJECT: auditOwner.subject,
+    UPLOAD_STORAGE_PROVIDER: "local",UPLOAD_LOCAL_ROOT: auditObjects };
+  const bundleOutput = await command([join(root,"node_modules/tsx/dist/cli.mjs"),"scripts/export-account-bundle.ts",
+    "--metadata","convex","--output",bundle,"--stopped"],{ cwd: root,env: bundleEnv });
+  const bundleReport = JSON.parse(bundleOutput);
+  if (bundleReport.rows !== 1 || bundleReport.objects !== 0 || bundleOutput.includes(auditOwner.subject))
+    throw new Error("Local Convex account bundle omitted rows or exposed its owner.");
+  const verifiedBundle = JSON.parse(await command([join(root,"node_modules/tsx/dist/cli.mjs"),
+    "scripts/export-account-bundle.ts","--verify",bundle],{ cwd: root,env }));
+  if (verifiedBundle.metadataProvider !== "convex" || verifiedBundle.rows !== 1 || verifiedBundle.objects !== 0)
+    throw new Error("Local Convex account bundle did not verify.");
   const lateWrite = await fetch(`${siteUrl}/app/records`,{ method: "POST",headers: { "content-type": "application/json","x-jumpstart-backend-key": secret },
     body: JSON.stringify({ operation: "create",...auditOwner,id: randomUUID(),title: "Late",content: "private" }),signal: AbortSignal.timeout(5000) });
   if (lateWrite.status !== 500) throw new Error("Local Convex accepted a fenced account write.");

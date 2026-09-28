@@ -1,5 +1,7 @@
 # Testing
 
+`npm run account:export:bundle -- --metadata sqlite|postgres|convex --output /private/new-dir --stopped` creates a private combined application-row and object-byte archive for one fenced owner; `npm run account:verify:bundle -- /private/new-dir` checks it offline. Focused SQLite/local and Convex emulator tests cover active bytes, orphan preservation, isolation, mismatch cleanup, tamper refusal and no-clobber; disposable PostgreSQL/Supabase and real Convex harnesses exercise the operator command. This requires stopped writers and operator credentials for both stores; the reads are not a cross-service transaction, and Auth/Eve data and import/restore remain outside the bundle.
+
 `npm run test:amplify-build` builds the native Amplify self-managed adapter, checks its real CloudFormation graph offline and invokes its generated Node 24 streaming handler against disposable PostgreSQL. It reuses two-owner REST/CLI/MCP and seven public browser/accessibility/CSP contracts, verifies the protected cleanup route, and checks compiled per-owner request counters and quota rejection across REST/CLI/MCP without a rejected write. `npm run test:amplify-ingress` requires Docker and checks the actual guarded Eve ingress, readiness and incremental SSE. These fixtures do not emulate AWS or prove hosted registered-user chat, Workflow recovery or a paid production-model turn; see [the Amplify recipe](amplify-self-managed.md).
 
 | Command | Coverage | Requirements |

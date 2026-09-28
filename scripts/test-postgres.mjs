@@ -222,6 +222,19 @@ async function rehearseUpgrade() {
     assert.ok(exported.some(item => item.type === "row" && item.value.entity === "conversationEvents" &&
       item.value.rowJson.includes(eventId)));
     assert.equal(exported.some(item => item.type === "row" && item.value.rowJson.includes("other-owner")),false);
+    const bundleRecord = randomUUID(),bundleSubject = "bundle-owner";
+    await probe.query("INSERT INTO app_records(id,tenant,subject,title,content) VALUES($1,'upgrade-tenant',$2,'Bundle','private bundle fixture')",
+      [bundleRecord,bundleSubject]);
+    const bundleObjects = await mkdtemp(join(directory,"bundle-objects-"));
+    const bundle = join(directory,"account-bundle");
+    const bundleEnv = { ...upgradeEnv,ACCOUNT_AUDIT_TENANT: "upgrade-tenant",ACCOUNT_AUDIT_SUBJECT: bundleSubject,
+      UPLOAD_STORAGE_PROVIDER: "local",UPLOAD_LOCAL_ROOT: bundleObjects };
+    await run(["node_modules/tsx/dist/cli.mjs","scripts/fence-account-writes.ts","--metadata","postgres","--set-permanent"],0,bundleEnv);
+    await run(["node_modules/tsx/dist/cli.mjs","scripts/export-account-bundle.ts","--metadata","postgres",
+      "--output",bundle,"--stopped"],0,bundleEnv);
+    await run(["node_modules/tsx/dist/cli.mjs","scripts/export-account-bundle.ts","--verify",bundle]);
+    assert.ok((await readFile(join(bundle,"rows.ndjson"),"utf8")).includes(bundleRecord));
+    assert.equal(JSON.parse(await readFile(join(bundle,"manifest.json"),"utf8")).objects,0);
     await assert.rejects(() => probe.query("UPDATE app_records SET content='late' WHERE id=$1",[recordId]),/fenced/);
     await assert.rejects(() => probe.query("INSERT INTO app_records(id,tenant,subject,title,content) VALUES($1,'upgrade-tenant','upgrade-owner','Late','No')",[randomUUID()]),/fenced/);
     await assert.rejects(() => probe.query("UPDATE app_uploads SET state='deleting' WHERE id=$1",[uploadId]),/fenced/);

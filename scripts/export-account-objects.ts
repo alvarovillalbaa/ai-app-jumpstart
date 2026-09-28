@@ -14,7 +14,7 @@ type Provider = "local" | "supabase" | "aws-s3";
 export type ObjectExportSource = { list(): Promise<string[]>;get(id: string): Promise<Uint8Array | null> };
 
 /** Export raw quarantined objects, including catalog orphans. This does not release them to an app user. */
-export async function exportAccountObjects(source: ObjectExportSource,output: string,provider: Provider) {
+export async function exportAccountObjects(source: ObjectExportSource,output: string,provider: Provider,owner?: AccessOwner) {
   if (!output || output.includes("\u0000")) throw new Error("Provide an output file.");
   const destination = resolve(output),parent = dirname(destination),details = await lstat(parent);
   if (!details.isDirectory() || details.isSymbolicLink() || (details.mode & 0o077) !== 0)
@@ -39,6 +39,7 @@ export async function exportAccountObjects(source: ObjectExportSource,output: st
     file = await open(temporary,"wx",0o600);
     await write("manifest",{
       format: "ai-app-jumpstart-private-objects-v1",provider,exportedAt: new Date().toISOString(),
+      ...(owner ? { ownerSha256: createHash("sha256").update(JSON.stringify([owner.tenant,owner.subject])).digest("hex") } : {}),
       consistency: "operator-attested stopped writers; listings before and after export must match; not a transaction or durable write fence",
       exclusions: "Application metadata, Auth, Eve/Workflow, object versions, unfinished multipart uploads, derived copies, logs and backups",
     });
@@ -68,20 +69,20 @@ export async function exportSelectedAccountObjects(provider: Provider,owner: Acc
     if (!env.UPLOAD_LOCAL_ROOT) throw new Error("Private local upload root is required.");
     const root = env.UPLOAD_LOCAL_ROOT;
     return exportAccountObjects({ list: () => listLocalOwnerObjectIds(root,owner),
-      get: id => readLocalOwnerObject(root,owner,id) },output,provider);
+      get: id => readLocalOwnerObject(root,owner,id) },output,provider,owner);
   }
   if (provider === "supabase") {
     if (!env.SUPABASE_URL || !env.SUPABASE_SECRET_KEY) throw new Error("Private Supabase Storage settings are required.");
     const storage = uploadStorageClient(env.SUPABASE_URL,env.SUPABASE_SECRET_KEY).storage,
       objects = supabaseUploadObjects(storage);
     return exportAccountObjects({ list: () => listSupabaseOwnerObjectIds(storage,owner),
-      get: id => objects.get(owner,id) },output,provider);
+      get: id => objects.get(owner,id) },output,provider,owner);
   }
   const { region,bucket } = awsS3Settings(env),client = new S3Client({ region,maxAttempts: 2,ignoreConfiguredEndpointUrls: true });
   try {
     const objects = awsS3UploadObjects(client,bucket);
     return await exportAccountObjects({ list: () => listS3OwnerObjectIds(client,bucket,owner),
-      get: id => objects.get(owner,id) },output,provider);
+      get: id => objects.get(owner,id) },output,provider,owner);
   } finally { client.destroy(); }
 }
 
