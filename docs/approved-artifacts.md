@@ -24,7 +24,7 @@ CLI `artifacts update ARTIFACT_UUID patch.json` and `artifacts versions ARTIFACT
 
 Each artifact retains at most **100 versions**, including creation. Saving at revision 100 returns 409 `artifact_version_limit` without writing. This bounds amplification and lets SQLite, PostgreSQL, Supabase and Convex erase the entire history atomically. No-op replacements also consume a version. Title/content bounds and validation match the approved tool (120-character plain title, 32,000-character well-formed text). Deletion fences concurrent edits and tool replay, clears current content/hash, and removes history rows; source conversation/tool-result copies, exports and backups have separate retention.
 
-Application exports now use manifest v10 and include `artifact` current snapshots plus every retained `artifact_version`; the offline verifier continues accepting v5, v6, v7, v8 and v9 exports. The export remains a sequence of owner-authorized live reads, not a full account export or database backup.
+Application exports now use manifest v11 and include `artifact` current snapshots plus every retained `artifact_version`; the offline verifier continues accepting v5 through v10 exports. The export remains a sequence of owner-authorized live reads, not a full account export or database backup.
 
 ## Upgrade and rollback
 

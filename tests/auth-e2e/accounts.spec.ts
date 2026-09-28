@@ -154,6 +154,7 @@ test("paused chat retains private history, artifacts, usage and application expo
     const tools = (await client.listTools()).tools.map(tool => tool.name);
     expect(tools).toContain("conversations_get");expect(tools).toContain("artifacts_versions");
     expect(tools).not.toContain("conversations_source_events");expect(tools).not.toContain("conversations_reconcile");expect(tools).toContain("usage_get");
+    expect(tools).toContain("account_request_limit");
     const usage = await client.callTool({ name: "usage_get",arguments: {} });expect(usage.isError).not.toBe(true);
     expect(JSON.parse((usage.content as { text: string }[])[0].text)).toMatchObject(retainedUsage);
     const corrections = await client.callTool({ name: "usage_corrections",arguments: {} });expect(corrections.isError).not.toBe(true);
@@ -171,14 +172,15 @@ test("paused chat retains private history, artifacts, usage and application expo
   try {
     const output = join(directory,"account.ndjson");
     const exported = await runCli(["export","application",output],{ APP_API_URL: process.env.APP_ORIGIN,APP_API_TOKEN: token });
-    expect(exported).toMatchObject({ counts: { profile: 1,preferences: 1,records: 1,conversations: 1,projections: 3,runs: 1,
+    expect(exported).toMatchObject({ counts: { profile: 1,preferences: 1,requestLimit: 1,records: 1,conversations: 1,projections: 3,runs: 1,
       artifacts: 1,artifactVersions: 2,uploads: 1,uploadReviews: 1,reservations: 2,corrections: 1,usage: 1 } });
     const raw = await readFile(output,"utf8"),lines = raw.trim().split("\n").map(line => JSON.parse(line));
-    expect(lines[0].value.format).toBe("ai-app-jumpstart-visible-data-v10");
+    expect(lines[0].value.format).toBe("ai-app-jumpstart-visible-data-v11");
+    expect(lines.find(line => line.type === "request_limit").value).toMatchObject({ admitted: expect.any(Number),windowStartAt: expect.any(String) });
     expect(lines.find(line => line.type === "usage").value).toMatchObject(retainedUsage);
     expect(lines.find(line => line.type === "budget_correction").value).toMatchObject({ correctionId: correction,correctedActualMicros: 5 });
     expect(raw).not.toMatch(/private-export-operator|private-export-receipt|Private fixture evidence|Private bytes excluded/);
-    expect(await runCli(["export","verify",output],{})).toMatchObject({ format: "ai-app-jumpstart-visible-data-v10",counts: { reservations: 2,corrections: 1 } });
+    expect(await runCli(["export","verify",output],{})).toMatchObject({ format: "ai-app-jumpstart-visible-data-v11",counts: { requestLimit: 1,reservations: 2,corrections: 1 } });
     const foreignOutput = join(directory,"other.ndjson");
     expect(await runCli(["export","application",foreignOutput],{ APP_API_URL: process.env.APP_ORIGIN,APP_API_TOKEN: other })).toMatchObject({ counts: { records: 0,conversations: 0,artifacts: 0,uploads: 0,reservations: 1,corrections: 0 } });
     expect(await readFile(foreignOutput,"utf8")).not.toContain(artifactId);
