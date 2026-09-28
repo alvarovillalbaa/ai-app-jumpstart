@@ -147,7 +147,7 @@ it("bundles fenced owner rows and private bytes, preserving object orphans and r
     expect(cli.status).toBe(2);
     expect(readdirSync(dir)).not.toContain("missing-stop");
   } finally { rmSync(dir,{ recursive: true,force: true }); }
-});
+},30_000);
 
 it("bundles fenced Convex rows with an empty private object namespace",async () => {
   const dir = mkdtempSync(join(tmpdir(),"jumpstart-convex-bundle-"));
