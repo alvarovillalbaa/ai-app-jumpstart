@@ -1,6 +1,8 @@
 # Delivery status
 
-Updated 2026-09-28. The original goal remains active. `IMPLEMENTATION.md` remains the detailed target; this is not a production-readiness certificate.
+Updated 2026-09-29. The original goal remains active. `IMPLEMENTATION.md` remains the detailed target; this is not a production-readiness certificate.
+
+Combined account bundles now bind private-object erasure to the selected local root identity or managed bucket/project coordinates. Offline verification still accepts earlier v1 bundles, but erasure requires a new source-bound v2 bundle; it rejects a different empty local root before deleting anything. The binding reduces wrong-store operator errors but cannot prove a remote endpoint is not redirected or prevent concurrent source changes. The original goal and full account closure remain open.
 
 The managed Supabase account rehearsal exposed a search-path dependent migration ledger: its database role resolves unqualified tables under `auth` before `public`. The migration runner now creates new ledgers in `public`, reuses a single legacy ledger where it already exists, and rejects duplicate ledgers. The PostgreSQL owner-erasure guard accepts the ledger as an optional control table in `public` because legacy ledgers may live elsewhere, and excludes schema-qualified control tables from its public-table count. The PostgreSQL owner-erasure integration case is now included in the provider test configuration so this guard runs on every provider rehearsal. Disposable PostgreSQL tests passed both fresh and legacy search-path cases; the managed Storage rehearsal is being rerun in CI.
 

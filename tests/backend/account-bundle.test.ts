@@ -59,9 +59,10 @@ it("bundles fenced owner rows and private bytes, preserving object orphans and r
       .rejects.toThrow("inside its object source");
     expect(readdirSync(root)).not.toContain("nested");
     await expect(exportAccountBundle("sqlite","local",alice,output,env))
-      .resolves.toEqual({ metadataProvider: "sqlite",objectProvider: "local",rows: 4,objects: 2,
+      .resolves.toMatchObject({ metadataProvider: "sqlite",objectProvider: "local",rows: 4,objects: 2,
         catalog: { catalogRows: 1,activeRows: 1,objectOrphans: 1,transitionalWithoutBytes: 0 } });
-    expect(await verifyAccountBundle(output)).toMatchObject({ rows: 4,objects: 2 });
+    expect(await verifyAccountBundle(output)).toMatchObject({ rows: 4,objects: 2,
+      objectSourceSha256: expect.stringMatching(/^[a-f0-9]{64}$/u) });
     expect(readdirSync(output).sort()).toEqual(["manifest.json","objects.ndjson","rows.ndjson"]);
     expect(statSync(output).mode & 0o077).toBe(0);
     for (const name of readdirSync(output)) expect(statSync(join(output,name)).mode & 0o077).toBe(0);
@@ -162,7 +163,7 @@ it("bundles fenced Convex rows with an empty private object namespace",async () 
     await setConvexAccountFence("https://test.convex.site",secret,alice,request);
     expect(await exportAccountBundle("convex","local",alice,output,
       { CONVEX_SITE_URL: "https://test.convex.site",CONVEX_AUDIT_SECRET: secret,UPLOAD_LOCAL_ROOT: root },request))
-      .toEqual({ metadataProvider: "convex",objectProvider: "local",rows: 1,objects: 0,
+      .toMatchObject({ metadataProvider: "convex",objectProvider: "local",rows: 1,objects: 0,
         catalog: { catalogRows: 0,activeRows: 0,objectOrphans: 0,transitionalWithoutBytes: 0 } });
     expect(await verifyAccountBundle(output)).toMatchObject({ metadataProvider: "convex",rows: 1,objects: 0 });
   } finally { vi.unstubAllEnvs();rmSync(dir,{ recursive: true,force: true }); }

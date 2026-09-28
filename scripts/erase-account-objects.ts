@@ -15,6 +15,7 @@ import { supabaseUploadObjects,uploadStorageClient } from "../lib/uploads/supaba
 import { verifyAccountBundle } from "./export-account-bundle";
 import { eraseAccountRows } from "./erase-account-rows";
 import { verifyAccountRowExportDetails } from "./export-account-rows";
+import { objectSourceSha256 } from "./account-object-source";
 
 type Provider = "local" | "supabase" | "aws-s3";
 export type ObjectErasureSource = { list(): Promise<string[]>;get(id: string): Promise<Uint8Array | null>;
@@ -57,6 +58,9 @@ export async function eraseAccountObjects(source: ObjectErasureSource,provider: 
   const owner = accessOwner.parse(ownerInput);
   const bundle = await verifyAccountBundle(bundlePath);
   if (bundle.objectProvider !== provider) throw new Error("Verified bundle does not match the selected object provider.");
+  if (!bundle.objectSourceSha256) throw new Error("Private object erasure requires a new source-bound account bundle.");
+  if (await objectSourceSha256(provider,env) !== bundle.objectSourceSha256)
+    throw new Error("Selected private object source differs from the verified bundle.");
   const rows = await verifyAccountRowExportDetails(join(resolve(bundlePath),"rows.ndjson"));
   if (rows.provider !== bundle.metadataProvider || rows.owner.tenant !== owner.tenant || rows.owner.subject !== owner.subject)
     throw new Error("Verified bundle does not match the selected account owner.");

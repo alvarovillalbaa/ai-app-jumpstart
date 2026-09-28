@@ -82,7 +82,7 @@ if (process.env.TEST_DISPOSABLE_SUPABASE === "1") it("bundles real Supabase cata
     expect(readdirSync(dir)).not.toContain("unfenced");
     expect((await setPostgresAccountFence(database,owner)).created).toBe(true);
     const output = join(dir,"bundle");
-    expect(await exportAccountBundle("postgres","supabase",owner,output,env)).toEqual({
+    expect(await exportAccountBundle("postgres","supabase",owner,output,env)).toMatchObject({
       metadataProvider: "postgres",objectProvider: "supabase",rows: 1,objects: 2,
       catalog: { catalogRows: 1,activeRows: 1,objectOrphans: 1,transitionalWithoutBytes: 0 } });
     expect(await verifyAccountBundle(output)).toMatchObject({ rows: 1,objects: 2 });
@@ -100,6 +100,8 @@ if (process.env.TEST_DISPOSABLE_SUPABASE === "1") it("bundles real Supabase cata
     await expect(exportAccountBundle("postgres","supabase",mismatchOwner,join(dir,"mismatch"),env))
       .rejects.toThrow("differs from its catalog row");
     expect(readdirSync(dir)).not.toContain("mismatch");
+    await expect(eraseSelectedAccountObjects("supabase",owner,output,
+      { ...env,SUPABASE_URL: "https://wrong.example.test" },true)).rejects.toThrow("source differs");
     await expect(eraseSelectedAccountObjects("supabase",owner,output,env)).resolves.toMatchObject({
       remainingBefore: 2,deleted: 0,status: "private-object-erasure-planned" });
     await expect(eraseSelectedAccountObjects("supabase",owner,output,env,true)).resolves.toMatchObject({

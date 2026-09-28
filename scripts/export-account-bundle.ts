@@ -10,6 +10,7 @@ import { uploadId } from "../lib/uploads/schema";
 import { exportSelectedAccountObjects } from "./export-account-objects";
 import { exportSelectedAccountRows,verifyAccountRowExport } from "./export-account-rows";
 import { verifyExport } from "./verify-export";
+import { objectSourceSha256 } from "./account-object-source";
 
 type MetadataProvider = "sqlite" | "postgres" | "convex";
 type ObjectProvider = "local" | "supabase" | "aws-s3";
@@ -20,12 +21,16 @@ const fileSchema = z.object({ name: z.enum(archiveNames),bytes: z.number().int()
 const catalogSchema = z.object({ catalogRows: z.number().int().nonnegative(),
   activeRows: z.number().int().nonnegative(),objectOrphans: z.number().int().nonnegative(),
   transitionalWithoutBytes: z.number().int().nonnegative() }).strict();
-const bundleSchema = z.object({ format: z.literal("ai-app-jumpstart-account-bundle-v1"),version: z.literal(1),
+const bundleV1Schema = z.object({ format: z.literal("ai-app-jumpstart-account-bundle-v1"),version: z.literal(1),
   createdAt: z.string(),metadataProvider: z.enum(["sqlite","postgres","convex"]),
   objectProvider: z.enum(["local","supabase","aws-s3"]),
   ownerSha256: z.string().regex(/^[a-f0-9]{64}$/u),rows: z.number().int().nonnegative(),
   objects: z.number().int().nonnegative(),catalog: catalogSchema,
   files: z.tuple([fileSchema,fileSchema]),consistency: z.string(),exclusions: z.string() }).strict();
+const bundleSchema = z.union([bundleV1Schema,bundleV1Schema.extend({
+  format: z.literal("ai-app-jumpstart-account-bundle-v2"),version: z.literal(2),
+  objectSourceSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+})]);
 
 function ownerHash(owner: AccessOwner) {
   return createHash("sha256").update(JSON.stringify([owner.tenant,owner.subject])).digest("hex");
@@ -161,7 +166,8 @@ export async function verifyAccountBundle(directory: string) {
       JSON.stringify(relation.catalog) !== JSON.stringify(manifest.catalog))
     throw new Error("Account bundle owner or catalog relation differs.");
   return { metadataProvider: manifest.metadataProvider,objectProvider: manifest.objectProvider,
-    rows: rows.rows,objects: manifest.objects,catalog: manifest.catalog };
+    rows: rows.rows,objects: manifest.objects,catalog: manifest.catalog,
+    ...(manifest.version === 2 ? { objectSourceSha256: manifest.objectSourceSha256 } : {}) };
 }
 
 /** A directory is complete only after its last-published manifest exists and verifies. */
@@ -182,8 +188,11 @@ export async function exportAccountBundle(metadataProvider: MetadataProvider,obj
   await mkdir(destination,{ mode: 0o700 });
   let complete = false;
   try {
+    const sourceSha256 = await objectSourceSha256(objectProvider,env);
     const rowResult = await exportSelectedAccountRows(metadataProvider,owner,join(destination,ROWS),env,request);
     const objectResult = await exportSelectedAccountObjects(objectProvider,owner,join(destination,OBJECTS),env);
+    if (await objectSourceSha256(objectProvider,env) !== sourceSha256)
+      throw new Error("Private object source changed during bundle export.");
     await verifyAccountRowExport(join(destination,ROWS));
     await verifyExport(join(destination,OBJECTS));
     const relation = await inspectArchives(destination);
@@ -191,8 +200,9 @@ export async function exportAccountBundle(metadataProvider: MetadataProvider,obj
         relation.objects !== objectResult.objects || ownerHash(relation.owner) !== ownerHash(owner))
       throw new Error("Account bundle sources do not match.");
     const files = await Promise.all(archiveNames.map(name => describeFile(destination,name)));
-    const manifest = { format: "ai-app-jumpstart-account-bundle-v1",version: 1,
-      createdAt: new Date().toISOString(),metadataProvider,objectProvider,ownerSha256: ownerHash(owner),
+    const manifest = { format: "ai-app-jumpstart-account-bundle-v2",version: 2,
+      createdAt: new Date().toISOString(),metadataProvider,objectProvider,objectSourceSha256: sourceSha256,
+      ownerSha256: ownerHash(owner),
       rows: rowResult.rows,objects: objectResult.objects,catalog: relation.catalog,files,
       consistency: "permanent application-row fence and operator-attested stopped writers; sequential metadata and object reads, not a cross-service transaction",
       exclusions: "Auth, Eve/Workflow, external/provider copies, object versions, unfinished uploads, derived copies, logs and backups" };

@@ -1,7 +1,7 @@
 import { createHash,randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync,readFileSync,rmSync,writeFileSync } from "node:fs";
+import { chmodSync,copyFileSync,mkdirSync,mkdtempSync,readFileSync,renameSync,rmSync,writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect,it } from "vitest";
@@ -18,6 +18,7 @@ import { eraseAccountObjects,eraseSelectedAccountObjects } from "../../scripts/e
 import { eraseAccountRows } from "../../scripts/erase-account-rows";
 import { exportAccountBundle,verifyAccountBundle } from "../../scripts/export-account-bundle";
 import { setSqliteAccountFence } from "../../scripts/fence-account-writes";
+import { objectSourceSha256 } from "../../scripts/account-object-source";
 
 const owner = { tenant: "object-erasure-tenant",subject: "alice" };
 const foreign = { ...owner,subject: "bob" };
@@ -47,6 +48,26 @@ it("requires a fenced verified bundle, checks exact bytes, and resumes owner-onl
     setSqliteAccountFence(path,owner);
     const env = { ACCOUNT_AUDIT_SQLITE_PATH: path,UPLOAD_LOCAL_ROOT: root };
     await exportAccountBundle("sqlite","local",owner,bundle,env);
+    const wrongRoot = join(dir,"wrong-objects");
+    mkdirSync(wrongRoot,{ mode: 0o700 });
+    await expect(eraseSelectedAccountObjects("local",owner,bundle,{ ...env,UPLOAD_LOCAL_ROOT: wrongRoot },true))
+      .rejects.toThrow("source differs");
+    const movedRoot = join(dir,"moved-objects");
+    renameSync(root,movedRoot);mkdirSync(root,{ mode: 0o700 });
+    try {
+      await expect(eraseSelectedAccountObjects("local",owner,bundle,env,true)).rejects.toThrow("source differs");
+    } finally { rmSync(root,{ recursive: true,force: true });renameSync(movedRoot,root); }
+    const legacy = join(dir,"legacy-bundle");
+    mkdirSync(legacy,{ mode: 0o700 });
+    for (const name of ["rows.ndjson","objects.ndjson","manifest.json"]) {
+      copyFileSync(join(bundle,name),join(legacy,name));chmodSync(join(legacy,name),0o600);
+    }
+    const legacyManifest = JSON.parse(readFileSync(join(legacy,"manifest.json"),"utf8"));
+    legacyManifest.format = "ai-app-jumpstart-account-bundle-v1";legacyManifest.version = 1;
+    delete legacyManifest.objectSourceSha256;
+    writeFileSync(join(legacy,"manifest.json"),JSON.stringify(legacyManifest)+"\n",{ mode: 0o600 });
+    expect(await verifyAccountBundle(legacy)).not.toHaveProperty("objectSourceSha256");
+    await expect(eraseSelectedAccountObjects("local",owner,legacy,env,true)).rejects.toThrow("source-bound");
     await expect(eraseSelectedAccountObjects("local",owner,bundle,env)).resolves.toMatchObject({
       objects: 2,remainingBefore: 2,deleted: 0,status: "private-object-erasure-planned" });
     await expect(eraseSelectedAccountObjects("local",foreign,bundle,env,true)).rejects.toThrow("selected account owner");
@@ -92,3 +113,11 @@ it("requires a fenced verified bundle, checks exact bytes, and resumes owner-onl
     expect(readFileSync(join(bundle,"manifest.json"),"utf8")).not.toContain(owner.subject);
   } finally { rmSync(dir,{ recursive: true,force: true }); }
 },30_000);
+
+it("binds managed object sources to their selected bucket and project origin",async () => {
+  const s3 = { UPLOAD_S3_REGION: "eu-west-1",UPLOAD_S3_BUCKET: "private-first-bucket" };
+  expect(await objectSourceSha256("aws-s3",s3)).not.toBe(await objectSourceSha256("aws-s3",
+    { ...s3,UPLOAD_S3_BUCKET: "private-other-bucket" }));
+  expect(await objectSourceSha256("supabase",{ SUPABASE_URL: "https://first.supabase.co" }))
+    .not.toBe(await objectSourceSha256("supabase",{ SUPABASE_URL: "https://other.supabase.co" }));
+});
