@@ -80,6 +80,7 @@
     "account:inspect": "node scripts/inspect-account-data.mjs",
     "account:inspect:convex": "tsx scripts/inspect-convex-account-data.ts",
     "account:inspect:objects": "tsx scripts/inspect-account-objects.ts",
+    "account:inspect:closure": "tsx scripts/inspect-account-closure.ts",
     "cloud:migration-job": "tsx scripts/create-migration-job.ts",
     "check:upload-storage": "tsx --env-file-if-exists=.env.local scripts/check-upload-storage.ts",
     "check:upload-s3": "tsx --env-file-if-exists=.env.local scripts/check-upload-s3.ts",
