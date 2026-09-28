@@ -5,8 +5,6 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const output = join(root, "public/openapi.json");
 const uuid = { type: "string", format: "uuid" };
-const opaque = { type: "object", additionalProperties: true,
-  description: "See the linked repository guide for the full versioned response contract." };
 const ref = name => ({ $ref: `#/components/schemas/${name}` });
 const query = (name, schema, description) => ({ name, in: "query", required: false, schema, description });
 const header = (name, schema, description) => ({ name, in: "header", required: true, schema, description });
@@ -18,8 +16,9 @@ const paths = {};
 
 function add(path, method, operationId, summary, options = {}) {
   if (paths[path]?.[method]) throw new Error(`Duplicate OpenAPI operation: ${method} ${path}`);
-  const { status = 200, schema = opaque, type = "application/json", body, params = [],
+  const { status = 200, schema, type = "application/json", body, params = [],
     auth = "registered user", details = "", extra = {} } = options;
+  if (status !== 204 && !schema) throw new Error(`Missing OpenAPI success schema: ${method} ${path}`);
   const tag = path.split("/")[3];
   const pathParams = [...path.matchAll(/\{([^}]+)\}/g)].map(([, name]) => ({
     name, in: "path", required: true, schema: uuid,
@@ -67,7 +66,8 @@ add("/api/v1/records/creation/{key}", "get", "getRecordCreation", "Recover keyed
 });
 
 add("/api/v1/account/profile", "get", "getAccountProfile", "Read selected account profile fields", {
-  auth: accountAuth, details: "Returns selected Supabase Auth profile fields, excluding credentials, sessions and MFA factors. See docs/data-access.md.",
+  schema: ref("AccountProfile"), auth: accountAuth,
+  details: "Returns selected Supabase Auth profile fields, excluding credentials, sessions and MFA factors. See docs/data-access.md.",
 });
 add("/api/v1/account/preferences", "get", "getAccountPreferences", "Read account preferences", {
   schema: ref("AccountPreferences"), auth: accountAuth,
@@ -85,12 +85,12 @@ add("/api/v1/conversations", "get", "listConversations", "List owner conversatio
   params: [limit(50, 20), query("archived", { type: "boolean", default: false }, "Include archived instead of active conversations"), cursor],
 });
 add("/api/v1/conversations", "post", "createConversation", "Start an owned agent conversation", {
-  status: 202, body: jsonBody(ref("ConversationCreate")), auth: `${accountAuth}; enabled account chat required`,
+  status: 202, schema: ref("ConversationStarting"), body: jsonBody(ref("ConversationCreate")), auth: `${accountAuth}; enabled account chat required`,
   details: "A 202 result is still starting; recover by operation ID without redispatching. A previously bound operation returns 200. See docs/account-chat.md.",
-  extra: { 200: { description: "Existing active operation", content: { "application/json": { schema: opaque } } } },
+  extra: { 200: { description: "Existing active operation", content: { "application/json": { schema: ref("ConversationActive") } } } },
 });
 add("/api/v1/conversations/{operationId}", "get", "getConversationStart", "Read conversation creation status", {
-  auth: `${accountAuth}; enabled account chat required`,
+  schema: ref("ConversationCreation"), auth: `${accountAuth}; enabled account chat required`,
 });
 add("/api/v1/conversations/{operationId}", "patch", "updateConversation", "Edit conversation metadata by revision", {
   schema: ref("ConversationSummary"), body: jsonBody(ref("ConversationPatch")), auth: accountAuth,
@@ -99,22 +99,25 @@ add("/api/v1/conversations/{operationId}/metadata", "get", "getConversationMetad
   schema: ref("ConversationSummary"), auth: accountAuth,
 });
 add("/api/v1/conversations/{operationId}/runs", "get", "listConversationRuns", "List saved run summaries", {
-  auth: accountAuth, params: [limit(50, 20), query("after", { type: "integer", minimum: 0 }, "Last run index")],
+  schema: ref("RunPage"), auth: accountAuth,
+  params: [limit(50, 20), query("after", { type: "integer", minimum: 0 }, "Last run index")],
 });
 add("/api/v1/conversations/{operationId}/events", "get", "listConversationEvents", "List saved stream projections", {
-  auth: accountAuth, params: [limit(50, 20), query("after", { type: "integer", minimum: 0 }, "Last ingestion index")],
+  schema: ref("ProjectionPage"), auth: accountAuth,
+  params: [limit(50, 20), query("after", { type: "integer", minimum: 0 }, "Last ingestion index")],
 });
 add("/api/v1/conversations/{operationId}/source-events", "get", "listConversationSourceEvents", "Read retained Eve source events", {
-  auth: `${accountAuth}; enabled account chat required`,
-  params: [query("startIndex", { type: "integer", minimum: 0, default: 0 }, "Absolute source index"), limit(50, 20)],
+  schema: ref("SourceEventPage"), auth: `${accountAuth}; enabled account chat required`,
+  params: [query("startIndex", { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 250, default: 0 }, "Absolute source index"), limit(50, 20)],
   details: "Absolute source order includes interrupted attempts and is not canonical model history. See docs/conversation-projections.md.",
 });
 add("/api/v1/conversations/{operationId}/reconcile", "post", "reconcileConversation", "Reconcile saved projections from Eve", {
-  auth: `${accountAuth}; enabled account chat required`, body: jsonBody({ type: "object", additionalProperties: false,
-    properties: { resume: { type: "boolean" }, startIndex: { type: "integer", minimum: 0 } } }),
+  schema: ref("ReconcileResult"), auth: `${accountAuth}; enabled account chat required`, body: jsonBody({ type: "object", additionalProperties: false,
+    properties: { resume: { type: "boolean" }, startIndex: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 250 } },
+    not: { required: ["resume", "startIndex"], properties: { resume: { const: true } } } }),
 });
 add("/api/v1/conversations/{operationId}/cancel-start", "post", "cancelConversationStart", "Cancel an unbound conversation start", {
-  auth: `${accountAuth}; enabled account chat required`,
+  schema: ref("CancelledStart"), auth: `${accountAuth}; enabled account chat required`,
   details: "Only an unbound start can settle at verified zero. Active or ambiguous work is not refunded. See docs/account-chat.md.",
 });
 
@@ -173,7 +176,7 @@ add("/api/v1/uploads/{id}/download", "get", "downloadUpload", "Download fresh-sc
   params: [query("grant", { type: "string" }, "Optional 60-second owner-bound download grant")],
 });
 add("/api/v1/uploads/{id}/download-link", "post", "createUploadDownloadLink", "Create a short-lived owner download link", {
-  auth: `${uploadAuth}: uploads:download`, body: emptyBody,
+  schema: ref("UploadDownloadLink"), auth: `${uploadAuth}: uploads:download`, body: emptyBody,
 });
 
 add("/api/v1/usage", "get", "getUsage", "Read the current owner budget view", {
@@ -192,6 +195,13 @@ const timestamp = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGE
 const sha256 = { type: "string", pattern: "^[a-f0-9]{64}$" };
 const micros = { type: "integer", minimum: 0, maximum: 1_000_000_000_000 };
 const pageCursor = { type: ["string", "null"], pattern: "^[0-9]{1,16}\\.[a-f0-9-]{36}$" };
+const sourceIndex = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER };
+const nullableSourceIndex = { type: ["integer", "null"], minimum: 0, maximum: Number.MAX_SAFE_INTEGER };
+const projectionProperties = { schemaVersion: { const: 1 },
+  eventId: { type: "string", pattern: "^evt_[0-9A-HJKMNP-TV-Z]{26}$" },
+  at: { type: "string", format: "date-time" }, turnId: { type: "string", minLength: 1, maxLength: 512 },
+  sequence: sourceIndex, stepIndex: { type: "integer", minimum: 0 }, payload: ref("ProjectionPayload") };
+const projectionRequired = ["schemaVersion", "eventId", "at", "turnId", "sequence", "payload"];
 const recordInput = { type: "object", additionalProperties: false,
   required: ["title", "content"], properties: { title: { ...string(200), minLength: 1 }, content: string(32000) } };
 const components = {
@@ -229,13 +239,37 @@ const components = {
         theme: { enum: ["system", "light", "dark"] }, soundEnabled: { type: "boolean" },
         soundVolume: { type: "number", minimum: 0, maximum: 1 } },
       anyOf: [{ required: ["theme"] }, { required: ["soundEnabled"] }, { required: ["soundVolume"] }] },
+    AccountProfile: { type: "object", additionalProperties: false,
+      description: "Selected Supabase Auth fields; provider metadata may contain private user-supplied values.",
+      required: ["id", "email", "phone", "createdAt", "updatedAt", "lastSignInAt", "emailConfirmedAt", "phoneConfirmedAt", "providers", "userMetadata"],
+      properties: { id: uuid, email: { type: ["string", "null"] }, phone: { type: ["string", "null"] },
+        createdAt: { type: "string", minLength: 1 }, updatedAt: { type: ["string", "null"] },
+        lastSignInAt: { type: ["string", "null"] }, emailConfirmedAt: { type: ["string", "null"] },
+        phoneConfirmedAt: { type: ["string", "null"] },
+        providers: { type: "array", maxItems: 20, items: { type: "string" } },
+        userMetadata: { type: "object", additionalProperties: true } } },
     RequestLimitSnapshot: { type: "object", additionalProperties: false, required: ["snapshot"],
       properties: { snapshot: { oneOf: [{ type: "null" }, { type: "object", additionalProperties: false,
         required: ["windowStartAt", "admitted"], properties: { windowStartAt: { type: "string", format: "date-time" },
           admitted: { type: "integer", minimum: 1, maximum: 10000 } } }] } } },
-    ConversationCreate: { type: "object", additionalProperties: false, required: ["operationId", "message"],
-      properties: { operationId: uuid, message: { type: "string", minLength: 1, maxLength: 32000 },
-        mode: { const: "structured-record" } } },
+    ConversationCreate: { oneOf: [
+      { type: "object", additionalProperties: false, required: ["operationId", "message"],
+        properties: { operationId: uuid, message: { type: "string", minLength: 1, maxLength: 32000 } } },
+      { type: "object", additionalProperties: false, required: ["operationId", "message", "mode"],
+        properties: { operationId: uuid, message: { type: "string", minLength: 1, maxLength: 32000 },
+          mode: { const: "structured-record" } } },
+    ] },
+    ConversationStarting: { type: "object", additionalProperties: false,
+      required: ["conversationId", "operationId", "status", "sessionId"],
+      properties: { conversationId: uuid, operationId: uuid, status: { const: "starting" }, sessionId: { type: "null" } } },
+    ConversationActive: { type: "object", additionalProperties: false,
+      required: ["conversationId", "operationId", "status", "sessionId"],
+      properties: { conversationId: uuid, operationId: uuid, status: { const: "active" },
+        sessionId: { type: "string", minLength: 1, maxLength: 512 } } },
+    ConversationCreation: { oneOf: [ref("ConversationStarting"), ref("ConversationActive")] },
+    CancelledStart: { type: "object", additionalProperties: false,
+      required: ["conversationId", "operationId", "status"],
+      properties: { conversationId: uuid, operationId: uuid, status: { const: "cancelled" } } },
     ConversationPatch: { type: "object", additionalProperties: false, required: ["revision"],
       properties: { revision: { type: "integer", minimum: 1 }, title: { type: "string", minLength: 1, maxLength: 120 },
         archived: { type: "boolean" } }, anyOf: [{ required: ["title"] }, { required: ["archived"] }] },
@@ -246,6 +280,66 @@ const components = {
         status: { enum: ["starting", "active", "revoked"] } } },
     ConversationPage: { type: "object", additionalProperties: false, required: ["items", "nextCursor"],
       properties: { items: { type: "array", items: ref("ConversationSummary") }, nextCursor: pageCursor } },
+    RunView: { type: "object", additionalProperties: false,
+      required: ["turnId", "firstIndex", "state", "startedAt", "lastBoundaryAt", "lastSourceIndex", "code", "boundarySourceIndex", "unindexedFacts", "models", "boundaryCount", "unindexedBoundaries", "coverage"],
+      properties: { turnId: { type: "string", minLength: 1, maxLength: 512 }, firstIndex: { type: "integer", minimum: 1 },
+        state: { enum: ["unverified", "running", "completed", "failed", "cancelled"] },
+        startedAt: { type: ["string", "null"], format: "date-time" },
+        lastBoundaryAt: { type: ["string", "null"], format: "date-time" },
+        lastSourceIndex: nullableSourceIndex, code: { type: ["string", "null"], maxLength: 100 },
+        boundarySourceIndex: nullableSourceIndex, unindexedFacts: { type: "integer", minimum: 0 },
+        models: { type: "array", items: { type: "string", maxLength: 200 } },
+        boundaryCount: { type: "integer", minimum: 0 }, unindexedBoundaries: { type: "integer", minimum: 0 },
+        coverage: { type: "object", additionalProperties: false, required: ["checkpoint", "indexComplete"],
+          properties: { checkpoint: sourceIndex, indexComplete: { type: "boolean" } } } } },
+    RunPage: { type: "object", additionalProperties: false,
+      required: ["schemaVersion", "source", "items", "nextCursor"],
+      properties: { schemaVersion: { const: 1 }, source: { const: "eve-run-boundaries" },
+        items: { type: "array", items: ref("RunView") },
+        nextCursor: { type: ["integer", "null"], minimum: 1 } } },
+    ProjectionPayload: { oneOf: [
+      { type: "object", additionalProperties: false, required: ["kind", "modelId"],
+        properties: { kind: { const: "model" }, modelId: { type: "string", minLength: 1, maxLength: 200 } } },
+      { type: "object", additionalProperties: false, required: ["kind", "state"],
+        properties: { kind: { const: "run" }, state: { enum: ["running", "completed", "failed", "cancelled"] },
+          code: { type: "string", maxLength: 100 } } },
+      { type: "object", additionalProperties: false, required: ["kind", "role", "parts"],
+        properties: { kind: { const: "message" }, role: { enum: ["user", "assistant"] },
+          parts: { type: "array", items: { oneOf: [
+            { type: "object", additionalProperties: false, required: ["type", "text"],
+              properties: { type: { const: "text" }, text: { type: "string" } } },
+            { type: "object", additionalProperties: false, required: ["type", "mediaType"],
+              properties: { type: { const: "file" }, filename: { type: "string" },
+                mediaType: { type: "string" }, size: { type: "number", minimum: 0 } } },
+          ] } }, finishReason: { type: "string", maxLength: 100 } } },
+      { type: "object", additionalProperties: false, required: ["kind", "phase", "value"],
+        properties: { kind: { const: "tool" }, phase: { enum: ["requested", "result"] }, value: {} } },
+      { type: "object", additionalProperties: false, required: ["kind", "value"],
+        properties: { kind: { const: "result" }, value: {} } },
+      { type: "object", additionalProperties: false, required: ["kind", "action"],
+        properties: { kind: { const: "context" }, action: { enum: ["cleared", "compacted"] } } },
+      { type: "object", additionalProperties: false, required: ["kind", "eventType", "reason"],
+        properties: { kind: { const: "omitted" }, eventType: { type: "string", maxLength: 100 }, reason: { const: "size_limit" } } },
+    ] },
+    ProjectionPage: { type: "object", additionalProperties: false,
+      required: ["schemaVersion", "source", "items", "nextCursor"],
+      properties: { schemaVersion: { const: 1 }, source: { const: "eve-stream" },
+        items: { type: "array", items: { type: "object", additionalProperties: false,
+          required: [...projectionRequired, "ingestionIndex"],
+          properties: { ...projectionProperties, ingestionIndex: { type: "integer", minimum: 1 },
+            sourceIndex } } }, nextCursor: { type: ["integer", "null"], minimum: 1 } } },
+    SourceEventPage: { type: "object", additionalProperties: false,
+      required: ["schemaVersion", "source", "items", "scanned", "nextIndex", "complete"],
+      properties: { schemaVersion: { const: 1 }, source: { const: "eve-durable-stream" },
+        items: { type: "array", items: { type: "object", additionalProperties: false,
+          required: [...projectionRequired, "sourceIndex"], properties: { ...projectionProperties, sourceIndex } } },
+        scanned: sourceIndex, nextIndex: sourceIndex, complete: { type: "boolean" } } },
+    ReconcileResult: { type: "object", additionalProperties: false,
+      required: ["processed", "inserted", "duplicates", "nextIndex", "complete", "checkpoint"],
+      properties: { processed: { type: "integer", minimum: 0, maximum: 250 },
+        inserted: { type: "integer", minimum: 0, maximum: 250 },
+        duplicates: { type: "integer", minimum: 0, maximum: 250 },
+        nextIndex: sourceIndex, complete: { type: "boolean" }, checkpoint: sourceIndex } },
     ArtifactPatch: { type: "object", additionalProperties: false,
       description: "Revision-checked artifact title/content replacement; see docs/approved-artifacts.md.",
       required: ["revision", "title", "content"], properties: { revision: { type: "integer", minimum: 1, maximum: 100 },
@@ -295,6 +389,10 @@ const components = {
       properties: { id: uuid, sha256, reviewRevision: { type: "integer", minimum: 0, maximum: 2_147_483_647 },
         mediaType: { const: "text/plain" }, text: { type: "string", minLength: 1, maxLength: 32 * 1024 },
         trust: { const: "untrusted-user-content" } } },
+    UploadDownloadLink: { type: "object", additionalProperties: false, required: ["url", "expiresAt"],
+      properties: { url: { type: "string", maxLength: 300,
+        description: "Owner-bound relative application URL; redemption still requires current credentials and a fresh scan." },
+        expiresAt: timestamp } },
     UsageView: { type: "object", additionalProperties: false,
       required: ["day", "reservedMicros", "chargedMicros", "active", "recent", "unknownCosts", "dailyLimitMicros"],
       properties: { day: { type: "integer", minimum: 0 }, reservedMicros: { type: "integer", minimum: 0 },
