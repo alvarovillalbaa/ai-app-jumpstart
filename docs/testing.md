@@ -10,6 +10,7 @@
 
 | Command | Coverage | Requirements |
 | --- | --- | --- |
+| `npm run check:docs` | Checks local paths and Markdown heading anchors across the public root guides and `docs/`; CI runs it on every PR | Node 24; no network or credentials. It does not validate external URLs or rendered-page behavior |
 | `npm test` | SQLite, Convex emulator, HTTP isolation/errors, SDK MCP, CLI CRUD/seed and private paged export, upload byte validation, private blob semantics, atomic SQLite quota/intake, bounded authenticated upload HTTP, ClamAV Unix-socket protocol and fail-closed scan-before-storage using a daemon fixture, CLI/MCP metadata and deletion, DOM behavior, ANSI compatibility, arithmetic validation | No external services |
 | `npm run test:quickstart` | New local clone of committed HEAD; untouched lockfile, fresh install/cache, documented SQLite defaults and generated keys, types/lint/tests, Next/Eve production build/start, seed reruns, restart persistence, two-owner browser/REST/CLI/MCP, closed production chat and deterministic AI evals; rejects tracked source changes | macOS/Linux, Git, Node 24, network for pinned npm packages, installed Chromium; no Docker, hosted credentials or paid model |
 | `npm run db:backup:sqlite -- --source SOURCE.sqlite --output NEW_BACKUP.sqlite` | Consistent private application SQLite backup, including live WAL pages; focused test restores and writes to the snapshot and checks no-clobber/failure cleanup | Node 24, initialized SQLite application database, new destination in a private directory; no network |

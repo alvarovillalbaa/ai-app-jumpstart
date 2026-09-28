@@ -67,7 +67,7 @@ The CLI can also create a private, paged [export of visible application data](do
 
 Run `npm run db:migrate -- --dry-run` with the target `DATABASE_URL` to review pending SQL, then run `npm run db:migrate` after backup review and before PostgreSQL/Supabase use. Remote migrations never run per request. SQLite is not for ephemeral serverless or shared network filesystems. Application data and Eve workflow storage are separate; self-hosted PostgreSQL deployments can create a [stopped recovery set](docs/postgres-recovery.md) containing both database archives and their local private upload files, then rehearse restoration.
 
-Read [database setup](docs/databases.md), [hosting](docs/hosting.md), [operations](docs/operations.md), and [testing](docs/testing.md).
+Read [database setup](docs/databases.md), [hosting](docs/hosting.md), [operations](docs/operations.md), [upgrading](docs/upgrading.md), and [testing](docs/testing.md).
 
 The [account data inventory](docs/account-data-inventory.md) classifies owner-linked tables across all four data providers, includes backend-only row and private-object inspection across the supported providers, a combined fail-closed closure observation, raw application-row and private-object exports with an optional jointly verified account bundle and isolated SQLite/local restore rehearsal, permanent backend-only application-row write fences, and the work still needed for full erasure. The [runtime retention guide](docs/runtime-retention.md) covers native purge-on-finish configuration, build/runtime checks and its limits; replayable account chat requires default retention. The [extension recipes](docs/extending.md) show where to add a tool, model, connection, schema change or UI route. The [private upload guide](docs/uploads.md) describes the quarantine browser/API/CLI/MCP surface, opt-in scanned owner downloads including the [remote scanner contract](docs/remote-upload-scanner.md), and remaining release-policy and agent-attachment work. [Authenticated request limits](docs/request-limits.md) share per-owner quotas across browser, REST, CLI and MCP on every data provider; the environment example enables 120 per UTC minute. [Runtime diagnostics](docs/runtime-observability.md) use native Eve metadata-only instrumentation, signed creation correlation and replaceable observability destinations.
 
@@ -76,6 +76,7 @@ The [account data inventory](docs/account-data-inventory.md) classifies owner-li
 ```sh
 npm run typecheck
 npm run lint
+npm run check:docs
 npm test
 npm run test:providers
 npm run test:postgres-backup
