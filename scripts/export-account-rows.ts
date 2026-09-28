@@ -35,7 +35,7 @@ function allRows() {
   return accountDataInventory.filter(entry => entry.owner !== "global-expiring" && entry.owner !== "closure-control");
 }
 
-function sqliteRowJson(row: Record<string,unknown>) {
+export function sqliteRowJson(row: Record<string,unknown>) {
   // Keep every int64 exact. Node's default SQLite conversion can round large integers.
   return JSON.stringify(row,(_key,value: unknown) => typeof value === "bigint"
     ? { $sqliteInt64: value.toString() } : value instanceof Uint8Array

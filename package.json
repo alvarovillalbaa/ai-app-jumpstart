@@ -85,6 +85,8 @@
     "account:export:rows": "tsx scripts/export-account-rows.ts",
     "account:export:bundle": "tsx scripts/export-account-bundle.ts",
     "account:verify:bundle": "tsx scripts/export-account-bundle.ts --verify",
+    "account:rehearse:bundle": "tsx scripts/rehearse-account-bundle.ts",
+    "account:verify:rehearsal": "tsx scripts/rehearse-account-bundle.ts --verify",
     "account:verify:rows": "tsx scripts/export-account-rows.ts --verify",
     "account:fence:rows": "tsx scripts/fence-account-writes.ts",
     "cloud:migration-job": "tsx scripts/create-migration-job.ts",

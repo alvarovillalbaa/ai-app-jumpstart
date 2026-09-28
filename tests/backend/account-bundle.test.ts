@@ -12,11 +12,13 @@ import { SqliteRepository } from "../../lib/data/sqlite";
 import { sqliteAccessStore } from "../../lib/agent-access/sqlite";
 import { sqliteBudgetStore } from "../../lib/budgets/sqlite";
 import { sqliteUploadCatalog } from "../../lib/uploads/catalog-sqlite";
+import { uploadObjectKey } from "../../lib/uploads/contract";
 import { localUploadObjects } from "../../lib/uploads/local";
 import { sqlitePreferenceStore } from "../../lib/preferences/sqlite";
 import { sqliteRequestLimitStore } from "../../lib/request-limits/sqlite";
 import { exportAccountBundle,verifyAccountBundle } from "../../scripts/export-account-bundle";
 import { setConvexAccountFence,setSqliteAccountFence } from "../../scripts/fence-account-writes";
+import { rehearseAccountBundle,verifyRehearsedAccountBundle } from "../../scripts/rehearse-account-bundle";
 
 const alice = { tenant: "bundle-tenant",subject: "bundle-alice" };
 const bob = { ...alice,subject: "bundle-bob" };
@@ -43,6 +45,9 @@ it("bundles fenced owner rows and private bytes, preserving object orphans and r
       db.prepare("INSERT INTO app_uploads VALUES(?,?,?,?,?,?,?,?,?)")
         .run(foreignId,bob.tenant,bob.subject,"bob.txt","text/plain",bytes.length,
           createHash("sha256").update(bytes).digest("hex"),1,"quarantined");
+      db.prepare("INSERT INTO app_budget_reservations(operation_id,tenant,subject,request_hash,policy_id,estimate_micros,day,created_at,status) VALUES(?,?,?,?,?,?,?,?,?)")
+        .run("alice-operation",alice.tenant,alice.subject,"hash","policy",BigInt("9007199254740993"),1,1,"reserved");
+      db.prepare("INSERT INTO app_budget_attempts VALUES('alice-operation','alice-attempt')").run();
     } finally { db.close(); }
     const objects = localUploadObjects(root);
     await objects.put(alice,id,bytes);
@@ -54,9 +59,9 @@ it("bundles fenced owner rows and private bytes, preserving object orphans and r
       .rejects.toThrow("inside its object source");
     expect(readdirSync(root)).not.toContain("nested");
     await expect(exportAccountBundle("sqlite","local",alice,output,env))
-      .resolves.toEqual({ metadataProvider: "sqlite",objectProvider: "local",rows: 2,objects: 2,
+      .resolves.toEqual({ metadataProvider: "sqlite",objectProvider: "local",rows: 4,objects: 2,
         catalog: { catalogRows: 1,activeRows: 1,objectOrphans: 1,transitionalWithoutBytes: 0 } });
-    expect(await verifyAccountBundle(output)).toMatchObject({ rows: 2,objects: 2 });
+    expect(await verifyAccountBundle(output)).toMatchObject({ rows: 4,objects: 2 });
     expect(readdirSync(output).sort()).toEqual(["manifest.json","objects.ndjson","rows.ndjson"]);
     expect(statSync(output).mode & 0o077).toBe(0);
     for (const name of readdirSync(output)) expect(statSync(join(output,name)).mode & 0o077).toBe(0);
@@ -65,14 +70,65 @@ it("bundles fenced owner rows and private bytes, preserving object orphans and r
     expect(content).toContain(orphan);
     expect(content).not.toContain("Bob private record");
     expect(content).not.toContain(foreignId);
+    const restored = join(dir,"restored");
+    await expect(rehearseAccountBundle(output,restored)).resolves.toEqual({
+      provider: "sqlite",rows: 4,objects: 2,status: "fenced-rehearsal" });
+    await expect(verifyRehearsedAccountBundle(output,restored)).resolves.toMatchObject({ rows: 4,objects: 2 });
+    const rehearsalDb = new DatabaseSync(join(restored,"app.sqlite"));
+    try {
+      expect(rehearsalDb.prepare("SELECT content FROM app_records WHERE tenant=? AND subject=?")
+        .get(alice.tenant,alice.subject)).toEqual({ content: "Alice private record" });
+      expect(rehearsalDb.prepare("SELECT count(*) AS count FROM app_records WHERE subject=?")
+        .get(bob.subject)).toEqual({ count: 0 });
+      const amount = rehearsalDb.prepare("SELECT estimate_micros FROM app_budget_reservations WHERE operation_id='alice-operation'");
+      amount.setReadBigInts(true);
+      expect(amount.get()).toEqual({ estimate_micros: BigInt("9007199254740993") });
+      expect(rehearsalDb.prepare("SELECT attempt_id FROM app_budget_attempts WHERE operation_id='alice-operation'")
+        .get()).toEqual({ attempt_id: "alice-attempt" });
+      expect(() => rehearsalDb.prepare("INSERT INTO app_records VALUES('late',?,?,'Late','No',1,'now','now')")
+        .run(alice.tenant,alice.subject)).toThrow("fenced");
+    } finally { rehearsalDb.close(); }
+    expect(await localUploadObjects(join(restored,"uploads")).get(alice,id)).toEqual(bytes);
+    expect(await localUploadObjects(join(restored,"uploads")).get(alice,orphan))
+      .toEqual(Buffer.from("orphan private bytes"));
+    const verifyCli = spawnSync(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/rehearse-account-bundle.ts",
+      "--verify",output,restored],{ cwd: process.cwd(),encoding: "utf8" });
+    expect(verifyCli.status).toBe(0);
+    expect(JSON.parse(verifyCli.stdout)).toMatchObject({ rows: 4,objects: 2 });
+    const cliRestored = join(dir,"cli-restored");
+    const restoreCli = spawnSync(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/rehearse-account-bundle.ts",
+      "--source",output,"--output",cliRestored],{ cwd: process.cwd(),encoding: "utf8" });
+    expect(restoreCli.status).toBe(0);
+    expect(JSON.parse(restoreCli.stdout)).toMatchObject({ rows: 4,objects: 2,status: "fenced-rehearsal" });
+    await expect(verifyRehearsedAccountBundle(output,cliRestored)).resolves.toMatchObject({ rows: 4,objects: 2 });
+    const unguarded = new DatabaseSync(join(cliRestored,"app.sqlite"));
+    try { unguarded.exec("DROP TRIGGER app_records_account_fence_insert"); }
+    finally { unguarded.close(); }
+    await expect(verifyRehearsedAccountBundle(output,cliRestored)).rejects.toThrow("fence guards differ");
+    const extra = new DatabaseSync(join(restored,"app.sqlite"));
+    try { extra.prepare("INSERT INTO app_records VALUES('foreign',?,?,'Foreign','No',1,'now','now')")
+      .run(bob.tenant,bob.subject); }
+    finally { extra.close(); }
+    await expect(verifyRehearsedAccountBundle(output,restored)).rejects.toThrow("foreign application rows");
+    const cleanup = new DatabaseSync(join(restored,"app.sqlite"));
+    try { cleanup.prepare("DELETE FROM app_records WHERE id='foreign'").run(); }
+    finally { cleanup.close(); }
+    const restoredPath = join(restored,"uploads",uploadObjectKey(alice,id));
+    writeFileSync(restoredPath,Buffer.from("altered bytes"));
+    await expect(verifyRehearsedAccountBundle(output,restored)).rejects.toThrow("object bytes differ");
+    writeFileSync(restoredPath,bytes);
+    await expect(verifyRehearsedAccountBundle(output,restored)).resolves.toMatchObject({ rows: 4,objects: 2 });
+    await expect(rehearseAccountBundle(output,restored)).rejects.toThrow();
+    await expect(rehearseAccountBundle(output,join(output,"nested"))).rejects.toThrow("outside the bundle");
     await expect(exportAccountBundle("sqlite","local",alice,output,env)).rejects.toThrow();
     const offline = spawnSync(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/export-account-bundle.ts",
       "--verify",output],{ cwd: process.cwd(),encoding: "utf8" });
     expect(offline.status).toBe(0);
-    expect(JSON.parse(offline.stdout)).toMatchObject({ rows: 2,objects: 2 });
+    expect(JSON.parse(offline.stdout)).toMatchObject({ rows: 4,objects: 2 });
     const archive = join(output,"objects.ndjson");
     writeFileSync(archive,readFileSync(archive,"utf8").replace(orphan,randomUUID()),{ mode: 0o600 });
     await expect(verifyAccountBundle(output)).rejects.toThrow("hashes or sizes differ");
+    await expect(verifyRehearsedAccountBundle(output,restored)).rejects.toThrow("hashes or sizes differ");
     chmodSync(archive,0o644);
     await expect(verifyAccountBundle(output)).rejects.toThrow("unsafe archive");
 
