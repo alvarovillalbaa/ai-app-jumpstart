@@ -76,7 +76,8 @@ async function postgres(url: string,owner: AccessOwner,expected: Expected,execut
     await client.query(`LOCK TABLE ${[...tables,"public.app_internal_nonces","app_private.account_fences"].join(",")} IN ACCESS EXCLUSIVE MODE`);
     const actualTables = (await client.query<{ tablename: string }>("SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename ~ '^app_'"))
       .rows.map(row => row.tablename);
-    const classified = new Set(accountDataInventory.filter(entry => entry.sql?.startsWith("app_")).map(entry => entry.sql));
+    const classified = new Set(accountDataInventory.filter(entry => entry.sql?.startsWith("app_") &&
+      !entry.sql.includes(".")).map(entry => entry.sql));
     if (classified.size !== actualTables.filter(table => table !== "app_migrations").length ||
         actualTables.some(table => table !== "app_migrations" && !classified.has(table)))
       throw new Error("PostgreSQL application schema differs from the account inventory.");
