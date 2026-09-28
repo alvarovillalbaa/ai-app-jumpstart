@@ -38,6 +38,50 @@ async function cliJson(origin, token, args) {
   return JSON.parse(stdout);
 }
 
+function checkedRequestWindow(value) {
+  assert.ok(value && typeof value === "object" && !Array.isArray(value), "Request-window response is invalid");
+  assert.deepEqual(Object.keys(value), ["snapshot"], "Request-window response has unexpected fields");
+  const snapshot = value.snapshot;
+  assert.ok(snapshot && typeof snapshot === "object" && !Array.isArray(snapshot), "Active request admission has no owner window");
+  assert.deepEqual(Object.keys(snapshot).sort(), ["admitted", "windowStartAt"], "Request window has unexpected fields");
+  const bucket = Date.parse(snapshot.windowStartAt);
+  assert.ok(Number.isSafeInteger(bucket) && bucket % 60_000 === 0 &&
+    new Date(bucket).toISOString() === snapshot.windowStartAt, "Request-window timestamp is invalid");
+  assert.ok(Number.isSafeInteger(snapshot.admitted) && snapshot.admitted >= 1 && snapshot.admitted <= 10_000,
+    "Request-window admitted count is invalid");
+  return snapshot;
+}
+
+async function runRequestLimitSmoke({ request, origin, token, authorized, other, protection }) {
+  const read = async headers => {
+    const response = await request("/api/v1/account/request-limit", { headers });
+    assert.equal(response.status, 200, "Registered-user request-window read failed");
+    return checkedRequestWindow(await response.json());
+  };
+  let advanced = false;
+  for (let attempt = 0; attempt < 3 && !advanced; attempt++) {
+    const before = await read(authorized),after = await read(authorized);
+    if (before.windowStartAt === after.windowStartAt) {
+      assert.ok(after.admitted > before.admitted, "Authenticated request admission did not advance");
+      advanced = true;
+    }
+  }
+  assert.ok(advanced, "Request window crossed the UTC minute during all admission checks");
+  await read(other);
+  checkedRequestWindow(await cliJson(origin,token,["account","request-limit"]));
+  const client = new Client({ name: "hosted-request-limit-smoke",version: "1" });
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${origin}/api/mcp`), {
+      requestInit: { headers: { ...protection,...authorized } },
+    }));
+    const tool = await client.callTool({ name: "account_request_limit",arguments: {} });
+    assert.notEqual(tool.isError,true,"MCP request-window read failed");
+    checkedRequestWindow(JSON.parse(tool.content[0].text));
+    const resource = await client.readResource({ uri: "account:///request-limit" });
+    checkedRequestWindow(JSON.parse(resource.contents[0].text));
+  } finally { await client.close(); }
+}
+
 async function runUploadSmoke({ request, origin, token, otherToken, protection, authorized, other, ownerClient, download }) {
   const marker = randomUUID(), name = `hosted-smoke-${marker}.txt`;
   const bytes = Buffer.from(`Private hosted upload smoke ${marker}\n`);
@@ -275,9 +319,9 @@ async function runAgentSmoke({ origin, token, otherToken, protection, request })
 }
 
 /**
- * @param {{url: string,token: string,otherToken: string,accounts?: boolean,agent?: boolean,browser?: boolean,accountBrowser?: boolean,uploads?: boolean,uploadDownload?: boolean,browserAccounts?: import("./helpers/hosted-account-browser.mjs").AccountBrowserCredentials}} options
+ * @param {{url: string,token: string,otherToken: string,accounts?: boolean,agent?: boolean,browser?: boolean,accountBrowser?: boolean,requestLimit?: boolean,uploads?: boolean,uploadDownload?: boolean,browserAccounts?: import("./helpers/hosted-account-browser.mjs").AccountBrowserCredentials}} options
  */
-export async function runHostedSmoke({ url, token, otherToken, accounts = false, agent = false, browser = false,accountBrowser = false,uploads = false,uploadDownload = false,browserAccounts }) {
+export async function runHostedSmoke({ url, token, otherToken, accounts = false, agent = false, browser = false,accountBrowser = false,requestLimit = false,uploads = false,uploadDownload = false,browserAccounts }) {
   const origin = targetOrigin(url);
   if (agent && !accounts) throw new Error("Agent smoke requires the two-account mode.");
   if (!token || !otherToken || token === otherToken) throw new Error("Set distinct APP_API_TOKEN and APP_API_OTHER_TOKEN with record read/write access for different owners.");
@@ -317,6 +361,7 @@ export async function runHostedSmoke({ url, token, otherToken, accounts = false,
       assert.ok((await usage.json()).dailyLimitMicros > 0, "Account budget policy is unavailable");
     }
   }
+  if (requestLimit) await runRequestLimitSmoke({ request,origin,token,authorized,other,protection });
 
   const creationKey = randomUUID(), title = `Hosted smoke ${randomUUID()}`;
   const recordInput = { title, content: "Portable REST, CLI and MCP acceptance check." };
@@ -415,20 +460,20 @@ export async function runHostedSmoke({ url, token, otherToken, accounts = false,
   if (cleanupFailure) throw cleanupFailure;
   const agentResult = agent ? await runAgentSmoke({ origin, token, otherToken, protection, request }) : undefined;
   if (checkedAccounts && agentResult) await accountBrowserRead({ origin,protection,accounts: checkedAccounts,operationId: agentResult.operationId });
-  return { origin, recordId: record.id, uploadId, agent: agentResult, browser,accountBrowser };
+  return { origin, recordId: record.id, uploadId, agent: agentResult, browser,accountBrowser,requestLimit };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   const flags = new Set(args);
-  if (flags.size !== args.length || args.some(arg => !["--accounts", "--agent", "--browser","--account-browser","--uploads","--upload-download"].includes(arg))) {
-    console.error("Supported options: --accounts (budget access, no model call), --agent (one owned model turn), --browser (token records UI), --account-browser (real sign-in, reload, logout and account isolation), --uploads (private upload isolation and cleanup), --upload-download (also require fresh-scanned exact bytes).");
+  if (flags.size !== args.length || args.some(arg => !["--accounts", "--agent", "--browser","--account-browser","--request-limit","--uploads","--upload-download"].includes(arg))) {
+    console.error("Supported options: --accounts (budget access, no model call), --agent (one owned model turn), --browser (token records UI), --account-browser (real sign-in, reload, logout and account isolation), --request-limit (active registered-owner admission across REST/CLI/MCP), --uploads (private upload isolation and cleanup), --upload-download (also require fresh-scanned exact bytes).");
     process.exitCode = 2;
   } else {
-    const agent = flags.has("--agent"),accountBrowser = flags.has("--account-browser"),accounts = agent || flags.has("--accounts"), browser = flags.has("--browser"),uploadDownload = flags.has("--upload-download"),uploads = flags.has("--uploads") || uploadDownload;
-    runHostedSmoke({ url: process.env.APP_API_URL, token: process.env.APP_API_TOKEN, otherToken: process.env.APP_API_OTHER_TOKEN, accounts, agent, browser,accountBrowser,uploads,uploadDownload,
+    const agent = flags.has("--agent"),accountBrowser = flags.has("--account-browser"),accounts = agent || flags.has("--accounts"), browser = flags.has("--browser"),requestLimit = flags.has("--request-limit"),uploadDownload = flags.has("--upload-download"),uploads = flags.has("--uploads") || uploadDownload;
+    runHostedSmoke({ url: process.env.APP_API_URL, token: process.env.APP_API_TOKEN, otherToken: process.env.APP_API_OTHER_TOKEN, accounts, agent, browser,accountBrowser,requestLimit,uploads,uploadDownload,
       browserAccounts: accountBrowser ? { primary: { email: process.env.APP_SMOKE_EMAIL,password: process.env.APP_SMOKE_PASSWORD },other: { email: process.env.APP_SMOKE_OTHER_EMAIL,password: process.env.APP_SMOKE_OTHER_PASSWORD } } : undefined })
-      .then(({ origin }) => console.log(`Hosted smoke passed for ${origin}: readiness, Eve, web, ${accounts ? "Supabase accounts, " : ""}REST, keyed creation recovery/deletion, owner isolation, CLI and MCP${uploads ? ", private upload and cleanup" : ""}${uploadDownload ? ", fresh-scanned exact download bytes" : ""}${browser ? ", Chromium records UI" : ""}${agent ? ", one owned agent turn and source-stream read" : ""}${accountBrowser ? ", real account sign-in/reload/logout and browser isolation" : ""}.`))
+      .then(({ origin }) => console.log(`Hosted smoke passed for ${origin}: readiness, Eve, web, ${accounts ? "Supabase accounts, " : ""}REST, keyed creation recovery/deletion, owner isolation, CLI and MCP${requestLimit ? ", active owner request admission" : ""}${uploads ? ", private upload and cleanup" : ""}${uploadDownload ? ", fresh-scanned exact download bytes" : ""}${browser ? ", Chromium records UI" : ""}${agent ? ", one owned agent turn and source-stream read" : ""}${accountBrowser ? ", real account sign-in/reload/logout and browser isolation" : ""}.`))
       .catch(error => { console.error(message(error)); process.exitCode = 1; });
   }
 }

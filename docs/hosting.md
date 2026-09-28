@@ -75,6 +75,8 @@ npm run smoke:hosted -- --accounts
 
 This mode additionally requires both tokens to reach the registered-user-only usage endpoint and a configured account budget policy. It makes no model call and creates no conversation. Do not use a service-role key or an application record key as an account token. Use fresh tokens if the Auth session expires.
 
+To verify that a deployed positive `APP_REQUESTS_PER_MINUTE` actually admits and counts registered-user requests, use the same two current account tokens with `npm run smoke:hosted -- --request-limit`. This mode is independent of account chat. It requires two consecutive REST reads in one UTC window to show an advancing count, then checks the owner-window shape through the second account, CLI and MCP tool/resource. It still runs the ordinary record smoke, so use a staging limit with enough capacity for the full run (the example `120` is suitable). Do not use this mode with an intentional `0` opt-out. It does not exhaust a quota or verify a deployed `429` response; the provider and HTTP contracts cover that behavior locally.
+
 After reviewing the staging account's model allowance, run one real owned turn through the same deployed origin:
 
 ```sh
