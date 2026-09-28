@@ -47,6 +47,40 @@ async function run(args, expectedCode = 0, commandEnv = env) {
   child = undefined;
   if (code !== expectedCode || signal) throw new Error(`Database validation failed (${signal ?? code}, expected ${expectedCode}).`);
 }
+async function rehearseMigrationLedgerSearchPath() {
+  const migrationCount = (await readdir(join(root,"migrations"))).filter(name => /^\d+_[a-z0-9_]+\.sql$/.test(name)).length;
+  for (const legacy of [false,true]) {
+    const name = legacy ? "app_legacy_ledger_test" : "app_search_path_test";
+    await database.createDatabase(name);
+    const url = env.DATABASE_URL.replace(/\/app_test$/,`/${name}`);
+    const setup = new Client({ connectionString: url });
+    await setup.connect();
+    try {
+      await setup.query("CREATE SCHEMA auth");
+      if (legacy) await setup.query("CREATE TABLE auth.app_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())");
+      await setup.query(`ALTER DATABASE ${name} SET search_path = auth, public`);
+    } finally { await setup.end(); }
+    await run(["scripts/migrate.ts"],0,{ ...env,DATABASE_URL: url });
+    await run(["scripts/migrate.ts","--dry-run"],0,{ ...env,DATABASE_URL: url });
+    const verify = new Client({ connectionString: url });
+    await verify.connect();
+    try {
+      assert.equal((await verify.query("SELECT to_regclass('public.app_migrations')::text AS name")).rows[0].name,
+        legacy ? null : "app_migrations");
+      assert.equal((await verify.query("SELECT to_regclass('auth.app_migrations')::text AS name")).rows[0].name,
+        legacy ? "app_migrations" : null);
+      const ledger = legacy ? "auth.app_migrations" : "public.app_migrations";
+      assert.equal(Number((await verify.query(`SELECT count(*) AS count FROM ${ledger}`)).rows[0].count),migrationCount);
+      assert.equal((await verify.query("SELECT to_regclass('public.app_records')::text AS name")).rows[0].name,
+        "app_records");
+      if (legacy) {
+        await verify.query("CREATE TABLE public.app_migrations (name text PRIMARY KEY)");
+        await run(["scripts/migrate.ts","--dry-run"],1,{ ...env,DATABASE_URL: url });
+        await verify.query("DROP TABLE public.app_migrations");
+      }
+    } finally { await verify.end(); }
+  }
+}
 async function rehearseUpgrade() {
   // No release tag exists yet. This frozen migration boundary represents a
   // populated schema before the source-index and checkpoint upgrades.
@@ -484,6 +518,7 @@ try {
   await run(["scripts/migrate.ts"]);
   await run(["scripts/migrate.ts"]);
   await run(["scripts/migrate.ts", "--dry-run"]);
+  if (!backupOnly) await rehearseMigrationLedgerSearchPath();
   const driftProbe = new Client({ connectionString: env.DATABASE_URL });
   await driftProbe.connect();
   try {

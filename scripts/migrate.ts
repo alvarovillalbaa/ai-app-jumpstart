@@ -12,13 +12,20 @@ function assertKnownMigrations(applied: Set<string>, available: string[]) {
   const unknown = [...applied].filter(name => !known.has(name));
   if (unknown.length) throw new Error(`Database has applied migrations absent from this checkout: ${unknown.join(", ")}`);
 }
+async function migrationLedger() {
+  const result = await client.query<{ schemaname: string }>(
+    "SELECT schemaname FROM pg_catalog.pg_tables WHERE tablename='app_migrations' AND schemaname NOT IN ('pg_catalog','information_schema') ORDER BY schemaname");
+  if (result.rows.length > 1) throw new Error("Multiple application migration ledgers require investigation.");
+  const schema = result.rows[0]?.schemaname;
+  return schema ? `"${schema.replaceAll('"','""')}".app_migrations` : null;
+}
 try {
   const migrations = (await readdir(new URL("../migrations/", import.meta.url))).filter(name => /^\d+_[a-z0-9_]+\.sql$/.test(name)).sort();
   if (dryRun) {
     await client.query("BEGIN READ ONLY");
-    const exists = await client.query<{ name: string | null }>("SELECT to_regclass('app_migrations')::text AS name");
-    const applied = exists.rows[0]?.name
-      ? new Set((await client.query<{ name: string }>("SELECT name FROM app_migrations")).rows.map(row => row.name))
+    const ledger = await migrationLedger();
+    const applied = ledger
+      ? new Set((await client.query<{ name: string }>(`SELECT name FROM ${ledger}`)).rows.map(row => row.name))
       : new Set<string>();
     assertKnownMigrations(applied, migrations);
     const pending = migrations.filter(name => !applied.has(name));
@@ -28,13 +35,17 @@ try {
   } else {
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock(731829)");
-    await client.query("CREATE TABLE IF NOT EXISTS app_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())");
-    const applied = new Set((await client.query<{ name: string }>("SELECT name FROM app_migrations")).rows.map(row => row.name));
+    let ledger = await migrationLedger();
+    if (!ledger) {
+      await client.query("CREATE TABLE public.app_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())");
+      ledger = "public.app_migrations";
+    }
+    const applied = new Set((await client.query<{ name: string }>(`SELECT name FROM ${ledger}`)).rows.map(row => row.name));
     assertKnownMigrations(applied, migrations);
     for (const name of migrations) {
       if (applied.has(name)) continue;
       await client.query(await readFile(new URL(`../migrations/${name}`, import.meta.url), "utf8"));
-      await client.query("INSERT INTO app_migrations(name) VALUES($1)", [name]);
+      await client.query(`INSERT INTO ${ledger}(name) VALUES($1)`, [name]);
       console.log(`Applied ${name}`);
     }
     await client.query("COMMIT");
