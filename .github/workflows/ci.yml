@@ -185,6 +185,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run test:container
       - run: npm run test:chat:container
+      - run: npm run test:chat:container:postgres:storage-supabase
   workflow-container:
     runs-on: ubuntu-latest
     timeout-minutes: 30

@@ -109,6 +109,7 @@
     "test:chat:uploads:postgres:storage-supabase": "node scripts/test-auth.mjs --chat --uploads --postgres --storage-supabase",
     "test:chat:uploads:supabase": "node scripts/test-auth.mjs --chat --uploads --supabase",
     "test:chat:container": "node scripts/test-auth.mjs --chat --container",
+    "test:chat:container:postgres:storage-supabase": "node scripts/test-auth.mjs --chat --container --postgres --storage-supabase --grep 'hosted smoke verifies real browser sign-in'",
     "convex:dev": "convex dev",
     "convex:codegen": "convex codegen --typecheck enable",
     "test:upload-scanner:compose": "tsx scripts/test-upload-scanner-compose.ts",

@@ -23,7 +23,7 @@ const supabaseStorage = supabaseData || storageSupabase;
 if (containerMode && !chat) throw new Error("Container mode requires --chat.");
 if (uploads && (!chat || containerMode)) throw new Error("Reviewed uploads require host --chat mode.");
 if (supabaseData && containerMode) throw new Error("Supabase Auth/data mode requires the host browser harness; do not combine --supabase with --container.");
-if (postgresData && (supabaseData || containerMode)) throw new Error("PostgreSQL application-data mode requires the host browser harness and cannot combine with --supabase.");
+if (postgresData && supabaseData) throw new Error("PostgreSQL application-data mode cannot combine with --supabase.");
 if (storageSupabase && !(postgresData || convexData)) throw new Error("Mixed Supabase Storage mode requires PostgreSQL or disposable Convex application data.");
 if (convexData) {
   let site;
@@ -201,8 +201,11 @@ try {
     const containerEnv = {
       NODE_ENV: "production", AUTH_PROVIDER: "supabase", SUPABASE_AUTH_URL: publicAuthOrigin,
       SUPABASE_PUBLISHABLE_KEY: anon, APP_API_KEYS: "[]", APP_ORIGIN: appOrigin,
-      DATA_PROVIDER: "sqlite", SQLITE_PATH: "/app/.data/records.sqlite", AI_CHAT_ENABLED: "true", APP_REQUESTS_PER_MINUTE: "10000",
-      UPLOAD_STORAGE_PROVIDER: "local", UPLOAD_LOCAL_ROOT: "/app/.data/uploads",
+      DATA_PROVIDER: postgresData ? "postgres" : "sqlite", SQLITE_PATH: "/app/.data/records.sqlite",
+      ...(postgresData ? { DATABASE_URL: `postgresql://auth_test:${password}@postgres:5432/app_data_test` } : {}),
+      AI_CHAT_ENABLED: "true", APP_REQUESTS_PER_MINUTE: "10000",
+      UPLOAD_STORAGE_PROVIDER: supabaseStorage ? "supabase" : "local", UPLOAD_LOCAL_ROOT: "/app/.data/uploads",
+      ...(supabaseStorage ? { SUPABASE_URL: publicAuthOrigin, SUPABASE_SECRET_KEY: admin } : {}),
       AI_CREATION_SIGNING_JSON: env.AI_CREATION_SIGNING_JSON,
       AI_BUDGET_POLICY_JSON: env.AI_BUDGET_POLICY_JSON,
       AI_RUNTIME_ORIGIN: "http://127.0.0.1:4274", WORKFLOW_TARGET_WORLD: "local",
@@ -214,10 +217,10 @@ try {
     await docker("exec", app, "find", "/app/.output", "-mindepth", "1", "-delete");
     await docker("cp", `${runtime.output}/.`, `${app}:/app/.output/`);
     await docker("exec", app, "sh", "-c", "printf ready > /app/.data/gate");
-    // The browser and server use one loopback Auth URL. Inside the app's network
-    // namespace, forward that port to the real GoTrue service on this test network.
+    // The browser and server use one loopback Supabase gateway. Inside the
+    // app's network namespace, forward that port to real Auth/Storage services.
     const authPort = String(new URL(publicAuthOrigin).port);
-    const forward = `import http from "node:http"; http.createServer((request,response) => { const upstream = http.request({ hostname: "auth", port: 9999, method: request.method, path: request.url.replace(/^\\/auth\\/v1(?=\\/|$)/, "") || "/", headers: { ...request.headers, host: "auth:9999" } }, result => { response.writeHead(result.statusCode ?? 502, result.headers); result.pipe(response); }); upstream.on("error", () => { if (!response.headersSent) response.writeHead(502); response.end(); }); request.pipe(upstream); }).listen(Number(process.env.TEST_AUTH_FORWARD_PORT), "127.0.0.1");`;
+    const forward = `import http from "node:http"; http.createServer((request,response) => { const storage = request.url.startsWith("/storage/v1/"); const auth = request.url.startsWith("/auth/v1/"); if (!storage && !auth) { response.writeHead(404).end(); return; } const hostname = storage ? "storage" : "auth", port = storage ? 5000 : 9999; const upstream = http.request({ hostname, port, method: request.method, path: request.url.replace(/^\\/(?:auth|storage)\\/v1(?=\\/|$)/, "") || "/", headers: { ...request.headers, host: hostname + ":" + port } }, result => { response.writeHead(result.statusCode ?? 502, result.headers); result.pipe(response); }); upstream.on("error", () => { if (!response.headersSent) response.writeHead(502); response.end(); }); request.pipe(upstream); }).listen(Number(process.env.TEST_AUTH_FORWARD_PORT), "127.0.0.1");`;
     await docker("exec", "--detach", "--env", `TEST_AUTH_FORWARD_PORT=${authPort}`, app, "node", "--input-type=module", "-e", forward);
     await waitFor(async () => (await docker("exec", app, "node", "-e", `fetch("http://127.0.0.1:${authPort}/auth/v1/health").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))`)) === "", "Container Auth forwarder");
     web = spawn("docker", ["exec", "--user", "node", app, "node", "scripts/start-local.mjs"], { env: process.env, stdio: ["ignore", "pipe", "pipe"] });
@@ -241,6 +244,11 @@ try {
     const sqlRows = (await docker("exec",`${name}-postgres`,"psql","-U","auth_test","-d","app_data_test","-At","-c",
       "SELECT (SELECT count(*) FROM public.app_records)+(SELECT count(*) FROM public.app_conversations)+(SELECT count(*) FROM public.app_uploads)+(SELECT count(*) FROM public.app_budget_reservations)+(SELECT count(*) FROM public.app_user_preferences);")).trim();
     if (sqlRows !== "0") throw new Error("Convex mixed mode wrote application rows to the Storage SQL fixture.");
+  }
+  if (containerMode && postgresData) {
+    await docker("exec", `${name}-app`, "sh", "-c", supabaseStorage
+      ? "test ! -e /app/.data/records.sqlite && test ! -e /app/.data/uploads"
+      : "test ! -e /app/.data/records.sqlite");
   }
   console.log(supabaseData ? `Real Supabase Auth, migrated PostgREST and private Storage ${uploads ? "reviewed-upload" : chat ? "account-chat" : "account"} browser contract passed.`
     : postgresData ? `Real Supabase Auth and migrated PostgreSQL ${uploads ? "reviewed-upload" : chat ? "account-chat" : "account"} browser contract passed${storageSupabase ? " with private Supabase Storage" : ""}.`
