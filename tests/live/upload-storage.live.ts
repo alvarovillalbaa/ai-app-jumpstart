@@ -26,6 +26,7 @@ import { verifyExport } from "../../scripts/verify-export";
 import { exportAccountBundle,verifyAccountBundle } from "../../scripts/export-account-bundle";
 import { eraseSelectedAccountObjects } from "../../scripts/erase-account-objects";
 import { eraseAccountRows } from "../../scripts/erase-account-rows";
+import { eraseAccountAuth } from "../../scripts/erase-account-auth";
 import { setPostgresAccountFence,setSqliteAccountFence } from "../../scripts/fence-account-writes";
 import { rehearseAccountBundle,verifyRehearsedAccountBundle } from "../../scripts/rehearse-account-bundle";
 
@@ -117,6 +118,33 @@ if (process.env.TEST_DISPOSABLE_SUPABASE === "1") it("bundles real Supabase cata
     await pg.query("DELETE FROM public.app_uploads WHERE id=$1",[mismatch]).catch(() => {});
     await pg.end().catch(() => {});
     await catalog.close();
+    rmSync(dir,{ recursive: true,force: true });
+  }
+},60_000);
+
+if (process.env.TEST_DISPOSABLE_SUPABASE === "1") it("hard-deletes a disposable Auth user only after its fenced private object namespace is empty",async () => {
+  requireDisposableDatabase();
+  const auth = createClient(url,secret,{ auth: { persistSession: false,autoRefreshToken: false } }).auth.admin;
+  const email = `erasure-${randomUUID()}@example.test`;
+  const created = await auth.createUser({ email,password: `fixture-${randomUUID()}`,email_confirm: true });
+  expect(created.error).toBeNull();
+  const id = created.data.user!.id,owner = { tenant: `supabase:${url}`,subject: id };
+  const objectId = randomUUID(),dir = mkdtempSync(join(tmpdir(),"jumpstart-auth-live-erasure-"));
+  const bundle = join(dir,"bundle"),env = { AUTH_PROVIDER: "supabase",SUPABASE_AUTH_URL: url,
+    SUPABASE_AUTH_ADMIN_KEY: secret,DATABASE_URL: database,SUPABASE_URL: url,SUPABASE_SECRET_KEY: secret };
+  try {
+    await raw.put(owner,objectId,new TextEncoder().encode("account-owned private bytes"));
+    await setPostgresAccountFence(database,owner);
+    expect(await exportAccountBundle("postgres","supabase",owner,bundle,env)).toMatchObject({ rows: 0,objects: 1 });
+    await expect(eraseAccountAuth(owner,bundle,env,true)).rejects.toThrow("remain");
+    expect((await auth.getUserById(id)).data.user?.id).toBe(id);
+    await eraseSelectedAccountObjects("supabase",owner,bundle,env,true);
+    expect(await eraseAccountAuth(owner,bundle,env,false)).toMatchObject({ status: "auth-identity-erasure-planned" });
+    expect(await eraseAccountAuth(owner,bundle,env,true)).toMatchObject({ status: "auth-identity-erased" });
+    expect((await auth.getUserById(id)).error?.status).toBe(404);
+  } finally {
+    await raw.delete(owner,objectId).catch(() => {});
+    await auth.deleteUser(id).catch(() => {});
     rmSync(dir,{ recursive: true,force: true });
   }
 },60_000);

@@ -101,6 +101,7 @@
     "account:fence:rows": "tsx scripts/fence-account-writes.ts",
     "account:erase:rows": "tsx scripts/erase-account-rows.ts",
     "account:erase:objects": "tsx scripts/erase-account-objects.ts",
+    "account:erase:auth": "tsx scripts/erase-account-auth.ts",
     "cloud:migration-job": "tsx scripts/create-migration-job.ts",
     "cloud:cleanup-job": "tsx scripts/create-cleanup-job.ts",
     "check:upload-storage": "tsx --env-file-if-exists=.env.local scripts/check-upload-storage.ts",
