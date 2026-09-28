@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { resolve } from "node:path";
+import { mkdtemp,rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join,resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HeadObjectCommand,type S3Client } from "@aws-sdk/client-s3";
 import { awsS3Client,awsS3Settings,awsS3UploadObjects,verifyPrivateS3Bucket } from "../lib/uploads/aws-s3";
 import { uploadObjectKey } from "../lib/uploads/contract";
 import { inspectS3OwnerObjects } from "../lib/uploads/object-inventory";
+import { listS3OwnerObjectIds } from "../lib/uploads/object-export";
+import { exportAccountObjects } from "./export-account-objects";
+import { verifyExport } from "./verify-export";
 
 type Owner = { tenant: string;subject: string };
 type Created = { owner: Owner;id: string };
@@ -55,6 +60,15 @@ export async function exerciseAwsS3Bucket(client: S3Client,bucket: string) {
       "The losing writer must fail because its S3 condition was rejected.");
     assert.deepEqual(await store.get(first,raceId),Uint8Array.from(attempts[winners[0]]));
     assert.equal(await inspectS3OwnerObjects(client,bucket,first),2);
+
+    stage = "private object export";
+    const directory = await mkdtemp(join(tmpdir(),"jumpstart-s3-export-"));
+    try {
+      const output = join(directory,"private.ndjson");
+      assert.deepEqual(await exportAccountObjects({ list: () => listS3OwnerObjectIds(client,bucket,first),
+        get: objectId => store.get(first,objectId) },output,"aws-s3"),{ objects: 2 });
+      assert.deepEqual((await verifyExport(output)).counts,{ objects: 2 });
+    } finally { await rm(directory,{ recursive: true,force: true }); }
 
     stage = "owner deletion and missing-object reads";
     assert.equal(await store.delete(first,id),true);

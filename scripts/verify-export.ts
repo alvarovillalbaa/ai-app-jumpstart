@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { z } from "zod";
+import { MAX_UPLOAD_BYTES } from "../lib/uploads/validation";
 
 const maximumLineBytes = 32 * 1024 * 1024;
 const applicationCounts = {
@@ -15,6 +16,9 @@ const applicationCountsV8 = { ...applicationCountsV7,artifact_version: "artifact
 const applicationCountsV9 = { ...applicationCountsV8,upload_review: "uploadReviews" } as const;
 const recordCounts = { record: "records" } as const;
 const sourceCounts = { source_event: "sourceEvents" } as const;
+const objectCounts = { object: "objects" } as const;
+const privateObject = z.object({ id: z.uuid(),size: z.number().int().min(1).max(MAX_UPLOAD_BYTES),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/),base64: z.string() }).strict();
 const footer = z.object({ counts: z.record(z.string(), z.number().int().nonnegative()),
   contentSha256: z.string().regex(/^[a-f0-9]{64}$/), nextIndex: z.number().int().nonnegative().optional(),
   complete: z.boolean().optional() }).strict();
@@ -26,6 +30,7 @@ export async function verifyExport(path: string) {
   let expected: Record<string, string> | undefined;
   let counts: Record<string, number> = {}, ended = false, lineNumber = 0;
   let lastSourceIndex = -1;
+  let lastObjectId = "";
   function accept(raw: Buffer) {
     lineNumber++;
     if (ended) throw new Error("Export contains data after its footer.");
@@ -41,7 +46,8 @@ export async function verifyExport(path: string) {
         : manifest.format === "ai-app-jumpstart-visible-data-v7" ? applicationCountsV7
         : manifest.format === "ai-app-jumpstart-visible-data-v8" ? applicationCountsV8
         : ["ai-app-jumpstart-visible-data-v9","ai-app-jumpstart-visible-data-v10"].includes(String(manifest.format)) ? applicationCountsV9 : undefined;
-      expected = manifest.format === "ai-app-jumpstart-source-events-v1" ? sourceCounts
+      expected = manifest.format === "ai-app-jumpstart-private-objects-v1" ? objectCounts
+        : manifest.format === "ai-app-jumpstart-source-events-v1" ? sourceCounts
         : sections && manifest.mode === "application" ? sections
         : sections && manifest.mode === "records" ? recordCounts : undefined;
       if (!expected) throw new Error("Export format or mode is unsupported.");
@@ -63,6 +69,14 @@ export async function verifyExport(path: string) {
         const index = (row.value as { sourceIndex?: unknown } | null)?.sourceIndex;
         if (!Number.isSafeInteger(index) || (index as number) <= lastSourceIndex) throw new Error("Source event indexes are not in order.");
         lastSourceIndex = index as number;
+      } else if (row.type === "object") {
+        const object = privateObject.parse(row.value);
+        if (object.id <= lastObjectId) throw new Error("Private object IDs are not in order.");
+        const bytes = Buffer.from(object.base64,"base64");
+        if (bytes.length !== object.size || bytes.toString("base64") !== object.base64 ||
+            createHash("sha256").update(bytes).digest("hex") !== object.sha256)
+          throw new Error("Private object content checksum does not match.");
+        lastObjectId = object.id;
       }
     }
     digest.update(raw);
@@ -80,5 +94,6 @@ export async function verifyExport(path: string) {
   }
   if (pending.length) throw new Error("Export ends with an incomplete line.");
   if (!ended || !manifest) throw new Error("Export has no complete footer.");
-  return { format: manifest.format, mode: manifest.mode ?? "source-events", counts };
+  return { format: manifest.format,
+    mode: manifest.mode ?? (manifest.format === "ai-app-jumpstart-private-objects-v1" ? "private-objects" : "source-events"),counts };
 }

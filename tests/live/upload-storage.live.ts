@@ -1,4 +1,7 @@
 import { createHash,randomUUID } from "node:crypto";
+import { mkdtempSync,rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 import { afterEach,beforeAll, expect, it,vi } from "vitest";
 import { uploadObjectKey, type PrivateUploadObjects } from "../../lib/uploads/contract";
@@ -9,6 +12,9 @@ import { UploadIntake } from "../../lib/uploads/intake";
 import { uploadObjectContract } from "../contracts/uploads";
 import { uploadHandlers } from "../../lib/http/uploads";
 import { inspectSupabaseOwnerObjects } from "../../lib/uploads/object-inventory";
+import { exportAccountObjects } from "../../scripts/export-account-objects";
+import { listSupabaseOwnerObjectIds } from "../../lib/uploads/object-export";
+import { verifyExport } from "../../scripts/verify-export";
 
 const url = process.env.SUPABASE_URL,secret = process.env.SUPABASE_SECRET_KEY,anonKey = process.env.SUPABASE_ANON_KEY;
 const database = process.env.DATABASE_URL;
@@ -44,12 +50,16 @@ uploadObjectContract("live Supabase Storage",async () => {
 });
 
 it("counts real private objects even without catalog rows and observes their removal",async () => {
-  const owner = { tenant: randomUUID(),subject: "operator-audit" },id = randomUUID();
+  const owner = { tenant: randomUUID(),subject: "operator-audit" },id = randomUUID(),dir = mkdtempSync(join(tmpdir(),"jumpstart-storage-export-"));
   await raw.put(owner,id,new TextEncoder().encode("unlinked private bytes"));
   try {
     expect(await inspectSupabaseOwnerObjects(storage,owner)).toBe(1);
     expect(await inspectSupabaseOwnerObjects(storage,{ ...owner,subject: "other" })).toBe(0);
-  } finally { await raw.delete(owner,id); }
+    const result = await exportAccountObjects({ list: () => listSupabaseOwnerObjectIds(storage,owner),
+      get: objectId => raw.get(owner,objectId) },join(dir,"private.ndjson"),"supabase");
+    expect(result).toEqual({ objects: 1 });
+    expect(await verifyExport(join(dir,"private.ndjson"))).toMatchObject({ counts: { objects: 1 } });
+  } finally { await raw.delete(owner,id);rmSync(dir,{ recursive: true,force: true }); }
   expect(await inspectSupabaseOwnerObjects(storage,owner)).toBe(0);
 });
 
