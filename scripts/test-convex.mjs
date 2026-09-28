@@ -154,12 +154,13 @@ try {
   console.log("Local Convex: real backend contract and internal-function isolation passed.");
   if (browserAccounts) {
     const browserEnv = { ...env,CONVEX_SITE_URL: siteUrl,CONVEX_BACKEND_SECRET: secret,TEST_DISPOSABLE_CONVEX: "1" };
-    for (const flags of [[],["--chat"],["--chat","--uploads"]]) {
+    for (const flags of [[],["--chat"],["--chat","--uploads"],
+      ["--storage-supabase"],["--chat","--uploads","--storage-supabase"]]) {
       await command([join(root,"scripts/test-auth.mjs"),"--convex",...flags],{
         cwd: root,env: browserEnv,log: true,
       });
     }
-    console.log("Local Convex: signed-in account, chat and reviewed-upload browser contracts passed.");
+    console.log("Local Convex: signed-in account, chat and reviewed-upload browser contracts passed with local and Supabase Storage.");
   }
 } catch (error) {
   // Only the local dev service output is included; key-setting commands are not logged.

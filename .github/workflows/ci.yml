@@ -56,6 +56,8 @@ jobs:
       - run: npm run test:auth:postgres
       - run: npm run test:chat:postgres
       - run: npm run test:chat:uploads:postgres
+      - run: npm run test:auth:postgres:storage-supabase
+      - run: npm run test:chat:uploads:postgres:storage-supabase
       - run: npm run test:quickstart
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
@@ -96,7 +98,7 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run build:local
-      - name: Disposable Convex account, chat and reviewed-file browser contracts
+      - name: Disposable Convex account, chat and reviewed-file contracts with local and Supabase Storage
         run: npm run test:convex:accounts
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
