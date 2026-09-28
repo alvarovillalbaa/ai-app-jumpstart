@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 
 const nodeImage = "node@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6";
 const suffix = randomUUID().slice(0, 12);
@@ -10,12 +11,30 @@ const caddyImage = `jumpstart-ingress-test:${suffix}`;
 const app = `jumpstart-app-${suffix}`;
 const ingress = `jumpstart-ingress-${suffix}`;
 const docker = (...args) => {
-  try { return execFileSync("docker", args, { encoding: "utf8", timeout: 180_000 }).trim(); }
+  try { return execFileSync("docker", args, {
+    encoding: "utf8",timeout: 180_000,stdio: ["ignore","pipe","pipe"],
+  }).trim(); }
   catch (error) { throw Object.assign(new Error(String(error).replaceAll(guard, "[redacted]")), { exitStatus: error.status }); }
 };
+function buildImage(file) {
+  const args = ["--file",join(context,"deploy",file),"--tag",caddyImage,context];
+  try { docker("buildx","version");return docker("buildx","build","--load",...args); }
+  catch (error) {
+    if (!String(error).includes("unknown command")) throw error;
+  }
+  let standalone = false;
+  try { execFileSync("docker-buildx",["version"],{ stdio: "ignore" });standalone = true; }
+  catch { /* optional standalone Buildx binary */ }
+  if (standalone) return execFileSync("docker-buildx",["build","--load",...args],{
+    encoding: "utf8",timeout: 180_000,stdio: ["ignore","pipe","pipe"],
+  }).trim();
+  if (amplify) throw new Error("The Amplify ingress test requires Docker Buildx for COPY --chmod.");
+  return docker("build",...args);
+}
 const cleanup = (...args) => { try { docker(...args); } catch { /* best effort for disposable resources */ } };
 if (process.argv.length > 3 || (process.argv[2] && process.argv[2] !== "--amplify")) throw new Error("Supported option: --amplify");
 const amplify = process.argv.includes("--amplify");
+const context = mkdtempSync(join(tmpdir(), "jumpstart-ingress-build-"));
 const guard = randomBytes(32).toString("hex");
 const invoke = (url, options = {}) => fetch(url, { ...options,
   headers: { ...options.headers, ...(amplify ? { "X-Jumpstart-Origin": guard } : {}) } });
@@ -42,7 +61,11 @@ assert.equal(aws.containerDefinitions.find(c => c.name === "ingress").dependsOn[
 assert.deepEqual(JSON.parse(gcp.spec.template.metadata.annotations["run.googleapis.com/container-dependencies"]), { ingress: ["app"] });
 
 try {
-  docker("build", "--file", amplify ? "deploy/amplify-eve.Dockerfile" : "deploy/ingress.Dockerfile", "--tag", caddyImage, ".");
+  mkdirSync(join(context,"deploy"));
+  const files = amplify ? ["amplify-eve.Dockerfile","amplify-eve.Caddyfile","amplify-eve-entrypoint.sh"] :
+    ["ingress.Dockerfile","split-app.Caddyfile","split-app-routes.Caddyfile"];
+  for (const file of files) copyFileSync(resolve("deploy",file),join(context,"deploy",file));
+  buildImage(amplify ? "amplify-eve.Dockerfile" : "ingress.Dockerfile");
   if (amplify) {
     for (const value of [undefined, "", "invalid-guard", "a".repeat(63), '"malformed"']) {
       let refused = false;
@@ -126,4 +149,5 @@ try {
   cleanup("rm", "--force", ingress);
   cleanup("rm", "--force", app);
   cleanup("image", "rm", caddyImage);
+  rmSync(context,{ recursive: true,force: true });
 }

@@ -74,6 +74,7 @@
     "synth:amplify": "tsx scripts/synth-amplify.ts",
     "test:amplify-build": "node scripts/test-amplify-build.mjs",
     "test:split-ingress": "node scripts/test-split-ingress.mjs",
+    "test:public-ingress": "node scripts/test-public-ingress.mjs",
     "test:amplify-ingress": "node scripts/test-split-ingress.mjs --amplify",
     "check:managed-config": "tsx --env-file-if-exists=.env.local scripts/check-managed-config.ts",
     "check:cloud-config": "tsx scripts/check-cloud-config.ts",

@@ -32,6 +32,8 @@ docker compose -f compose.yaml -f compose.streaming.yaml up --build -d
 
 The merged SQLite and PostgreSQL configurations were validated locally. A fresh SQLite image and Compose stack served `/records`, app readiness (`data: ok`, `agent: ok`), Eve health and authenticated record create/read/delete through Caddy; Docker showed no published app/Eve ports. The disposable project and volumes were removed. The separate SSE fixture check below proves streaming through the same Caddy route; the real stack check did not execute a model turn.
 
+For a public single-host deployment, add the [HTTPS Compose overlay and acceptance procedure](self-hosted-https.md) after the streaming overlay. It publishes only Caddy on ports 80 and 443, derives the app origin from one DNS name, and persists certificate state. The local TLS ingress contract checks redirect, trusted local certificate, routes, streaming and certificate persistence; public ACME issuance and the real deployed app still require acceptance.
+
 ## Split Next and Eve behind one streaming ingress
 
 Run the compiled Next and Eve services on a private network. Build Next with `EVE_NEXT_PRODUCTION_ORIGIN` set to Eve's private origin and retain that setting at runtime so `npm start` does not launch a second local Eve process. Start the standalone Eve output with `npm run start:eve -- --host 0.0.0.0 --port 4274` inside its private container. Configure the same browser-facing HTTPS `APP_ORIGIN`, auth and application data store for both services, plus durable Workflow storage for Eve. Next's rewrite destinations are compiled at build time, so use a stable internal name or build separately per environment.

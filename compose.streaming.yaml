@@ -13,6 +13,7 @@ services:
       EVE_UPSTREAM: app:4274
     volumes:
       - ./deploy/split-app.Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/split-app-routes.Caddyfile:/etc/caddy/split-app-routes.Caddyfile:ro
     depends_on:
       app:
         condition: service_healthy

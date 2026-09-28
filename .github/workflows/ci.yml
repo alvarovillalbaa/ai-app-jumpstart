@@ -195,6 +195,7 @@ jobs:
         with:
           node-version: 24
       - run: npm run test:split-ingress
+      - run: npm run test:public-ingress
       - run: npm run test:amplify-ingress
       - run: npm run test:workflow-compose
   upload-scanner:
