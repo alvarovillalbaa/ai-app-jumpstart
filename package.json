@@ -90,6 +90,7 @@
     "account:inspect:convex": "tsx scripts/inspect-convex-account-data.ts",
     "account:inspect:objects": "tsx scripts/inspect-account-objects.ts",
     "account:inspect:closure": "tsx scripts/inspect-account-closure.ts",
+    "account:inspect:workflow": "node scripts/inspect-account-workflow.mjs",
     "account:export:objects": "tsx scripts/export-account-objects.ts",
     "account:export:rows": "tsx scripts/export-account-rows.ts",
     "account:export:bundle": "tsx scripts/export-account-bundle.ts",
