@@ -10,7 +10,7 @@ const auditSecret = "test-convex-account-audit-secret-".repeat(2);
 afterEach(() => vi.unstubAllEnvs());
 
 it("keeps the read-only Convex audit allowlist aligned with every classified owner table",() => {
-  expect([...accountAuditEntities].sort()).toEqual(accountDataInventory.filter(entry => entry.convex && entry.owner !== "global-expiring")
+  expect([...accountAuditEntities].sort()).toEqual(accountDataInventory.filter(entry => entry.convex && entry.owner !== "global-expiring" && entry.owner !== "closure-control")
     .map(entry => entry.convex).sort());
 });
 

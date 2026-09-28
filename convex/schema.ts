@@ -2,6 +2,7 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 export default defineSchema({
+  accountFences: defineTable({ tenant: v.string(),subject: v.string(),createdAt: v.number() }).index("by_owner",["tenant","subject"]),
   requestLimits: defineTable({ tenant: v.string(),subject: v.string(),bucket: v.number(),counter: v.number() }).index("by_owner",["tenant","subject"]),
   userPreferences: defineTable({ tenant: v.string(),subject: v.string(),theme: v.union(v.literal("system"),v.literal("light"),v.literal("dark")),soundEnabled: v.boolean(),soundVolume: v.number(),revision: v.number(),updatedAt: v.string() }).index("by_owner",["tenant","subject"]),
   recordCreates: defineTable({ tenant: v.string(),subject: v.string(),key: v.string(),hash: v.string(),id: v.string(),createdAt: v.string() })

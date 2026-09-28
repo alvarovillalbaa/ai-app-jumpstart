@@ -6,6 +6,7 @@ import { accessOwner, reservation, operationId, sessionId, bodyHash, type Access
 import { conversation, conversationTitle, conversationSummary, historyOptions, historyPatch, pageOfHistory } from "../lib/agent-access/contract";
 import { projectionEntry, projectionOptions, projectionSourceIndex, pageOfProjections } from "../lib/agent-access/projection-contract";
 import { artifactPatch, artifactVersionOptions, pageOfArtifactVersions, artifactInput, artifactCallId, artifactOptions, artifact, pageOfArtifacts } from "../lib/agent-access/artifact-contract";
+import { assertAccountOpen } from "./accountFence";
 
 const ownerFields = { tenant: v.string(), subject: v.string() };
 async function captureRun(ctx: MutationCtx,operation: string,entry: ProjectionEntry,ordinal: number,source?: number) {
@@ -28,6 +29,7 @@ export const listRuns = internalQuery({
 export const rebuildRuns = internalMutation({
   args: { ...ownerFields,operationId: v.string(),options: v.object({ after: v.number(),limit: v.number() }) },
   handler: async (ctx,args) => {
+    await assertAccountOpen(ctx,args);
     const q = runRepairOptions.parse(args.options),row = await ownedOperation(ctx,args,args.operationId);
     if (!row) return { processed: 0,nextIndex: q.after,complete: true };
     const events = await ctx.db.query("conversationEvents").withIndex("by_operation_ordinal",index => index.eq("operationId",args.operationId).gt("ordinal",q.after)).order("asc").take(q.limit);
@@ -52,6 +54,7 @@ const publicArtifact = (row: { id: string;operationId: string;sessionId: string;
 export const saveArtifact = internalMutation({
   args: { ...ownerFields,operationId: v.string(),sessionId: v.string(),callId: v.string(),input: v.object({ title: v.string(),content: v.string() }) },
   handler: async (ctx,args) => {
+    await assertAccountOpen(ctx,args);
     const row = await ownedOperation(ctx,args,args.operationId),sid = sessionId.parse(args.sessionId),call = artifactCallId.parse(args.callId),data = artifactInput.parse(args.input);
     if (!row || row.status !== "active" || row.sessionId !== sid) return { status: "unavailable" as const };
     const bytes = new TextEncoder().encode(JSON.stringify(data)),digest = await crypto.subtle.digest("SHA-256",bytes);
@@ -83,6 +86,7 @@ export const getArtifact = internalQuery({
 export const updateArtifact = internalMutation({
   args: { ...ownerFields,id: v.string(),patch: v.object({ revision: v.number(),title: v.string(),content: v.string() }) },
   handler: async (ctx,args) => {
+    await assertAccountOpen(ctx,args);
     const owner = accessOwner.parse({ tenant: args.tenant,subject: args.subject }),p = artifactPatch.parse(args.patch);
     const row = await ctx.db.query("artifacts").withIndex("by_external_id",q => q.eq("id",operationId.parse(args.id))).unique();
     if (!row || !sameOwner(row,owner) || row.deletedAt !== undefined) return { status: "unavailable" as const };
@@ -114,6 +118,7 @@ export const listArtifactVersions = internalQuery({
 export const deleteArtifact = internalMutation({
   args: { ...ownerFields,id: v.string() },
   handler: async (ctx,args) => {
+    await assertAccountOpen(ctx,args);
     const owner = accessOwner.parse({ tenant: args.tenant,subject: args.subject });
     const row = await ctx.db.query("artifacts").withIndex("by_external_id",q => q.eq("id",operationId.parse(args.id))).unique();
     if (!row || !sameOwner(row,owner) || row.deletedAt !== undefined) return false;
@@ -143,6 +148,7 @@ export const listArtifacts = internalQuery({
 export const appendProjection = internalMutation({
   args: { ...ownerFields,operationId: v.string(),sessionId: v.string(),entry: v.any(),sourceIndex: v.optional(v.number()) },
   handler: async (ctx,args) => {
+    await assertAccountOpen(ctx,args);
     const entry = projectionEntry.parse(args.entry), row = await ownedOperation(ctx,args,args.operationId);
     if (!row || row.status !== "active" || row.sessionId !== sessionId.parse(args.sessionId)) return "unavailable";
     const source = args.sourceIndex === undefined ? undefined : projectionSourceIndex.parse(args.sourceIndex);
@@ -190,6 +196,7 @@ export const getProjectionCheckpoint = internalQuery({
 export const advanceProjectionCheckpoint = internalMutation({
   args: { ...ownerFields,operationId: v.string(),sessionId: v.string(),expected: v.number(),next: v.number() },
   handler: async (ctx,args) => {
+    await assertAccountOpen(ctx,args);
     const from = projectionSourceIndex.parse(args.expected),to = projectionSourceIndex.parse(args.next);
     if (to <= from) throw new Error("Projection checkpoint must advance.");
     const row = await ownedOperation(ctx,args,operationId.parse(args.operationId));
@@ -202,6 +209,7 @@ export const advanceProjectionCheckpoint = internalMutation({
 export const reserve = internalMutation({
   args: { ...ownerFields, id: v.string(), operationId: v.string(), requestHash: v.string(), title: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    await assertAccountOpen(ctx,args);
     const { title,...raw } = args;
     const input = reservation.parse(raw);
     if (await ctx.db.query("conversations").withIndex("by_external_id", q => q.eq("id", input.id)).unique()) return false;
@@ -248,6 +256,7 @@ export const getDetails = internalQuery({
 export const updateDetails = internalMutation({
   args: { ...ownerFields, operationId: v.string(), patch: v.object({ revision: v.number(), title: v.optional(v.string()), archived: v.optional(v.boolean()) }) },
   handler: async (ctx,args) => {
+    await assertAccountOpen(ctx,args);
     const patch = historyPatch.parse(args.patch), row = await ownedOperation(ctx,args,args.operationId);
     if (!row || (row.revision ?? 1) !== patch.revision) return null;
     const changed = { title: patch.title ?? row.title ?? "New conversation", createdAt: row.createdAt ?? Math.floor(row._creationTime), archived: patch.archived ?? row.archived ?? false, revision: patch.revision+1 };
@@ -260,13 +269,14 @@ export const backfillMetadata = internalMutation({
   args: {},
   handler: async ctx => {
     const rows = await ctx.db.query("conversations").withIndex("by_archived",q => q.eq("archived",undefined)).take(100);
-    for (const row of rows) await ctx.db.patch(row._id,{ title: "New conversation", createdAt: Math.floor(row._creationTime), archived: false, revision: 1 });
+    for (const row of rows) { await assertAccountOpen(ctx,row);await ctx.db.patch(row._id,{ title: "New conversation", createdAt: Math.floor(row._creationTime), archived: false, revision: 1 }); }
     return { updated: rows.length, remaining: !!await ctx.db.query("conversations").withIndex("by_archived",q => q.eq("archived",undefined)).first() };
   },
 });
 export const bind = internalMutation({
   args: { ...ownerFields, operationId: v.string(), sessionId: v.string() },
   handler: async (ctx, args) => {
+    await assertAccountOpen(ctx,args);
     const target = sessionId.parse(args.sessionId), row = await ownedOperation(ctx, args, args.operationId);
     if (!row || row.status === "revoked") return false;
     if (row.status === "active") return row.sessionId === target;
@@ -286,6 +296,7 @@ export const ownsSession = internalQuery({
 export const cancelStarting = internalMutation({
   args: { ...ownerFields, operationId: v.string() },
   handler: async (ctx, args) => {
+    await assertAccountOpen(ctx,args);
     const row = await ownedOperation(ctx,args,args.operationId);
     if (!row || row.status !== "starting" || row.sessionId !== null) return false;
     await ctx.db.patch(row._id, { status: "revoked" });
@@ -295,6 +306,7 @@ export const cancelStarting = internalMutation({
 export const revoke = internalMutation({
   args: { ...ownerFields, id: v.string() },
   handler: async (ctx, args) => {
+    await assertAccountOpen(ctx,args);
     accessOwner.parse({ tenant: args.tenant, subject: args.subject });
     const row = await ctx.db.query("conversations").withIndex("by_external_id", q => q.eq("id", operationId.parse(args.id))).unique();
     if (!row || !sameOwner(row, args)) return false;

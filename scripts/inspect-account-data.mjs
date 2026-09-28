@@ -22,7 +22,7 @@ function report(provider, ownerRows, orphanRows) {
     orphanRows,
     ownerRowTotal: total(ownerRows),
     orphanRowTotal: total(orphanRows),
-    scope: "single application database snapshot; no write fence, private object bytes, Auth, Eve, providers, logs or backups",
+    scope: "single application database snapshot; this report does not establish a write fence or inspect private object bytes, Auth, Eve, providers, logs or backups",
   };
 }
 
@@ -52,7 +52,8 @@ export async function inspectPostgresAccountData(connectionString, tenant, subje
     await client.query("SET LOCAL statement_timeout = '15s'");
     // An RLS-limited role can return false zeroes, so require a backend role
     // that sees every classified application table before counting anything.
-    const tables = accountDataInventory.map(entry => entry.sql).filter(Boolean);
+    const tables = accountDataInventory.filter(entry => entry.sql && entry.owner !== "closure-control")
+      .map(entry => entry.sql);
     const access = await client.query(`SELECT table_name, row_security_active(format('public.%I', table_name)::regclass) AS restricted
       FROM unnest($1::text[]) AS names(table_name)`, [tables]);
     if (access.rows.some(row => row.restricted)) throw new Error("Account inspection requires backend table access.");

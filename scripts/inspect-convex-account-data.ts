@@ -17,7 +17,7 @@ export async function inspectConvexAccountData(siteUrl: string,secret: string,te
     throw new Error("Invalid Convex account inspection configuration.");
   const endpoint = new URL("/app/audit",url),ownerRows: Record<string,number> = {},orphanRows: Record<string,number> = {};
   let pages = 0;
-  for (const entry of accountDataInventory.filter(item => item.convex && item.owner !== "global-expiring")) {
+  for (const entry of accountDataInventory.filter(item => item.convex && item.owner !== "global-expiring" && item.owner !== "closure-control")) {
     let cursor: string | null = null;
     ownerRows[entry.entity] = 0;
     if (entry.owner !== "direct") orphanRows[entry.entity] = 0;
@@ -44,7 +44,7 @@ export async function inspectConvexAccountData(siteUrl: string,secret: string,te
   if (!Number.isSafeInteger(ownerRowTotal) || !Number.isSafeInteger(orphanRowTotal)) throw new Error("Convex account inspection total exceeded the supported range.");
   return { format: "ai-app-jumpstart-account-data-inspection-v1",provider: "convex",ownerRows,orphanRows,
     ownerRowTotal,orphanRowTotal,
-    scope: "multiple bounded application read snapshots; no write fence, private object bytes, Auth, Eve, providers, logs or backups" };
+    scope: "multiple bounded application read snapshots; this report does not establish a write fence or inspect private object bytes, Auth, Eve, providers, logs or backups" };
 }
 
 async function main(args: string[],env: NodeJS.ProcessEnv) {

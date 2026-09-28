@@ -22,6 +22,7 @@ export const accountDataInventory = Object.freeze([
   { entity: "userPreferences",sql: "app_user_preferences",sqlite: "app_user_preferences",convex: "userPreferences",owner: "direct" },
   { entity: "requestLimits",sql: "app_request_limits",sqlite: "app_request_limits",convex: "requestLimits",owner: "direct" },
   { entity: "internalNonces",sql: "app_internal_nonces",sqlite: "app_internal_nonces",convex: "internalNonces",owner: "global-expiring" },
+  { entity: "accountFences",sql: "app_private.account_fences",sqlite: "app_account_fences",convex: "accountFences",owner: "closure-control" },
 ]);
 
 const root = fileURLToPath(new URL("../",import.meta.url));
@@ -69,15 +70,15 @@ export function verifyAccountDataInventory(sources,entries = accountDataInventor
   const entities = new Map(entries.map(entry => [entry.entity,entry]));
   if (entities.size !== entries.length) throw new Error("Duplicate account inventory entity.");
   for (const entry of entries) {
-    if (entry.owner !== "direct" && entry.owner !== "global-expiring" &&
+    if (entry.owner !== "direct" && entry.owner !== "global-expiring" && entry.owner !== "closure-control" &&
       (!entities.has(entry.owner) || entities.get(entry.owner).owner === "global-expiring"))
       throw new Error(`Unresolved account owner path for ${entry.entity}.`);
-    if (entry.owner !== "direct" && entry.owner !== "global-expiring" &&
+    if (entry.owner !== "direct" && entry.owner !== "global-expiring" && entry.owner !== "closure-control" &&
       (!Array.isArray(entry.via) || entry.via.length !== 2 || entry.via.some(column => !/^[a-z][a-z0-9_]*$/.test(column))))
       throw new Error(`Account owner join missing for ${entry.entity}.`);
     const visited = new Set([entry.entity]);
     let parent = entry;
-    while (parent.owner !== "direct" && parent.owner !== "global-expiring") {
+    while (parent.owner !== "direct" && parent.owner !== "global-expiring" && parent.owner !== "closure-control") {
       if (visited.has(parent.owner)) throw new Error(`Cyclic account owner path for ${entry.entity}.`);
       visited.add(parent.owner);
       parent = entities.get(parent.owner);
@@ -105,7 +106,13 @@ export function verifyAccountDataInventory(sources,entries = accountDataInventor
         throw new Error(`${label} expiration column missing from ${entry[key]}.`);
     }
   }
-  return { postgres: sql.size,sqlite: sqlite.size,convex: convex.size,ownerLinked: entries.filter(entry => entry.owner !== "global-expiring").length };
+  for (const entry of entries.filter(entry => entry.owner === "closure-control")) {
+    for (const [label,tables,key] of [["PostgreSQL/Supabase",sql,"sql"],["SQLite",sqlite,"sqlite"],["Convex",convex,"convex"]]) {
+      if (entry[key] && (!/\btenant\b/.test(tables.get(entry[key])) || !/\bsubject\b/.test(tables.get(entry[key]))))
+        throw new Error(`${label} closure-control owner columns missing from ${entry[key]}.`);
+    }
+  }
+  return { postgres: sql.size,sqlite: sqlite.size,convex: convex.size,ownerLinked: entries.filter(entry => entry.owner !== "global-expiring" && entry.owner !== "closure-control").length };
 }
 
 /** Backend-only owner-row probes, including soft-deleted rows and child tables. */
@@ -114,7 +121,7 @@ export function accountOwnerCountQueries(provider) {
   const entities = new Map(accountDataInventory.map(entry => [entry.entity,entry]));
   const table = entry => provider === "sql" ? `public.${entry.sql}` : entry.sqlite;
   const parameters = provider === "sql" ? ["$1","$2"] : ["?","?"];
-  return accountDataInventory.filter(entry => entry[provider] && entry.owner !== "global-expiring").map(entry => {
+  return accountDataInventory.filter(entry => entry[provider] && entry.owner !== "global-expiring" && entry.owner !== "closure-control").map(entry => {
     let current = entry,index = 0;
     const joins = [];
     while (current.owner !== "direct") {
@@ -131,7 +138,7 @@ export function accountOrphanCountQueries(provider) {
   if (provider !== "sqlite" && provider !== "sql") throw new Error("Account orphan probes support SQLite or PostgreSQL/Supabase.");
   const entities = new Map(accountDataInventory.map(entry => [entry.entity,entry]));
   const table = entry => provider === "sql" ? `public.${entry.sql}` : entry.sqlite;
-  return accountDataInventory.filter(entry => entry[provider] && entry.owner !== "direct" && entry.owner !== "global-expiring")
+  return accountDataInventory.filter(entry => entry[provider] && entry.owner !== "direct" && entry.owner !== "global-expiring" && entry.owner !== "closure-control")
     .map(entry => {
       const parent = entities.get(entry.owner);
       return { entity: entry.entity,sql: `SELECT COUNT(*) AS count FROM ${table(entry)} AS child LEFT JOIN ${table(parent)} AS parent ON child.${entry.via[0]}=parent.${entry.via[1]} WHERE parent.${entry.via[1]} IS NULL` };

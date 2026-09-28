@@ -5,6 +5,7 @@ import { dirname } from "node:path";
 import { accessOwner } from "../agent-access/contract";
 import { uploadCleanupCandidates, uploadCleanupLimit, withUploadScan, uploadList, uploadQuota, uploadReservation, uploadUsage, uploadScanDecision, staleUploadCutoff, type UploadCatalog } from "./catalog-contract";
 import { uploadId } from "./schema";
+import { installSqliteAccountFences } from "../account-closure/sqlite-fences";
 
 type Row = { id: string;tenant: string;subject: string;name: string;media_type: string;size: number;sha256: string;created_at: number;state: string };
 
@@ -45,6 +46,7 @@ export function sqliteUploadCatalog(path: string): UploadCatalog {
       WHEN NEW.state IN ('rejected','deleting','deleted') AND NEW.state != OLD.state BEGIN
       UPDATE app_upload_reviews SET revision=MIN(revision+1,2147483647),approved_sha256=NULL,approved_at=NULL,checked_at=NULL WHERE upload_id=NEW.id;
     END;`);
+  installSqliteAccountFences(db,["app_uploads","app_upload_scans","app_upload_reviews"]);
   const reviewById = db.prepare("SELECT revision,approved_sha256 AS approvedSha256,approved_at AS approvedAt,checked_at AS checkedAt FROM app_upload_reviews WHERE upload_id=?");
   type Receipt = { revision: number;approvedSha256: string|null;approvedAt: number|null;checkedAt: number|null };
   const byId = db.prepare("SELECT * FROM app_uploads WHERE id=?");

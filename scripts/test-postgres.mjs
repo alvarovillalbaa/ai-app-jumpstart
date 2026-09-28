@@ -194,9 +194,57 @@ async function rehearseUpgrade() {
     if (withSupabase) {
       assert.equal((await probe.query(`SELECT has_function_privilege('authenticated',
         'public.app_append_conversation_event(text,text,uuid,text,text,text,bigint)','EXECUTE') AS allowed`)).rows[0].allowed, false);
+      assert.equal((await probe.query("SELECT has_schema_privilege('service_role','app_private','USAGE') AS allowed")).rows[0].allowed,false);
       assert.equal((await probe.query(`SELECT polpermissive FROM pg_policy
         WHERE polrelid='storage.objects'::regclass AND polname='app_private_uploads_quarantine'`)).rows[0]?.polpermissive, false);
       assert.equal((await probe.query("SELECT count(*)::int AS count FROM storage.objects WHERE name='existing-private-object'")).rows[0].count, 1);
+    }
+    const fence = spawn(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/fence-account-writes.ts",
+      "--metadata","postgres","--set-permanent"],{ cwd: root,env: { ...upgradeEnv,
+        ACCOUNT_AUDIT_TENANT: "upgrade-tenant",ACCOUNT_AUDIT_SUBJECT: "upgrade-owner" },stdio: ["ignore","pipe","pipe"] });
+    let fenceOutput = "",fenceErrors = "";
+    fence.stdout.on("data",chunk => { fenceOutput += chunk.toString(); });
+    fence.stderr.on("data",chunk => { fenceErrors += chunk.toString(); });
+    const [fenceCode,fenceSignal] = await once(fence,"exit");
+    if (fenceCode !== 0 || fenceSignal) throw new Error(`PostgreSQL account row fence failed: ${fenceErrors.slice(0,300)}`);
+    assert.deepEqual(JSON.parse(fenceOutput).status,"fenced");
+    assert.equal(JSON.parse(fenceOutput).created,true);
+    assert.equal(fenceOutput.includes("upgrade-owner"),false);
+    await assert.rejects(() => probe.query("UPDATE app_records SET content='late' WHERE id=$1",[recordId]),/fenced/);
+    await assert.rejects(() => probe.query("INSERT INTO app_records(id,tenant,subject,title,content) VALUES($1,'upgrade-tenant','upgrade-owner','Late','No')",[randomUUID()]),/fenced/);
+    await assert.rejects(() => probe.query("UPDATE app_uploads SET state='deleting' WHERE id=$1",[uploadId]),/fenced/);
+    await assert.rejects(() => probe.query("INSERT INTO app_conversation_events(operation_id,event_id,payload) VALUES($1,$2,$3)",
+      [operationId,`evt_${"2".repeat(26)}`,event]),/fenced/);
+    await assert.rejects(() => probe.query("UPDATE app_private.account_fences SET created_at=now()"),/permanent/);
+    await assert.rejects(() => probe.query("DELETE FROM app_private.account_fences"),/permanent/);
+    await probe.query("UPDATE app_records SET content='other remains writable' WHERE tenant='upgrade-tenant' AND subject='other-owner'");
+    assert.equal((await probe.query("SELECT content FROM app_records WHERE tenant='upgrade-tenant' AND subject='other-owner'")).rows[0].content,
+      "other remains writable");
+    await probe.query("BEGIN ISOLATION LEVEL REPEATABLE READ");
+    await assert.rejects(() => probe.query("INSERT INTO app_records(id,tenant,subject,title,content) VALUES($1,'upgrade-tenant','other-owner','Late','No')",[randomUUID()]),/read committed/);
+    await probe.query("ROLLBACK");
+    const fenceConnection = new Client({ connectionString: upgradeEnv.DATABASE_URL });
+    const lateWriter = new Client({ connectionString: upgradeEnv.DATABASE_URL });
+    await fenceConnection.connect();await lateWriter.connect();
+    try {
+      await fenceConnection.query("BEGIN");
+      await fenceConnection.query("INSERT INTO app_private.account_fences(tenant,subject) VALUES('upgrade-tenant','race-owner')");
+      const writerPid = (await lateWriter.query("SELECT pg_backend_pid() AS pid")).rows[0].pid;
+      const pending = lateWriter.query("INSERT INTO app_records(id,tenant,subject,title,content) VALUES($1,'upgrade-tenant','race-owner','Late','No')",[randomUUID()])
+        .then(() => null,error => error);
+      let blocked = false;
+      for (let attempt = 0;attempt < 50;attempt++) {
+        const waiting = (await probe.query("SELECT wait_event_type,wait_event FROM pg_stat_activity WHERE pid=$1",[writerPid])).rows[0];
+        if (waiting?.wait_event_type === "Lock" && waiting.wait_event === "advisory") { blocked = true;break; }
+        await new Promise(resolve => setTimeout(resolve,100));
+      }
+      assert.equal(blocked,true,"A concurrent row write must wait for the operator's fence transaction");
+      await fenceConnection.query("COMMIT");
+      const refusal = await pending;
+      assert.match(refusal?.message ?? "",/fenced/,"A delayed row write must observe the committed fence");
+    } finally {
+      await fenceConnection.query("ROLLBACK").catch(() => {});
+      await fenceConnection.end();await lateWriter.end();
     }
     console.log(`Populated ${withSupabase ? "Supabase" : "PostgreSQL"} schema upgrade passed (${names.length - boundary - 1} later migrations).`);
   } catch (error) { await probe.query("ROLLBACK").catch(() => {}); throw error; }

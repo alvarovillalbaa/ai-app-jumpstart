@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { admission, settlement, settlementCorrection, correctionEntry, budgetInspection, lookup, snapshot, dayOf, refusal, attempt, attemptOwner, reservationState, outstandingOptions, outstandingEntry, pageOfOutstanding, ledgerOptions, ledgerEntry, pageOfLedger, ownerCorrectionEntry, pageOfOwnerCorrections, type Admission, type Settlement, type BudgetStore, type AdmissionResult } from "./contract";
+import { installSqliteAccountFences } from "../account-closure/sqlite-fences";
 
 export function sqliteBudgetStore(path: string): BudgetStore {
   if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
@@ -28,6 +29,7 @@ export function sqliteBudgetStore(path: string): BudgetStore {
       BEGIN SELECT RAISE(ABORT,'Budget correction audit entries are immutable'); END;
     CREATE TRIGGER IF NOT EXISTS budget_corrections_no_delete BEFORE DELETE ON app_budget_corrections
       BEGIN SELECT RAISE(ABORT,'Budget correction audit entries are immutable'); END;`);
+  installSqliteAccountFences(db,["app_budget_reservations","app_budget_attempts","app_budget_corrections"]);
   function read(input: ReturnType<typeof lookup.parse>) {
     const day = dayOf(input.now);
     const row = db.prepare(`SELECT

@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { page, type AppRecord, type ListInput, type Owner, type RecordInput, type RecordRepository, type RecordUpdate } from "./contract";
 import { originalCreatedRecord,recordCreationHash } from "./create-request";
+import { installSqliteAccountFences } from "../account-closure/sqlite-fences";
 
 export class SqliteRepository implements RecordRepository {
   private db: DatabaseSync;
@@ -19,6 +20,7 @@ export class SqliteRepository implements RecordRepository {
       CREATE TABLE IF NOT EXISTS app_record_creates (
         tenant TEXT NOT NULL,subject TEXT NOT NULL,creation_key TEXT NOT NULL,request_hash TEXT NOT NULL,
         record_id TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(tenant,subject,creation_key));`);
+    installSqliteAccountFences(this.db,["app_records","app_record_creates"]);
   }
   private row(row: unknown): AppRecord | null {
     if (!row) return null;

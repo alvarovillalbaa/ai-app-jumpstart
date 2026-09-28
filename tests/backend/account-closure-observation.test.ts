@@ -12,6 +12,7 @@ import { sqlitePreferenceStore } from "../../lib/preferences/sqlite";
 import { sqliteRequestLimitStore } from "../../lib/request-limits/sqlite";
 import { localUploadObjects } from "../../lib/uploads/local";
 import { inspectAccountClosure } from "../../scripts/inspect-account-closure";
+import { installSqliteAccountFences } from "../../lib/account-closure/sqlite-fences";
 
 it("joins the real SQLite row and local object observations without exposing identity or partial output",async () => {
   const dir = mkdtempSync(join(tmpdir(),"jumpstart-closure-observation-")),path = join(dir,"app.sqlite"),root = join(dir,"uploads");
@@ -46,7 +47,11 @@ it("joins the real SQLite row and local object observations without exposing ide
       db.prepare("DELETE FROM app_records WHERE tenant=? AND subject=?").run(alice.tenant,alice.subject);
       await objects.delete(alice,id);
       expect(await inspectAccountClosure("sqlite","local",alice,env)).toMatchObject({ status: "unfenced_zero",ownerRowTotal: 0,objectCount: 0 });
+      expect(() => db.exec("INSERT INTO app_budget_attempts VALUES('missing-operation','orphan-attempt')"))
+        .toThrow("no attributable owner");
+      db.exec("DROP TRIGGER app_budget_attempts_account_fence_insert");
       db.exec("INSERT INTO app_budget_attempts VALUES('missing-operation','orphan-attempt')");
+      installSqliteAccountFences(db,["app_budget_attempts"]);
       expect(await inspectAccountClosure("sqlite","local",alice,env)).toMatchObject({ status: "retained_or_unattributable",
         remaining: { applicationRows: false,privateObjects: false,globalUnattributableRows: true },orphanRowTotal: 1 });
 

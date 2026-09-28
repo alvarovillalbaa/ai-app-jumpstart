@@ -56,12 +56,18 @@ http.route({ path: "/app/audit", method: "POST", handler: httpAction(async (ctx,
   finally { reader.releaseLock(); }
   let raw: unknown;
   try { raw = JSON.parse(body); } catch { return json({ error: "invalid_input" },400); }
-  const parsed = z.object({ operation: z.literal("accountPage"),entity: z.enum(accountAuditEntities),
-    tenant: z.string().min(1).max(200),subject: z.string().min(1).max(200),cursor: z.string().nullable() }).strict().safeParse(raw);
+  const parsed = z.discriminatedUnion("operation",[
+    z.object({ operation: z.literal("accountPage"),entity: z.enum(accountAuditEntities),
+      tenant: z.string().min(1).max(200),subject: z.string().min(1).max(200),cursor: z.string().nullable() }).strict(),
+    z.object({ operation: z.literal("setAccountFence"),tenant: z.string().min(1).max(200),
+      subject: z.string().min(1).max(200) }).strict(),
+  ]).safeParse(raw);
   if (!parsed.success) return json({ error: "invalid_input" },400);
   try {
-    const { operation: _,...input } = parsed.data;void _;
-    return json(await ctx.runQuery(internal.audit.accountPage,input));
+    if (parsed.data.operation === "setAccountFence")
+      return json(await ctx.runMutation(internal.audit.setAccountFence,{ tenant: parsed.data.tenant,subject: parsed.data.subject }));
+    return json(await ctx.runQuery(internal.audit.accountPage,{ entity: parsed.data.entity,
+      tenant: parsed.data.tenant,subject: parsed.data.subject,cursor: parsed.data.cursor }));
   } catch { return json({ error: "storage_error" },500); }
 }) });
 http.route({ path: "/app/records", method: "POST", handler: httpAction(async (ctx, request) => {

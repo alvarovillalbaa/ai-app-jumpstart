@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery, type QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { listInput, recordId, recordInput, recordUpdate,recordCreationKey, page, type AppRecord, type Owner } from "../lib/data/contract";
+import { assertAccountOpen } from "./accountFence";
 
 const ownerFields = { tenant: v.string(), subject: v.string() };
 function checkOwner(owner: Owner) {
@@ -34,6 +35,7 @@ export const create = internalMutation({
   args: { ...ownerFields, id: v.string(), title: v.string(), content: v.string() },
   handler: async (ctx, args) => {
     checkOwner(args);
+    await assertAccountOpen(ctx,args);
     const id = recordId.parse(args.id);
     const input = recordInput.parse({ title: args.title, content: args.content });
     if (await owned(ctx, args, id)) throw new Error("Duplicate record ID.");
@@ -56,6 +58,7 @@ export const createOnce = internalMutation({
   args: { ...ownerFields,key: v.string(),hash: v.string(),id: v.string(),title: v.string(),content: v.string() },
   handler: async (ctx,args) => {
     checkOwner(args);
+    await assertAccountOpen(ctx,args);
     const key = recordCreationKey.parse(args.key),id = recordId.parse(args.id);
     if (!/^[a-f0-9]{64}$/u.test(args.hash)) throw new Error("Invalid input hash.");
     const input = recordInput.parse({ title: args.title,content: args.content });
@@ -75,6 +78,7 @@ export const createOnce = internalMutation({
 export const update = internalMutation({
   args: { ...ownerFields, id: v.string(), title: v.string(), content: v.string(), revision: v.number() },
   handler: async (ctx, args) => {
+    await assertAccountOpen(ctx,args);
     const input = recordUpdate.parse({ title: args.title, content: args.content, revision: args.revision });
     const row = await owned(ctx, args, args.id);
     if (!row || row.revision !== input.revision) return null;

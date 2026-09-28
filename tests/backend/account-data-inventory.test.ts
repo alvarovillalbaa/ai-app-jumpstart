@@ -12,11 +12,12 @@ import { sqlitePreferenceStore } from "../../lib/preferences/sqlite";
 import { sqliteRequestLimitStore } from "../../lib/request-limits/sqlite";
 import { accountDataInventory,accountOrphanCountQueries,accountOwnerCountQueries,readAccountSchemaSources,verifyAccountDataInventory } from "../../scripts/account-data-inventory.mjs";
 import { inspectSqliteAccountData } from "../../scripts/inspect-account-data.mjs";
+import { installSqliteAccountFences } from "../../lib/account-closure/sqlite-fences";
 
 const sources = readAccountSchemaSources();
 
 it("classifies every current application table in SQL, SQLite and Convex",() => {
-  expect(verifyAccountDataInventory(sources)).toEqual({ postgres: 17,sqlite: 16,convex: 17,ownerLinked: 17 });
+  expect(verifyAccountDataInventory(sources)).toEqual({ postgres: 18,sqlite: 17,convex: 18,ownerLinked: 17 });
 });
 
 it("fails when any provider adds a table without an account-data classification",() => {
@@ -86,7 +87,12 @@ it("finds two owners' real SQLite rows, including child data and tombstones",asy
       expect(accountOwnerCountQueries("sql")).toHaveLength(16);
       const orphanQueries = accountOrphanCountQueries("sqlite");
       expect(orphanQueries.every(query => (db.prepare(query.sql).get() as { count: number }).count === 0)).toBe(true);
+      expect(() => db.exec("INSERT INTO app_budget_attempts VALUES('missing-operation','orphan-attempt')"))
+        .toThrow("no attributable owner");
+      // Simulate a legacy orphan left before write guards were installed.
+      db.exec("DROP TRIGGER app_budget_attempts_account_fence_insert");
       db.exec("INSERT INTO app_budget_attempts VALUES('missing-operation','orphan-attempt')");
+      installSqliteAccountFences(db,["app_budget_attempts"]);
       expect((db.prepare(orphanQueries.find(query => query.entity === "budgetAttempts")!.sql).get() as { count: number }).count).toBe(1);
       const report = inspectSqliteAccountData(path,"acme","alice");
       expect(report).toMatchObject({ provider: "sqlite",ownerRowTotal: 9,orphanRowTotal: 1,

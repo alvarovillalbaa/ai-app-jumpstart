@@ -4,6 +4,7 @@ import { internalMutation, internalQuery, type QueryCtx,type MutationCtx } from 
 import { accessOwner, type AccessOwner } from "../lib/agent-access/contract";
 import { uploadCleanupCandidates, uploadCleanupLimit, withUploadScan, uploadScanDecision, uploadList, uploadQuota, uploadReservation, uploadUsage, staleUploadCutoff } from "../lib/uploads/catalog-contract";
 import { uploadId } from "../lib/uploads/schema";
+import { assertAccountOpen } from "./accountFence";
 
 const ownerFields = { tenant: v.string(),subject: v.string() };
 const sameOwner = (row: AccessOwner,owner: AccessOwner) => row.tenant === owner.tenant && row.subject === owner.subject;
@@ -37,6 +38,7 @@ export const getReview = internalQuery({
 export const recordReview = internalMutation({
   args: { ...ownerFields,id: v.string(),decision: v.any() },
   handler: async (ctx,args) => {
+    await assertAccountOpen(ctx,args);
     const d = uploadReviewDecision.parse(args.decision),row = await ownedRow(ctx,args,args.id);
     if (!row || row.state === "deleted") return { status: "unavailable" as const };
     const receipt = await ctx.db.query("uploadReviews").withIndex("by_upload",q => q.eq("uploadId",row.id)).unique();
@@ -50,6 +52,7 @@ export const recordReview = internalMutation({
 export const reserve = internalMutation({
   args: { ...ownerFields,input: v.any(),quota: v.any() },
   handler: async (ctx,args) => {
+    await assertAccountOpen(ctx,args);
     const owner = accessOwner.parse({ tenant: args.tenant,subject: args.subject });
     const input = uploadReservation.parse(args.input),quota = uploadQuota.parse(args.quota);
     const existing = await ctx.db.query("uploads").withIndex("by_external_id",q => q.eq("id",input.id)).unique();
@@ -64,6 +67,7 @@ export const reserve = internalMutation({
 export const markStored = internalMutation({
   args: { ...ownerFields,id: v.string() },
   handler: async (ctx,args) => {
+    await assertAccountOpen(ctx,args);
     const row = await ownedRow(ctx,args,args.id);
     if (!row) return false;
     if (row.state === "pending") { await ctx.db.patch(row._id,{ state: "quarantined" });return true; }
@@ -77,6 +81,7 @@ export const get = internalQuery({
 export const recordScan = internalMutation({
   args: { ...ownerFields,id: v.string(),decision: v.any() },
   handler: async (ctx,args) => {
+    await assertAccountOpen(ctx,args);
     const decision = uploadScanDecision.parse(args.decision),row = await ownedRow(ctx,args,args.id);
     if (!row || row.state !== "quarantined" && row.state !== "clean" || row.sha256 !== decision.sha256 || row.scan?.status === "rejected" ||
         decision.status === "clean" && row.scan && row.scan.checkedAt > decision.checkedAt) return false;
@@ -107,6 +112,7 @@ export const listCleanupCandidates = internalQuery({
 export const beginDelete = internalMutation({
   args: { ...ownerFields,id: v.string() },
   handler: async (ctx,args) => {
+    await assertAccountOpen(ctx,args);
     const row = await ownedRow(ctx,args,args.id);
     if (!row) return false;
     if (["pending","quarantined","clean","rejected"].includes(row.state)) { await invalidateReview(ctx,row.id);await ctx.db.patch(row._id,{ state: "deleting" });return true; }
@@ -116,6 +122,7 @@ export const beginDelete = internalMutation({
 export const claimStalePending = internalMutation({
   args: { ...ownerFields,id: v.string(),cutoff: v.number() },
   handler: async (ctx,args) => {
+    await assertAccountOpen(ctx,args);
     const cutoff = staleUploadCutoff.parse(args.cutoff),row = await ownedRow(ctx,args,args.id);
     if (!row || row.state !== "pending" || row.createdAt > cutoff) return false;
     await invalidateReview(ctx,row.id);
@@ -126,6 +133,7 @@ export const claimStalePending = internalMutation({
 export const finishDelete = internalMutation({
   args: { ...ownerFields,id: v.string() },
   handler: async (ctx,args) => {
+    await assertAccountOpen(ctx,args);
     const row = await ownedRow(ctx,args,args.id);
     if (!row) return false;
     if (row.state === "deleting") { await invalidateReview(ctx,row.id);await ctx.db.patch(row._id,{ state: "deleted" });return true; }

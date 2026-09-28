@@ -89,9 +89,9 @@ try {
   await command([join(root, "node_modules/vitest/vitest.mjs"), "run", "--config", "vitest.integration.config.ts"], {
     cwd: root, env: { ...env, DATA_PROVIDER: "convex", CONVEX_SITE_URL: siteUrl, CONVEX_BACKEND_SECRET: secret }, log: true,
   });
-  const auditOwner = { tenant: "test-convex-audit",subject: "test-convex-audit" };
+  const auditOwner = { tenant: "test-convex-audit",subject: "test-convex-audit" },auditId = randomUUID();
   const auditSeed = await fetch(`${siteUrl}/app/records`,{ method: "POST",headers: { "content-type": "application/json","x-jumpstart-backend-key": secret },
-    body: JSON.stringify({ operation: "create",...auditOwner,id: randomUUID(),title: "Audit fixture",content: "private" }),signal: AbortSignal.timeout(5000) });
+    body: JSON.stringify({ operation: "create",...auditOwner,id: auditId,title: "Audit fixture",content: "private" }),signal: AbortSignal.timeout(5000) });
   if (!auditSeed.ok) throw new Error("Local Convex audit fixture could not be created.");
   const auditOutput = await command([join(root,"node_modules/tsx/dist/cli.mjs"),"scripts/inspect-convex-account-data.ts","--read-only"],{
     cwd: root,env: { ...env,CONVEX_SITE_URL: siteUrl,CONVEX_AUDIT_SECRET: auditSecret,
@@ -108,6 +108,24 @@ try {
   const closureReport = JSON.parse(closureOutput);
   if (closureReport.status !== "retained_or_unattributable" || closureReport.ownerRows.records !== 1 ||
       closureReport.objectCount !== 0) throw new Error("Local Convex closure observation did not combine its row and object probes.");
+  const deniedFence = await fetch(`${siteUrl}/app/audit`,{ method: "POST",headers: { "content-type": "application/json","x-jumpstart-backend-key": secret },
+    body: JSON.stringify({ operation: "setAccountFence",...auditOwner }),signal: AbortSignal.timeout(5000) });
+  if (deniedFence.status !== 401) throw new Error("Application backend credential reached the Convex audit fence.");
+  const fenceOutput = await command([join(root,"node_modules/tsx/dist/cli.mjs"),"scripts/fence-account-writes.ts",
+    "--metadata","convex","--set-permanent"],{ cwd: root,env: { ...env,CONVEX_SITE_URL: siteUrl,
+      CONVEX_AUDIT_SECRET: auditSecret,ACCOUNT_AUDIT_TENANT: auditOwner.tenant,ACCOUNT_AUDIT_SUBJECT: auditOwner.subject } });
+  const fenceReport = JSON.parse(fenceOutput);
+  if (fenceReport.provider !== "convex" || fenceReport.status !== "fenced" || fenceReport.created !== true ||
+      fenceOutput.includes(auditOwner.subject)) throw new Error("Local Convex operator fence failed or exposed its owner.");
+  const lateWrite = await fetch(`${siteUrl}/app/records`,{ method: "POST",headers: { "content-type": "application/json","x-jumpstart-backend-key": secret },
+    body: JSON.stringify({ operation: "create",...auditOwner,id: randomUUID(),title: "Late",content: "private" }),signal: AbortSignal.timeout(5000) });
+  if (lateWrite.status !== 500) throw new Error("Local Convex accepted a fenced account write.");
+  const retained = await fetch(`${siteUrl}/app/records`,{ method: "POST",headers: { "content-type": "application/json","x-jumpstart-backend-key": secret },
+    body: JSON.stringify({ operation: "get",...auditOwner,id: auditId }),signal: AbortSignal.timeout(5000) });
+  if (!retained.ok || (await retained.json()).title !== "Audit fixture") throw new Error("Local Convex fenced account lost read access.");
+  const otherWrite = await fetch(`${siteUrl}/app/records`,{ method: "POST",headers: { "content-type": "application/json","x-jumpstart-backend-key": secret },
+    body: JSON.stringify({ operation: "create",tenant: auditOwner.tenant,subject: "other",id: randomUUID(),title: "Other",content: "private" }),signal: AbortSignal.timeout(5000) });
+  if (!otherWrite.ok) throw new Error("Local Convex fence blocked a different account.");
   console.log("Local Convex: real backend contract and internal-function isolation passed.");
 } catch (error) {
   // Only the local dev service output is included; key-setting commands are not logged.

@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery, type QueryCtx } from "./_generated/server";
 import { admission, settlement, settlementCorrection, correctionEntry, lookup, dayOf, refusal, attempt, attemptOwner, outstandingOptions, outstandingEntry, pageOfOutstanding, ledgerOptions, ledgerEntry, pageOfLedger, ownerCorrectionEntry, pageOfOwnerCorrections } from "../lib/budgets/contract";
+import { assertAccountOpen } from "./accountFence";
 
 async function state(ctx: QueryCtx, input: ReturnType<typeof lookup.parse>) {
   const day = dayOf(input.now);
@@ -11,6 +12,7 @@ async function state(ctx: QueryCtx, input: ReturnType<typeof lookup.parse>) {
 }
 export const reserve = internalMutation({ args: { input: v.any() }, handler: async (ctx, args) => {
   const input = admission.parse(args.input);
+  await assertAccountOpen(ctx,input);
   const existing = await ctx.db.query("budgetReservations").withIndex("by_operation", q => q.eq("operationId",input.operationId)).unique();
   if (existing) {
     if (existing.tenant!==input.tenant || existing.subject!==input.subject || existing.requestHash!==input.requestHash || existing.estimateMicros!==input.estimateMicros || existing.policyId!==input.policy.id) return { status: "denied", reason: "conflict" };
@@ -27,6 +29,7 @@ export const reserve = internalMutation({ args: { input: v.any() }, handler: asy
 } });
 export const settle = internalMutation({ args: { input: v.any() }, handler: async (ctx,args) => {
   const input = settlement.parse(args.input);
+  await assertAccountOpen(ctx,input);
   const row = await ctx.db.query("budgetReservations").withIndex("by_operation", q => q.eq("operationId",input.operationId)).unique();
   if (!row || row.tenant!==input.tenant || row.subject!==input.subject) return false;
   if (row.status==="settled") return row.actualMicros===input.actualMicros;
@@ -40,6 +43,7 @@ export const settle = internalMutation({ args: { input: v.any() }, handler: asyn
 } });
 export const correctSettlement = internalMutation({ args: { input: v.any() }, handler: async (ctx,args) => {
   const input = settlementCorrection.parse(args.input);
+  await assertAccountOpen(ctx,input);
   const existing = await ctx.db.query("budgetCorrections").withIndex("by_correction",q => q.eq("correctionId",input.correctionId)).unique();
   if (existing) return existing.operationId===input.operationId && existing.tenant===input.tenant && existing.subject===input.subject &&
     existing.previousActualMicros===input.expectedActualMicros && existing.correctedActualMicros===input.correctedActualMicros &&
@@ -119,6 +123,7 @@ export const listLedger = internalQuery({ args: { input: v.any() }, handler: asy
 } });
 export const claimAttempt = internalMutation({ args: { input: v.any() }, handler: async (ctx,args) => {
   const input = attempt.parse(args.input);
+  await assertAccountOpen(ctx,input);
   const row = await ctx.db.query("budgetReservations").withIndex("by_operation",q => q.eq("operationId",input.operationId)).unique();
   if (!row || row.tenant!==input.tenant || row.subject!==input.subject || row.status!=="reserved") return false;
   const existing = await ctx.db.query("budgetAttempts").withIndex("by_operation_attempt",q => q.eq("operationId",input.operationId).eq("attemptId",input.attemptId)).unique();

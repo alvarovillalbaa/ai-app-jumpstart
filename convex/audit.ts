@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { internalQuery,type QueryCtx } from "./_generated/server";
+import { internalMutation,internalQuery,type QueryCtx } from "./_generated/server";
 
 // Kept in lockstep with the classified Convex tables in account-data-inventory.mjs.
 // These queries return counts only; they never return application rows.
@@ -50,5 +50,19 @@ export const accountPage = internalQuery({
       if (owner.tenant === args.tenant && owner.subject === args.subject) owned++;
     }
     return { owned,orphans,scanned: page.page.length,done: page.isDone,cursor: page.isDone ? null : page.continueCursor };
+  },
+});
+
+/** Called only by the distinct operator audit endpoint. There is no un-fence. */
+export const setAccountFence = internalMutation({
+  args: { tenant: v.string(),subject: v.string() },
+  handler: async (ctx,args) => {
+    if (!args.tenant || !args.subject || args.tenant.length > 200 || args.subject.length > 200)
+      throw new Error("Invalid account fence owner.");
+    const existing = await ctx.db.query("accountFences").withIndex("by_owner",q =>
+      q.eq("tenant",args.tenant).eq("subject",args.subject)).unique();
+    if (existing) return { status: "fenced" as const,created: false };
+    await ctx.db.insert("accountFences",{ ...args,createdAt: Date.now() });
+    return { status: "fenced" as const,created: true };
   },
 });
