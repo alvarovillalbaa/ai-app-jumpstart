@@ -15,7 +15,7 @@ docker compose up --build -d
 docker compose logs -f app
 ```
 
-Compose reads `.env.local` and binds loopback port 3000. For opt-in upload scanning, mount a private ClamAV Unix socket into the app container, set `UPLOAD_SCANNER_PROVIDER=clamd` and `UPLOAD_CLAMD_SOCKET` to its in-container path, and run `npm run check:upload-scanner` inside the same runtime environment. The default Compose files do not start a scanner. PostgreSQL mode also needs `POSTGRES_PASSWORD` in local `.env` for Compose interpolation:
+Compose reads `DATA_PROVIDER` and its provider credentials from `.env.local` and binds loopback port 3000. The copied `.env.example` selects SQLite; for an external PostgreSQL, Supabase or Convex store, replace that selector and set its required variables in `.env.local` before starting. Apply SQL migrations or deploy Convex functions first, as described in [database setup](databases.md). A container cannot reach a database at the host's `localhost`; use a reachable private address. `SQLITE_PATH` is set to the persistent `/app/.data` volume for SQLite and ignored by other providers. This base stack does not start a database migration job for external services. For opt-in upload scanning, mount a private ClamAV Unix socket into the app container, set `UPLOAD_SCANNER_PROVIDER=clamd` and `UPLOAD_CLAMD_SOCKET` to its in-container path, and run `npm run check:upload-scanner` inside the same runtime environment. The default Compose files do not start a scanner. The bundled PostgreSQL overlay overrides the selector and needs `POSTGRES_PASSWORD` in local `.env` for Compose interpolation:
 
 ```sh
 docker compose -f compose.yaml -f compose.postgres.yaml up --build -d

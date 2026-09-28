@@ -5,7 +5,6 @@ services:
     ports: ["127.0.0.1:3000:3000"]
     env_file: .env.local
     environment:
-      DATA_PROVIDER: sqlite
       SQLITE_PATH: /app/.data/app.sqlite
     volumes:
       - app-data:/app/.data
