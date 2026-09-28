@@ -53,6 +53,37 @@ export const accountPage = internalQuery({
   },
 });
 
+/** Operator-only raw rows. A small page bounds the HTTP response even when rows contain private content. */
+export const accountRowPage = internalQuery({
+  args: { entity: v.string(),tenant: v.string(),subject: v.string(),cursor: v.union(v.string(),v.null()) },
+  handler: async (ctx,args) => {
+    if (!accountAuditEntities.includes(args.entity as Entity) || !args.tenant || !args.subject ||
+        args.tenant.length > 200 || args.subject.length > 200) throw new Error("Invalid account row export request.");
+    const entity = args.entity as Entity;
+    const page = await ctx.db.query(entity).paginate({ numItems: 10,cursor: args.cursor });
+    const rows: Record<string,unknown>[] = [];
+    let orphans = 0;
+    for (const item of page.page) {
+      const owner = await parentOwner(ctx,entity,item as unknown as Record<string,unknown>);
+      if (!owner) { if (childEntities.has(entity)) orphans++;continue; }
+      if (owner.tenant === args.tenant && owner.subject === args.subject)
+        rows.push(item as unknown as Record<string,unknown>);
+    }
+    return { rows,orphans,scanned: page.page.length,done: page.isDone,
+      cursor: page.isDone ? null : page.continueCursor };
+  },
+});
+
+export const accountFenceStatus = internalQuery({
+  args: { tenant: v.string(),subject: v.string() },
+  handler: async (ctx,args) => {
+    if (!args.tenant || !args.subject || args.tenant.length > 200 || args.subject.length > 200)
+      throw new Error("Invalid account fence owner.");
+    return { fenced: !!await ctx.db.query("accountFences").withIndex("by_owner",q =>
+      q.eq("tenant",args.tenant).eq("subject",args.subject)).unique() };
+  },
+});
+
 /** Called only by the distinct operator audit endpoint. There is no un-fence. */
 export const setAccountFence = internalMutation({
   args: { tenant: v.string(),subject: v.string() },

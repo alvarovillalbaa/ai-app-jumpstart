@@ -210,6 +210,18 @@ async function rehearseUpgrade() {
     assert.deepEqual(JSON.parse(fenceOutput).status,"fenced");
     assert.equal(JSON.parse(fenceOutput).created,true);
     assert.equal(fenceOutput.includes("upgrade-owner"),false);
+    const rowArchive = join(directory,"account-rows.ndjson");
+    const exportEnv = { ...upgradeEnv,ACCOUNT_AUDIT_TENANT: "upgrade-tenant",ACCOUNT_AUDIT_SUBJECT: "upgrade-owner" };
+    await run(["node_modules/tsx/dist/cli.mjs","scripts/export-account-rows.ts","--metadata","postgres",
+      "--output",rowArchive,"--stopped"],0,exportEnv);
+    await run(["node_modules/tsx/dist/cli.mjs","scripts/export-account-rows.ts","--verify",rowArchive]);
+    const exported = (await readFile(rowArchive,"utf8")).trimEnd().split("\n").map(line => JSON.parse(line));
+    assert.equal(exported[0].value.owner.subject,"upgrade-owner");
+    assert.ok(exported.some(item => item.type === "row" && item.value.entity === "records" &&
+      item.value.rowJson.includes(recordId)));
+    assert.ok(exported.some(item => item.type === "row" && item.value.entity === "conversationEvents" &&
+      item.value.rowJson.includes(eventId)));
+    assert.equal(exported.some(item => item.type === "row" && item.value.rowJson.includes("other-owner")),false);
     await assert.rejects(() => probe.query("UPDATE app_records SET content='late' WHERE id=$1",[recordId]),/fenced/);
     await assert.rejects(() => probe.query("INSERT INTO app_records(id,tenant,subject,title,content) VALUES($1,'upgrade-tenant','upgrade-owner','Late','No')",[randomUUID()]),/fenced/);
     await assert.rejects(() => probe.query("UPDATE app_uploads SET state='deleting' WHERE id=$1",[uploadId]),/fenced/);
@@ -246,6 +258,15 @@ async function rehearseUpgrade() {
       await fenceConnection.query("ROLLBACK").catch(() => {});
       await fenceConnection.end();await lateWriter.end();
     }
+    await probe.query("ALTER TABLE public.app_records DISABLE TRIGGER app_account_fence_write");
+    try {
+      const unguardedArchive = join(directory,"unguarded-rows.ndjson");
+      await run(["node_modules/tsx/dist/cli.mjs","scripts/fence-account-writes.ts",
+        "--metadata","postgres","--set-permanent"],1,exportEnv);
+      await run(["node_modules/tsx/dist/cli.mjs","scripts/export-account-rows.ts","--metadata","postgres",
+        "--output",unguardedArchive,"--stopped"],1,exportEnv);
+      await assert.rejects(() => stat(unguardedArchive),{ code: "ENOENT" });
+    } finally { await probe.query("ALTER TABLE public.app_records ENABLE TRIGGER app_account_fence_write"); }
     console.log(`Populated ${withSupabase ? "Supabase" : "PostgreSQL"} schema upgrade passed (${names.length - boundary - 1} later migrations).`);
   } catch (error) { await probe.query("ROLLBACK").catch(() => {}); throw error; }
   finally { await probe.end(); }

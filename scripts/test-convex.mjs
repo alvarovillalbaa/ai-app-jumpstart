@@ -117,6 +117,17 @@ try {
   const fenceReport = JSON.parse(fenceOutput);
   if (fenceReport.provider !== "convex" || fenceReport.status !== "fenced" || fenceReport.created !== true ||
       fenceOutput.includes(auditOwner.subject)) throw new Error("Local Convex operator fence failed or exposed its owner.");
+  const rowArchive = join(directory,"account-rows.ndjson");
+  const rowOutput = await command([join(root,"node_modules/tsx/dist/cli.mjs"),"scripts/export-account-rows.ts",
+    "--metadata","convex","--output",rowArchive,"--stopped"],{ cwd: root,env: { ...env,CONVEX_SITE_URL: siteUrl,
+      CONVEX_AUDIT_SECRET: auditSecret,ACCOUNT_AUDIT_TENANT: auditOwner.tenant,ACCOUNT_AUDIT_SUBJECT: auditOwner.subject } });
+  if (JSON.parse(rowOutput).rows !== 1 || rowOutput.includes(auditOwner.subject))
+    throw new Error("Local Convex row export did not preserve only the audit owner.");
+  const verifiedRows = JSON.parse(await command([join(root,"node_modules/tsx/dist/cli.mjs"),
+    "scripts/export-account-rows.ts","--verify",rowArchive],{ cwd: root,env }));
+  if (verifiedRows.provider !== "convex" || verifiedRows.rows !== 1 ||
+      !(await readFile(rowArchive,"utf8")).includes(auditId))
+    throw new Error("Local Convex raw row archive did not verify.");
   const lateWrite = await fetch(`${siteUrl}/app/records`,{ method: "POST",headers: { "content-type": "application/json","x-jumpstart-backend-key": secret },
     body: JSON.stringify({ operation: "create",...auditOwner,id: randomUUID(),title: "Late",content: "private" }),signal: AbortSignal.timeout(5000) });
   if (lateWrite.status !== 500) throw new Error("Local Convex accepted a fenced account write.");

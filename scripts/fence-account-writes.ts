@@ -44,11 +44,16 @@ export async function setPostgresAccountFence(url: string,owner: Owner) {
   await client.connect();
   try {
     await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
-    const result = await client.query(`SELECT c.relname FROM pg_catalog.pg_trigger t
+    const result = await client.query(`SELECT c.relname,t.tgtype,t.tgenabled,p.proname,fn.nspname AS function_schema FROM pg_catalog.pg_trigger t
       JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+      JOIN pg_catalog.pg_proc p ON p.oid=t.tgfoid JOIN pg_catalog.pg_namespace fn ON fn.oid=p.pronamespace
       WHERE n.nspname='public' AND t.tgname='app_account_fence_write' AND NOT t.tgisinternal`);
-    const covered = new Set(result.rows.map(row => row.relname));
-    if (expected.some(table => !covered.has(table))) throw new Error("PostgreSQL account write-fence triggers are incomplete.");
+    const covered = new Map(result.rows.map(row => [row.relname,row]));
+    if (expected.some(table => { const trigger = covered.get(table);return !trigger ||
+      (Number(trigger.tgtype) & 23) !== 23 || !["O","A"].includes(trigger.tgenabled) ||
+      trigger.proname !== "account_fence_guard_write" ||
+      trigger.function_schema !== "app_private"; }))
+      throw new Error("PostgreSQL account write-fence triggers are incomplete.");
     const inserted = await client.query("INSERT INTO app_private.account_fences(tenant,subject) VALUES($1,$2) ON CONFLICT DO NOTHING RETURNING 1",[owner.tenant,owner.subject]);
     await client.query("COMMIT");
     return { format: "ai-app-jumpstart-account-row-fence-v1",provider: "postgres",status: "fenced",created: inserted.rowCount === 1,

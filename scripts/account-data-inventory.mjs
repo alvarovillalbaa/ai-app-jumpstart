@@ -133,6 +133,26 @@ export function accountOwnerCountQueries(provider) {
   });
 }
 
+/** Owner-scoped raw rows for a private operator archive. Joins are sourced from the same classified owner paths as counts. */
+export function accountOwnerRowQueries(provider) {
+  if (provider !== "sqlite" && provider !== "sql") throw new Error("Account row export supports SQLite or PostgreSQL/Supabase.");
+  const entities = new Map(accountDataInventory.map(entry => [entry.entity,entry]));
+  const table = entry => provider === "sql" ? `public.${entry.sql}` : entry.sqlite;
+  const parameters = provider === "sql" ? ["$1","$2"] : ["?","?"];
+  return accountDataInventory.filter(entry => entry[provider] && entry.owner !== "global-expiring" && entry.owner !== "closure-control").map(entry => {
+    let current = entry,index = 0;
+    const joins = [];
+    while (current.owner !== "direct") {
+      const parent = entities.get(current.owner);
+      joins.push(`JOIN ${table(parent)} AS t${index+1} ON t${index}.${current.via[0]}=t${index+1}.${current.via[1]}`);
+      current = parent;index++;
+    }
+    const projection = provider === "sql" ? "row_to_json(t0)::text AS row_json" : "t0.*";
+    const order = provider === "sql" ? "t0.ctid" : "t0.rowid";
+    return { entity: entry.entity,sql: `SELECT ${projection} FROM ${table(entry)} AS t0 ${joins.join(" ")} WHERE t${index}.tenant=${parameters[0]} AND t${index}.subject=${parameters[1]} ORDER BY ${order}` };
+  });
+}
+
 /** Unattributable child rows must be investigated before any erasure claim. */
 export function accountOrphanCountQueries(provider) {
   if (provider !== "sqlite" && provider !== "sql") throw new Error("Account orphan probes support SQLite or PostgreSQL/Supabase.");

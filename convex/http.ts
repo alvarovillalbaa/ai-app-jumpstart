@@ -59,6 +59,10 @@ http.route({ path: "/app/audit", method: "POST", handler: httpAction(async (ctx,
   const parsed = z.discriminatedUnion("operation",[
     z.object({ operation: z.literal("accountPage"),entity: z.enum(accountAuditEntities),
       tenant: z.string().min(1).max(200),subject: z.string().min(1).max(200),cursor: z.string().nullable() }).strict(),
+    z.object({ operation: z.literal("accountRowPage"),entity: z.enum(accountAuditEntities),
+      tenant: z.string().min(1).max(200),subject: z.string().min(1).max(200),cursor: z.string().nullable() }).strict(),
+    z.object({ operation: z.literal("accountFenceStatus"),tenant: z.string().min(1).max(200),
+      subject: z.string().min(1).max(200) }).strict(),
     z.object({ operation: z.literal("setAccountFence"),tenant: z.string().min(1).max(200),
       subject: z.string().min(1).max(200) }).strict(),
   ]).safeParse(raw);
@@ -66,6 +70,11 @@ http.route({ path: "/app/audit", method: "POST", handler: httpAction(async (ctx,
   try {
     if (parsed.data.operation === "setAccountFence")
       return json(await ctx.runMutation(internal.audit.setAccountFence,{ tenant: parsed.data.tenant,subject: parsed.data.subject }));
+    if (parsed.data.operation === "accountFenceStatus")
+      return json(await ctx.runQuery(internal.audit.accountFenceStatus,{ tenant: parsed.data.tenant,subject: parsed.data.subject }));
+    if (parsed.data.operation === "accountRowPage")
+      return json(await ctx.runQuery(internal.audit.accountRowPage,{ entity: parsed.data.entity,
+        tenant: parsed.data.tenant,subject: parsed.data.subject,cursor: parsed.data.cursor }));
     return json(await ctx.runQuery(internal.audit.accountPage,{ entity: parsed.data.entity,
       tenant: parsed.data.tenant,subject: parsed.data.subject,cursor: parsed.data.cursor }));
   } catch { return json({ error: "storage_error" },500); }
