@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomUUID, createHash } from "node:crypto";
+import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { readFile, mkdtemp, rm } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
@@ -13,6 +14,7 @@ const ingress = `jumpstart-public-ingress-${suffix}`;
 const dataVolume = `jumpstart-public-data-${suffix}`;
 const configVolume = `jumpstart-public-config-${suffix}`;
 const directory = await mkdtemp(join(tmpdir(), "jumpstart-public-ingress-"));
+const composeDirectory = join(directory,"compose");
 const rootCert = join(directory, "root.crt");
 const caddyImage = "caddy@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d";
 const nodeImage = "node@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6";
@@ -22,6 +24,7 @@ function compose(args) {
   catch { executable = "docker-compose";prefix = []; }
   return execFileSync(executable,[...prefix,...args],{
     encoding: "utf8",timeout: 30_000,stdio: ["ignore","pipe","pipe"],
+    cwd: composeDirectory,
     env: { ...process.env,APP_DOMAIN: "example.com",POSTGRES_PASSWORD: "fixture-only-compose-check" },
   });
 }
@@ -96,6 +99,12 @@ function startIngress() {
 
 let stage = "setup";
 try {
+  mkdirSync(composeDirectory);mkdirSync(join(composeDirectory,"deploy"));
+  for (const file of ["compose.yaml","compose.postgres.yaml","compose.streaming.yaml","compose.public-https.yaml"])
+    copyFileSync(resolve(file),join(composeDirectory,file));
+  for (const file of ["split-app.Caddyfile","split-app-routes.Caddyfile","public-app.Caddyfile"])
+    copyFileSync(resolve("deploy",file),join(composeDirectory,"deploy",file));
+  writeFileSync(join(composeDirectory,".env.local"),"",{ mode: 0o600 });
   checkCompose(false);checkCompose(true);
   docker("volume","create",dataVolume);docker("volume","create",configVolume);
   docker("run","--detach","--rm","--name",app,"--publish","127.0.0.1::80","--publish","127.0.0.1::443",
