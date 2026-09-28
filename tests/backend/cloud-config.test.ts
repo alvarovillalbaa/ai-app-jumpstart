@@ -126,6 +126,49 @@ it("requires a managed secret reference for the optional upload download keyring
   }
 });
 
+it("keeps optional API-key digests in managed secret references",() => {
+  for (const provider of providers) {
+    const manifest = filled(provider),application = app(provider,manifest);
+    const literals = provider === "aws" ? application.environment : application.env;
+    const secrets = provider === "aws" ? application.secrets : application.env;
+    literals.push({ name: "APP_API_KEYS",value: "private-account-key-digests" });
+    try { validateCloudManifest(provider,manifest);throw new Error("Expected rejection."); }
+    catch (error) { expect(String(error)).toContain("APP_API_KEYS must not be a plaintext");expect(String(error)).not.toContain("private-account-key-digests"); }
+    literals.pop();
+    secrets.push({ ...secrets.find(row => row.name === "AI_GATEWAY_API_KEY")!,name: "APP_API_KEYS" });
+    expect(validateCloudManifest(provider,manifest)).toMatchObject({ secretReferences: 9 });
+    secrets.push({ ...secrets.find(row => row.name === "AI_GATEWAY_API_KEY")!,name: "CRON_SECRET" });
+    expect(validateCloudManifest(provider,manifest)).toMatchObject({ secretReferences: 10 });
+  }
+});
+
+it("requires a declared remote scanner and managed token for cloud scan-on-read",() => {
+  for (const provider of providers) {
+    const manifest = filled(provider),application = app(provider,manifest);
+    const literals = provider === "aws" ? application.environment : application.env;
+    const secrets = provider === "aws" ? application.secrets : application.env;
+    literals.push({ name: "UPLOAD_STORAGE_PROVIDER",value: "supabase" },{ name: "UPLOAD_DOWNLOAD_POLICY",value: "scan-on-read" });
+    secrets.push({ ...secrets.find(row => row.name === "AI_GATEWAY_API_KEY")!,name: "CRON_SECRET" });
+    expect(() => validateCloudManifest(provider,manifest)).toThrow("UPLOAD_SCANNER_TOKEN must use a managed secret reference");
+    literals.push({ name: "UPLOAD_SCANNER_PROVIDER",value: "remote" },
+      { name: "UPLOAD_SCANNER_URL",value: "https://scanner.example.org/v1/scan" });
+    const token = { ...secrets.find(row => row.name === "AI_GATEWAY_API_KEY")!,name: "UPLOAD_SCANNER_TOKEN" };
+    secrets.push(token);
+    expect(validateCloudManifest(provider,manifest)).toMatchObject({ secretReferences: 10 });
+    literals.push({ name: "UPLOAD_AGENT_POLICY",value: "reviewed-text" });
+    expect(() => validateCloudManifest(provider,manifest)).not.toThrow();
+    literals.find(row => row.name === "UPLOAD_DOWNLOAD_POLICY")!.value = "off";
+    expect(() => validateCloudManifest(provider,manifest)).toThrow("Reviewed agent uploads need scan-on-read");
+    literals.find(row => row.name === "UPLOAD_DOWNLOAD_POLICY")!.value = "scan-on-read";
+    literals.find(row => row.name === "UPLOAD_SCANNER_URL")!.value = "http://scanner.example.org/v1/scan";
+    expect(() => validateCloudManifest(provider,manifest)).toThrow("valid literal HTTPS UPLOAD_SCANNER_URL");
+    literals.find(row => row.name === "UPLOAD_SCANNER_URL")!.value = "https://scanner.example.org/v1/scan";
+    delete token.secretRef;delete token.valueFrom;token.value = "private-scanner-token-value";
+    try { validateCloudManifest(provider,manifest);throw new Error("Expected rejection."); }
+    catch (error) { expect(String(error)).toContain("UPLOAD_SCANNER_TOKEN must not be a plaintext");expect(String(error)).not.toContain("private-scanner-token-value"); }
+  }
+});
+
 it("rejects unresolved markers, mutable image tags and missing combined readiness",() => {
   for (const provider of providers) {
     expect(() => validateCloudManifest(provider,templates[provider])).toThrow("unresolved REPLACE_");

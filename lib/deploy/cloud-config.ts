@@ -1,5 +1,6 @@
 import { requestsPerMinute } from "../request-limits/settings";
 import { awsS3Settings } from "../uploads/aws-s3";
+import { remoteScannerSettings } from "../uploads/scanner";
 export type CloudProvider = "aws" | "azure" | "gcp";
 type JsonObject = Record<string,unknown>;
 
@@ -176,17 +177,36 @@ export function validateCloudManifest(provider: CloudProvider,raw: unknown,templ
       UPLOAD_S3_BUCKET: appEnv.get("UPLOAD_S3_BUCKET")?.value as string | undefined }); }
     catch { fail("AWS S3 uploads need valid literal UPLOAD_S3_REGION and UPLOAD_S3_BUCKET values."); }
   }
+  const downloadPolicy = appEnv.get("UPLOAD_DOWNLOAD_POLICY")?.value;
+  if (appEnv.has("UPLOAD_DOWNLOAD_POLICY") && downloadPolicy !== "off" && downloadPolicy !== "scan-on-read")
+    fail("UPLOAD_DOWNLOAD_POLICY must be off or scan-on-read.");
+  const agentUploadPolicy = appEnv.get("UPLOAD_AGENT_POLICY")?.value;
+  if (appEnv.has("UPLOAD_AGENT_POLICY") && agentUploadPolicy !== "off" && agentUploadPolicy !== "reviewed-text")
+    fail("UPLOAD_AGENT_POLICY must be off or reviewed-text.");
+  if (agentUploadPolicy === "reviewed-text" && downloadPolicy !== "scan-on-read")
+    fail("Reviewed agent uploads need scan-on-read downloads on the cloud app and worker.");
+  const scannerConfigured = ["UPLOAD_SCANNER_PROVIDER","UPLOAD_SCANNER_URL","UPLOAD_SCANNER_TOKEN","UPLOAD_CLAMD_SOCKET"]
+    .some(name => appEnv.has(name));
+  if (scannerConfigured || downloadPolicy === "scan-on-read") {
+    if (!uploadProvider) fail("Cloud upload scanning needs a configured private object backend.");
+    if (!appEnv.has("UPLOAD_SCANNER_TOKEN")) fail("UPLOAD_SCANNER_TOKEN must use a managed secret reference.");
+    try { remoteScannerSettings({ UPLOAD_SCANNER_PROVIDER: appEnv.get("UPLOAD_SCANNER_PROVIDER")?.value as string | undefined,
+      UPLOAD_SCANNER_URL: appEnv.get("UPLOAD_SCANNER_URL")?.value as string | undefined,
+      UPLOAD_SCANNER_TOKEN: "x".repeat(32),UPLOAD_CLAMD_SOCKET: appEnv.get("UPLOAD_CLAMD_SOCKET")?.value as string | undefined }); }
+    catch { fail("Cloud upload scanning needs a remote provider and a valid literal HTTPS UPLOAD_SCANNER_URL."); }
+  }
   const required = ["WORKFLOW_POSTGRES_URL","SUPABASE_AUTH_URL","SUPABASE_PUBLISHABLE_KEY",
     "AI_CREATION_SIGNING_JSON","AI_BUDGET_POLICY_JSON","AI_GATEWAY_API_KEY",
     ...(dataProvider === "supabase" ? ["SUPABASE_URL","SUPABASE_SECRET_KEY"] :
       dataProvider === "postgres" ? ["DATABASE_URL"] : ["CONVEX_SITE_URL","CONVEX_BACKEND_SECRET"]),
     ...(uploadProvider === "supabase" && dataProvider !== "supabase" ? ["SUPABASE_URL","SUPABASE_SECRET_KEY"] : []),
-    ...(uploadProvider ? ["CRON_SECRET"] : []),
-    ...(appEnv.has("UPLOAD_DOWNLOAD_SIGNING_JSON") ? ["UPLOAD_DOWNLOAD_SIGNING_JSON"] : []),
+    ...(uploadProvider || appEnv.has("CRON_SECRET") ? ["CRON_SECRET"] : []),
+    ...["APP_API_KEYS","UPLOAD_SCANNER_TOKEN","UPLOAD_DOWNLOAD_SIGNING_JSON"].filter(name => appEnv.has(name)),
     ...["AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","AWS_SESSION_TOKEN"].filter(name => appEnv.has(name))];
   for (const name of ["WORKFLOW_POSTGRES_URL","SUPABASE_AUTH_URL","SUPABASE_PUBLISHABLE_KEY",
     "AI_CREATION_SIGNING_JSON","AI_BUDGET_POLICY_JSON","AI_GATEWAY_API_KEY",
-    "SUPABASE_SECRET_KEY","DATABASE_URL","CONVEX_BACKEND_SECRET","CRON_SECRET","AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","AWS_SESSION_TOKEN"]) {
+    "SUPABASE_SECRET_KEY","DATABASE_URL","CONVEX_BACKEND_SECRET","CRON_SECRET","APP_API_KEYS","UPLOAD_SCANNER_TOKEN","UPLOAD_DOWNLOAD_SIGNING_JSON",
+    "AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","AWS_SESSION_TOKEN"]) {
     if (appEnv.get(name)?.value !== undefined) fail(`${name} must not be a plaintext environment value.`);
   }
   for (const name of required) requireSecret(appEnv,name,provider,secretNames,template);
