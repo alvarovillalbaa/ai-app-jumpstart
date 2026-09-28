@@ -13,6 +13,8 @@ const name = `jumpstart-contract-${randomBytes(6).toString("hex")}`;
 const restoredName = `${name}-restored`;
 const volume = `${name}-data`;
 const eveVolume = `${name}-eve`;
+const uploadVolume = `${name}-uploads`;
+const restoredUploadVolume = `${name}-restored-uploads`;
 const backupVolume = `${name}-backup`;
 const restoredVolume = `${name}-restored-data`;
 const restoredEveVolume = `${name}-restored-eve`;
@@ -53,12 +55,15 @@ try {
   const hostPort = listener.address().port;
   await new Promise(resolve => listener.close(resolve));
   const origin = `http://127.0.0.1:${hostPort}`;
-  await writeFile(join(directory, "env"), `APP_ORIGIN=${origin}\nAPP_API_KEYS=${JSON.stringify(keys)}\nDATA_PROVIDER=sqlite\nSQLITE_PATH=/app/.data/app.sqlite\n`, { mode: 0o600 });
-  for (const selected of [volume,eveVolume,backupVolume,restoredVolume,restoredEveVolume]) await docker("volume", "create", selected);
+  await writeFile(join(directory, "env"), `APP_ORIGIN=${origin}\nAPP_API_KEYS=${JSON.stringify(keys)}\nDATA_PROVIDER=sqlite\nSQLITE_PATH=/app/.data/app.sqlite\nUPLOAD_STORAGE_PROVIDER=local\nUPLOAD_LOCAL_ROOT=/var/lib/jumpstart/uploads\n`, { mode: 0o600 });
+  for (const selected of [volume,eveVolume,uploadVolume,backupVolume,restoredVolume,restoredEveVolume,restoredUploadVolume]) await docker("volume", "create", selected);
   await docker("run", "--detach", "--init", "--name", name, "--publish", `127.0.0.1:${hostPort}:3000`, "--env-file", join(directory, "env"),
-    "--mount", `type=volume,source=${volume},target=/app/.data`,"--mount", `type=volume,source=${eveVolume},target=/app/.eve`,image);
+    "--mount", `type=volume,source=${volume},target=/app/.data`,"--mount", `type=volume,source=${eveVolume},target=/app/.eve`,
+    "--mount", `type=volume,source=${uploadVolume},target=/var/lib/jumpstart`,image);
   await ready(origin);
   assert.notEqual(await docker("exec", name, "id", "-u"), "0", "App must run as a non-root user");
+  const uploadProof = `private-volume-${name}`;
+  await docker("exec", name, "node", "-e", "const fs = require('node:fs'); fs.mkdirSync('/var/lib/jumpstart/uploads', { mode: 0o700 }); fs.writeFileSync('/var/lib/jumpstart/uploads/persistence-proof', process.argv[1], { mode: 0o600 });", uploadProof);
   const headers = { authorization: `Bearer ${tokens[0]}`, "content-type": "application/json", origin };
   const created = await fetch(`${origin}/api/v1/records`, { method: "POST", headers, body: JSON.stringify({ title: "Persisted container record", content: "API, MCP and CLI share this record." }) });
   assert.equal(created.status, 201);
@@ -67,9 +72,9 @@ try {
   await docker("stop", "--time", "20", name);
   const backupMount = `type=volume,source=${backupVolume},target=/app/.backup`;
   const snapshot = "/app/.backup/snapshot",restoredRoot = "/app/.backup/restored";
-  const localSnapshot = await docker("run", "--rm", "--volumes-from", name, "--mount", backupMount, "--entrypoint", "node", image,
+  const localSnapshot = await docker("run", "--rm", "--volumes-from", name, "--mount", backupMount, "--env-file", join(directory, "env"), "--entrypoint", "node", image,
     "scripts/backup-local.mjs", "--create", "--app-db", "/app/.data/app.sqlite",
-    "--workflow-dir", "/app/.eve/.workflow-data", "--no-uploads", "--output", snapshot, "--stopped");
+    "--workflow-dir", "/app/.eve/.workflow-data", "--uploads-dir", "/var/lib/jumpstart/uploads", "--output", snapshot, "--stopped");
   assert.match(localSnapshot, /Verified local snapshot:/);
   assert.match(await docker("run", "--rm", "--mount", backupMount, "--entrypoint", "node", image,
     "scripts/backup-local.mjs", "--verify", snapshot), /Local snapshot verified:/);
@@ -78,12 +83,17 @@ try {
   assert.match(await docker("run", "--rm", "--mount", backupMount,
     "--mount", `type=volume,source=${restoredVolume},target=/app/.data`,
     "--mount", `type=volume,source=${restoredEveVolume},target=/app/.eve`,
-    "--entrypoint", "node", image, "scripts/backup-local.mjs", "--install", restoredRoot,
-    "--app-db", "/app/.data/app.sqlite", "--workflow-dir", "/app/.eve/.workflow-data", "--stopped"), /Installed verified snapshot/);
+    "--mount", `type=volume,source=${restoredUploadVolume},target=/var/lib/jumpstart`,
+    "--env-file", join(directory, "env"), "--entrypoint", "node", image, "scripts/backup-local.mjs", "--install", restoredRoot,
+    "--app-db", "/app/.data/app.sqlite", "--workflow-dir", "/app/.eve/.workflow-data",
+    "--uploads-dir", "/var/lib/jumpstart/uploads", "--stopped"), /Installed verified snapshot/);
   await docker("run", "--detach", "--init", "--name", restoredName, "--publish", `127.0.0.1:${hostPort}:3000`, "--env-file", join(directory, "env"),
     "--mount", `type=volume,source=${restoredVolume},target=/app/.data`,
-    "--mount", `type=volume,source=${restoredEveVolume},target=/app/.eve`,image);
+    "--mount", `type=volume,source=${restoredEveVolume},target=/app/.eve`,
+    "--mount", `type=volume,source=${restoredUploadVolume},target=/var/lib/jumpstart`,image);
   await ready(origin,restoredName);
+  assert.equal(await docker("exec", restoredName, "node", "-e", "process.stdout.write(require('node:fs').readFileSync('/var/lib/jumpstart/uploads/persistence-proof', 'utf8'))"), uploadProof,
+    "Private upload bytes must survive a fresh-volume restore");
   const restored = await fetch(`${origin}/api/v1/records/${record.id}`, { headers });
   assert.equal(restored.status, 200);
   assert.deepEqual(await restored.json(), record);
@@ -93,7 +103,7 @@ try {
   });
   assert.match(smoke, /Hosted smoke passed for/);
   assert.equal((await fetch(`${origin}/api/v1/records/${record.id}?revision=1`, { method: "DELETE", headers })).status, 204);
-  console.log("Container passed: non-root runtime, off-volume private snapshot, fresh-volume restore, owner isolation, REST, MCP and CLI.");
+  console.log("Container passed: non-root runtime, private uploads in a persistent volume and fresh-volume restore, owner isolation, REST, MCP and CLI.");
 } catch (error) {
   console.error(error instanceof Error ? error.message : "Container validation failed.");
   console.error(await docker("logs", "--tail", "80", restoredName).catch(() => "No restored container logs available."));
@@ -102,6 +112,6 @@ try {
 } finally {
   await docker("rm", "--force", restoredName).catch(() => {});
   await docker("rm", "--force", name).catch(() => {});
-  for (const selected of [volume,eveVolume,backupVolume,restoredVolume,restoredEveVolume]) await docker("volume", "rm", selected).catch(() => {});
+  for (const selected of [volume,eveVolume,uploadVolume,backupVolume,restoredVolume,restoredEveVolume,restoredUploadVolume]) await docker("volume", "rm", selected).catch(() => {});
   await rm(directory, { recursive: true, force: true });
 }

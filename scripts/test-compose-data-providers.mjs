@@ -45,6 +45,8 @@ try {
       assert.equal(app.environment.SQLITE_PATH, "/app/.data/app.sqlite");
       assert.equal(app.environment.APP_ORIGIN, "https://app.example.com");
       assert.equal(config.services.postgres, undefined, "External providers must not start a bundled database");
+      assert.ok(app.volumes.some(volume => volume.target === "/var/lib/jumpstart" && volume.type === "volume"),
+        "The private upload directory parent must use a persistent named volume");
       if (provider === "postgres") assert.equal(app.environment.DATABASE_URL, "postgresql://fixture:fixture@database.example:5432/app");
       if (provider === "supabase") {
         assert.equal(app.environment.SUPABASE_URL, "https://project.example");

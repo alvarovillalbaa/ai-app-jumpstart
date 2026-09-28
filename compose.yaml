@@ -9,8 +9,10 @@ services:
     volumes:
       - app-data:/app/.data
       - eve-data:/app/.eve
+      - upload-data:/var/lib/jumpstart
     restart: unless-stopped
     stop_grace_period: 30s
 volumes:
   app-data:
   eve-data:
+  upload-data:
