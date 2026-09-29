@@ -3,8 +3,17 @@ import { isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "pg";
 
-const nativeTables = ["workflow_runs", "workflow_steps", "workflow_events", "workflow_hooks",
+export const nativeTables = ["workflow_runs", "workflow_steps", "workflow_events", "workflow_hooks",
   "workflow_stream_chunks", "workflow_waits", "workflow_event_slots"];
+
+export const linkedRunsCte = `WITH RECURSIVE linked(id) AS (
+  SELECT id FROM workflow.workflow_runs WHERE id = ANY($1::text[])
+    OR attributes->>'$eve.root' = ANY($1::text[])
+    OR attributes->>'$eve.parent' = ANY($1::text[])
+  UNION
+  SELECT child.id FROM workflow.workflow_runs child JOIN linked parent
+    ON child.attributes->>'$eve.parent' = parent.id OR child.attributes->>'$eve.root' = parent.id
+)`;
 
 function count(value) {
   const number = Number(value);
@@ -63,14 +72,7 @@ export async function inspectAccountWorkflow(metadataProvider, owner, env) {
     if (nativeTables.some(table => !present.has(table) || present.get(table)) ||
         [...present.keys()].some(table => table.startsWith("workflow_") && !nativeTables.includes(table)))
       throw new Error("Unsupported or restricted Workflow schema.");
-    const result = await db.query(`WITH RECURSIVE linked(id) AS (
-        SELECT id FROM workflow.workflow_runs WHERE id = ANY($1::text[])
-          OR attributes->>'$eve.root' = ANY($1::text[])
-          OR attributes->>'$eve.parent' = ANY($1::text[])
-        UNION
-        SELECT child.id FROM workflow.workflow_runs child JOIN linked parent
-          ON child.attributes->>'$eve.parent' = parent.id OR child.attributes->>'$eve.root' = parent.id
-      )
+    const result = await db.query(`${linkedRunsCte}
       SELECT
         (SELECT count(*) FROM linked) AS runs,
         (SELECT count(*) FROM workflow.workflow_steps WHERE run_id IN (SELECT id FROM linked)) AS steps,

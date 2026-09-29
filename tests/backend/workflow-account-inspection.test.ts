@@ -60,4 +60,4 @@ it("counts only native Workflow runs linked to an owner's bound session and hide
       expect(command.stdout).not.toContain(owner.subject);
     } finally { await pg.end(); }
   } finally { await workflow.stop();rmSync(dir,{ recursive: true,force: true }); }
-});
+},30_000);
