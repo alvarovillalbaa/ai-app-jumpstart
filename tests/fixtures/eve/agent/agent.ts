@@ -3,8 +3,13 @@ import { mockModel } from "eve/evals";
 export default defineAgent({
   defaultTools: false,
   modelContextWindowTokens: 8192,
-  model: mockModel(({ lastUserMessage, toolResults }) => {
+  model: mockModel(({ lastUserMessage, userMessages, toolResults }) => {
     const message = lastUserMessage ?? "";
+    if (message.includes("What project codename did I give you?"))
+      return userMessages.some(userMessage => userMessage.includes("cobalt-orchid-47"))
+        ? "cobalt-orchid-47" : "I cannot recall a codename from this conversation.";
+    if (message.includes("Remember this project codename for our conversation:"))
+      return "OK, I will remember it for this conversation.";
     if (message.includes("provider-429-fixture"))
       throw Object.assign(new Error("Fixture model rate limit"), { statusCode: 429 });
     if (message.includes("provider-503-fixture"))
