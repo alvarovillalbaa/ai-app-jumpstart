@@ -209,7 +209,46 @@ async function browserRead({ origin, token, otherToken, protection, title }) {
   } finally { await browser.close(); }
 }
 
-async function runAgentSmoke({ origin, token, otherToken, protection, request }) {
+function checkedModelReceipt({ expectedModel,maxObservedMicros }) {
+  assert.ok(typeof expectedModel === "string" && expectedModel.trim() === expectedModel && expectedModel.length > 0 && expectedModel.length <= 200,
+    "APP_SMOKE_EXPECTED_MODEL must be an exact nonempty model ID");
+  assert.ok(Number.isSafeInteger(maxObservedMicros) && maxObservedMicros > 0 && maxObservedMicros <= 1_000_000_000_000,
+    "APP_SMOKE_MAX_OBSERVED_MICROS must be a positive integer");
+}
+
+export async function verifyHostedModelReceipt({ request, token, operationId, sourceModels, expectedModel, maxObservedMicros, timeoutMs = 30_000 }) {
+  checkedModelReceipt({ expectedModel,maxObservedMicros });
+  assert.deepEqual([...sourceModels].sort(),[expectedModel],"Hosted source stream did not use only the expected model");
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    let cursor = null,receipt = null;
+    for (let pageNumber = 0; pageNumber < 100; pageNumber++) {
+      const query = new URLSearchParams({ limit: "100", ...(cursor === null ? {} : { cursor }) });
+      const response = await request(`/api/v1/usage/reservations?${query}`,{
+        headers: { authorization: `Bearer ${token}` },
+        timeoutMs: Math.max(1,Math.min(5000,deadline-Date.now())),
+      });
+      assert.equal(response.status,200,"Owner reservation history failed");
+      const page = await response.json();
+      assert.ok(Array.isArray(page.items) && (page.nextCursor === null || typeof page.nextCursor === "string"),
+        "Owner reservation page is invalid");
+      receipt = page.items.find(item => item.operationId === operationId) ?? null;
+      if (receipt || page.nextCursor === null) break;
+      assert.notEqual(page.nextCursor,cursor,"Owner reservation cursor did not advance");
+      cursor = page.nextCursor;
+    }
+    if (receipt?.status === "settled") {
+      assert.ok(Number.isSafeInteger(receipt.actualMicros) && receipt.actualMicros > 0,
+        "Hosted model cost is unknown or zero");
+      assert.ok(receipt.actualMicros <= maxObservedMicros,"Hosted model cost exceeded the observed-cost threshold");
+      return { modelId: expectedModel,actualMicros: receipt.actualMicros };
+    }
+    await new Promise(resolve => setTimeout(resolve,250));
+  }
+  throw new Error(`Hosted model cost did not settle for operation ${operationId}`);
+}
+
+async function runAgentSmoke({ origin, token, otherToken, protection, request, modelReceipt }) {
   const operationId = randomUUID();
   console.log(`Agent smoke operation: ${operationId}`);
   const authorized = { authorization: `Bearer ${token}` };
@@ -293,6 +332,7 @@ async function runAgentSmoke({ origin, token, otherToken, protection, request })
     "Other account can read the agent source stream");
   let sourceIndex = 0, sourceEvents = 0, lastSelected = -1;
   let sourceAnswer = false, sourceCompleted = false, sourceTail = false;
+  const sourceModels = new Set();
   for (let pageNumber = 0; pageNumber < 100; pageNumber++) {
     const query = new URLSearchParams({ startIndex: String(sourceIndex), limit: "50" });
     const response = await request(`${sourcePath}?${query}`, { headers: authorized });
@@ -310,21 +350,25 @@ async function runAgentSmoke({ origin, token, otherToken, protection, request })
       if (entry.payload?.kind === "message" && entry.payload.role === "assistant" &&
         entry.payload.parts?.some(part => part.type === "text" && part.text?.trim())) sourceAnswer = true;
       if (entry.payload?.kind === "run" && entry.payload.state === "completed") sourceCompleted = true;
+      if (entry.payload?.kind === "model" && typeof entry.payload.modelId === "string") sourceModels.add(entry.payload.modelId);
     }
     sourceIndex = page.nextIndex;
     if (page.complete) { sourceTail = true; break; }
     assert.ok(page.scanned > 0, "Agent source cursor did not advance");
   }
   assert.ok(sourceTail && sourceAnswer && sourceCompleted, `Agent source stream is incomplete for operation ${operationId}`);
-  return { operationId, sessionId: conversation.sessionId, sourceEvents, sourceIndex };
+  const receipt = modelReceipt ? await verifyHostedModelReceipt({ request,token,operationId,sourceModels,...modelReceipt }) : undefined;
+  return { operationId, sessionId: conversation.sessionId, sourceEvents, sourceIndex,receipt };
 }
 
 /**
- * @param {{url: string,token: string,otherToken: string,accounts?: boolean,agent?: boolean,browser?: boolean,accountBrowser?: boolean,requestLimit?: boolean,uploads?: boolean,uploadDownload?: boolean,contract?: boolean,browserAccounts?: import("./helpers/hosted-account-browser.mjs").AccountBrowserCredentials}} options
+ * @param {{url: string,token: string,otherToken: string,accounts?: boolean,agent?: boolean,browser?: boolean,accountBrowser?: boolean,requestLimit?: boolean,uploads?: boolean,uploadDownload?: boolean,contract?: boolean,modelReceipt?: {expectedModel: string,maxObservedMicros: number},browserAccounts?: import("./helpers/hosted-account-browser.mjs").AccountBrowserCredentials}} options
  */
-export async function runHostedSmoke({ url, token, otherToken, accounts = false, agent = false, browser = false,accountBrowser = false,requestLimit = false,uploads = false,uploadDownload = false,contract = false,browserAccounts }) {
+export async function runHostedSmoke({ url, token, otherToken, accounts = false, agent = false, browser = false,accountBrowser = false,requestLimit = false,uploads = false,uploadDownload = false,contract = false,modelReceipt,browserAccounts }) {
   const origin = targetOrigin(url);
   if (agent && !accounts) throw new Error("Agent smoke requires the two-account mode.");
+  if (modelReceipt && !agent) throw new Error("Model receipt smoke requires an explicit agent turn.");
+  if (modelReceipt) checkedModelReceipt(modelReceipt);
   if (!token || !otherToken || token === otherToken) throw new Error("Set distinct APP_API_TOKEN and APP_API_OTHER_TOKEN with record read/write access for different owners.");
   const checkedAccounts = accountBrowser ? checkedBrowserAccounts(browserAccounts) : undefined;
   const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
@@ -465,7 +509,7 @@ export async function runHostedSmoke({ url, token, otherToken, accounts = false,
   if (failure && cleanupFailure) throw new Error(`${message(failure)}; cleanup: ${message(cleanupFailure)}`);
   if (failure) throw failure;
   if (cleanupFailure) throw cleanupFailure;
-  const agentResult = agent ? await runAgentSmoke({ origin, token, otherToken, protection, request }) : undefined;
+  const agentResult = agent ? await runAgentSmoke({ origin, token, otherToken, protection, request,modelReceipt }) : undefined;
   if (checkedAccounts && agentResult) await accountBrowserRead({ origin,protection,accounts: checkedAccounts,operationId: agentResult.operationId });
   return { origin, recordId: record.id, uploadId, agent: agentResult, browser,accountBrowser,requestLimit,contract };
 }
@@ -473,14 +517,15 @@ export async function runHostedSmoke({ url, token, otherToken, accounts = false,
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   const flags = new Set(args);
-  if (flags.size !== args.length || args.some(arg => !["--accounts", "--agent", "--browser","--account-browser","--request-limit","--uploads","--upload-download","--contract"].includes(arg))) {
-    console.error("Supported options: --accounts (budget access, no model call), --agent (one owned model turn), --browser (token records UI), --account-browser (real sign-in, reload, logout and account isolation), --request-limit (active registered-owner admission across REST/CLI/MCP), --uploads (private upload isolation and cleanup), --upload-download (also require fresh-scanned exact bytes), --contract (exact deployed OpenAPI revision and successful REST response schemas).");
+  if (flags.size !== args.length || args.some(arg => !["--accounts", "--agent", "--model-receipt", "--browser","--account-browser","--request-limit","--uploads","--upload-download","--contract"].includes(arg))) {
+    console.error("Supported options: --accounts (budget access, no model call), --agent (one owned model turn), --model-receipt (exact model and settled nonzero cost), --browser (token records UI), --account-browser (real sign-in, reload, logout and account isolation), --request-limit (active registered-owner admission across REST/CLI/MCP), --uploads (private upload isolation and cleanup), --upload-download (also require fresh-scanned exact bytes), --contract (exact deployed OpenAPI revision and successful REST response schemas).");
     process.exitCode = 2;
   } else {
-    const agent = flags.has("--agent"),accountBrowser = flags.has("--account-browser"),accounts = agent || flags.has("--accounts"), browser = flags.has("--browser"),requestLimit = flags.has("--request-limit"),uploadDownload = flags.has("--upload-download"),uploads = flags.has("--uploads") || uploadDownload,contract = flags.has("--contract");
-    runHostedSmoke({ url: process.env.APP_API_URL, token: process.env.APP_API_TOKEN, otherToken: process.env.APP_API_OTHER_TOKEN, accounts, agent, browser,accountBrowser,requestLimit,uploads,uploadDownload,contract,
+    const agent = flags.has("--agent"),accountBrowser = flags.has("--account-browser"),accounts = agent || flags.has("--accounts"), browser = flags.has("--browser"),requestLimit = flags.has("--request-limit"),uploadDownload = flags.has("--upload-download"),uploads = flags.has("--uploads") || uploadDownload,contract = flags.has("--contract"),modelReceipt = flags.has("--model-receipt")
+      ? { expectedModel: process.env.APP_SMOKE_EXPECTED_MODEL,maxObservedMicros: Number(process.env.APP_SMOKE_MAX_OBSERVED_MICROS) } : undefined;
+    runHostedSmoke({ url: process.env.APP_API_URL, token: process.env.APP_API_TOKEN, otherToken: process.env.APP_API_OTHER_TOKEN, accounts, agent, browser,accountBrowser,requestLimit,uploads,uploadDownload,contract,modelReceipt,
       browserAccounts: accountBrowser ? { primary: { email: process.env.APP_SMOKE_EMAIL,password: process.env.APP_SMOKE_PASSWORD },other: { email: process.env.APP_SMOKE_OTHER_EMAIL,password: process.env.APP_SMOKE_OTHER_PASSWORD } } : undefined })
-      .then(({ origin }) => console.log(`Hosted smoke passed for ${origin}: readiness, Eve, web, ${accounts ? "Supabase accounts, " : ""}REST, keyed creation recovery/deletion, owner isolation, CLI and MCP${contract ? ", exact OpenAPI revision and REST response schemas" : ""}${requestLimit ? ", active owner request admission" : ""}${uploads ? ", private upload and cleanup" : ""}${uploadDownload ? ", fresh-scanned exact download bytes" : ""}${browser ? ", Chromium records UI" : ""}${agent ? ", one owned agent turn and source-stream read" : ""}${accountBrowser ? ", real account sign-in/reload/logout and browser isolation" : ""}.`))
+      .then(({ origin }) => console.log(`Hosted smoke passed for ${origin}: readiness, Eve, web, ${accounts ? "Supabase accounts, " : ""}REST, keyed creation recovery/deletion, owner isolation, CLI and MCP${contract ? ", exact OpenAPI revision and REST response schemas" : ""}${requestLimit ? ", active owner request admission" : ""}${uploads ? ", private upload and cleanup" : ""}${uploadDownload ? ", fresh-scanned exact download bytes" : ""}${browser ? ", Chromium records UI" : ""}${agent ? ", one owned agent turn and source-stream read" : ""}${modelReceipt ? ", exact model and settled cost receipt" : ""}${accountBrowser ? ", real account sign-in/reload/logout and browser isolation" : ""}.`))
       .catch(error => { console.error(message(error)); process.exitCode = 1; });
   }
 }
