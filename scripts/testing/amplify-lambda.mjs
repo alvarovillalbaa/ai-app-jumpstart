@@ -41,7 +41,7 @@ const server = createServer(async (request, response) => {
     for await (const chunk of request) {
       size += chunk.length; if (size > 1024 * 1024) throw new Error("Fixture input too large"); chunks.push(chunk);
     }
-    const parameters = {};
+    const parameters = Object.create(null);
     for (const [key, value] of url.searchParams) (parameters[key] ??= []).push(value);
     const event = { path: url.pathname, httpMethod: request.method, headers: request.headers,
       multiValueHeaders: { cookie: request.headers.cookie?.split(";").map(value => value.trim()) },

@@ -71,6 +71,8 @@ try {
     env: { ...env, PORT: String(port), AWS_REGION: "us-east-1", AWS_LAMBDA_FUNCTION_NAME: "local-adapter-fixture",
       TEST_APP_ROOT: root, TEST_EVE_ORIGIN: `http://127.0.0.1:${evePort}` }, stdio: ["ignore", "pipe", "pipe", "ipc"] }));
   await ready(`${origin}/api/health/live`);
+  const reservedQuery = await fetch(`${origin}/api/health/live?__proto__=fixture&constructor=fixture`, { signal: AbortSignal.timeout(5000) });
+  assert.equal(reservedQuery.status, 200, "Reserved query parameter names must remain ordinary query data");
   const cleanupUrl = `${origin}/api/internal/uploads/cleanup`;
   assert.equal((await fetch(cleanupUrl, { headers: { authorization: `Bearer ${"w".repeat(64)}` }, signal: AbortSignal.timeout(5000) })).status, 401);
   const cleanup = await fetch(cleanupUrl, { headers: { authorization: `Bearer ${cronSecret}` }, signal: AbortSignal.timeout(5000) });
