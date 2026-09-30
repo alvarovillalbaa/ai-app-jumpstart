@@ -6,6 +6,8 @@ The exact-head [Quality run](https://github.com/alvarovillalbaa/ai-app-jumpstart
 
 The prior `security-extended` pull-request scan reported 29 alerts (23 high, 6 medium), mostly filesystem-race findings in scripts and tests. The required CodeQL workflow now runs the default suite; a separate weekly/manual workflow retains the extended suite. GitHub cannot dispatch that workflow until it reaches the default branch, so the prior alerts remain a review queue and have not been claimed as cleared. The template code is MIT-licensed. The public repository's `main` remains the initial `eff9f39` scaffold, the GitHub template flag is off, and PR #1 remains unmerged and in draft.
 
+Commit `326dba1` additionally opens the offline application-row and Workflow archive inputs in nonblocking mode before descriptor validation, so a named pipe cannot stall CLI verification. Regression cases exercise prompt FIFO refusal for both archive verifiers; the focused two-file suite (four tests), typecheck and changed-file ESLint passed locally. These checks do not clear the prior extended-scan findings or certify every filesystem-race path.
+
 Hosted control-plane and runtime acceptance remains open. The verification above covers local builds, fixtures and disposable provider services; no hosted Vercel/Supabase project, AWS/Azure/GCP or Amplify deployment, or paid model turn was exercised. These require the intended provider accounts and an explicitly authorized staging release.
 
 The following entries preserve dated implementation evidence from earlier revisions; their commit and run results are historical unless the current snapshot above cites them.
