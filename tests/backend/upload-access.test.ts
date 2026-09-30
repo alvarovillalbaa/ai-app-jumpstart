@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp,readFile,rm,stat,writeFile } from "node:fs/promises";
+import { mkdtemp,readFile,rm,stat,symlink,writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach,expect,it,vi } from "vitest";
@@ -72,6 +72,18 @@ it("uses the authenticated binary HTTP path from CLI for put, list, get and dele
     expect(await run(["uploads","list"],env,request)).toEqual({ items: [],usage: { files: 0,bytes: 0 } });
     await expect(run(["uploads","get",row.id],env,request)).rejects.toThrow("HTTP 404");
   } finally { await catalog.close();await rm(directory,{ recursive: true,force: true }); }
+});
+
+it("rejects symlinked CLI upload inputs before making an API request",async () => {
+  const directory = await mkdtemp(join(tmpdir(),"jumpstart-upload-cli-link-"));
+  const target = join(directory,"private.txt"),link = join(directory,"upload.txt");
+  await writeFile(target,"private bytes");
+  await symlink(target,link);
+  const request = vi.fn<typeof fetch>().mockResolvedValue(new Response("{}"));
+  try {
+    await expect(run(["uploads","put",link],{ APP_API_TOKEN: token },request)).rejects.toThrow("without symbolic links");
+    expect(request).not.toHaveBeenCalled();
+  } finally { await rm(directory,{ recursive: true,force: true }); }
 });
 
 it("exposes only owned quarantine metadata through MCP tools and resources",async () => {

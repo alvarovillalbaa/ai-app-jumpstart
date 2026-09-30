@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { uploadReview,uploadReviewInput,extractedUploadText } from "../lib/uploads/review-contract";
-import { readFile,stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat,open,readFile,stat } from "node:fs/promises";
 import { basename } from "node:path";
 import { historyOptions, historyPatch, operationId } from "../lib/agent-access/contract";
 import { preferences,preferencePatch } from "../lib/preferences/contract";
@@ -24,6 +25,39 @@ const seedPage = z.object({
   items: z.array(recordInput.extend({ id: recordId }).passthrough()),
   nextCursor: recordId.nullable(),
 });
+
+async function readUploadFile(file: string): Promise<Buffer> {
+  const pathInfo = await lstat(file,{ bigint: true });
+  if (!pathInfo.isFile()) throw new Error("Upload input must be a regular file without symbolic links.");
+  if (pathInfo.size < BigInt(1) || pathInfo.size > BigInt(MAX_API_UPLOAD_BYTES)) throw new Error("Upload file must be 1 byte to 4 MiB.");
+
+  const flags = constants.O_RDONLY | constants.O_NONBLOCK | (constants.O_NOFOLLOW ?? 0);
+  const handle = await open(file,flags);
+  try {
+    const before = await handle.stat({ bigint: true });
+    if (!before.isFile() || before.dev !== pathInfo.dev || before.ino !== pathInfo.ino ||
+      before.size !== pathInfo.size || before.mtimeNs !== pathInfo.mtimeNs || before.ctimeNs !== pathInfo.ctimeNs) {
+      throw new Error("Upload input changed before it could be read.");
+    }
+    if (before.size < BigInt(1) || before.size > BigInt(MAX_API_UPLOAD_BYTES)) throw new Error("Upload file must be 1 byte to 4 MiB.");
+
+    const buffer = Buffer.alloc(Number(before.size) + 1);
+    let bytesRead = 0;
+    while (bytesRead < buffer.length) {
+      const result = await handle.read(buffer,bytesRead,buffer.length - bytesRead,bytesRead);
+      if (result.bytesRead === 0) break;
+      bytesRead += result.bytesRead;
+    }
+    const after = await handle.stat({ bigint: true });
+    if (bytesRead !== Number(before.size) || after.dev !== before.dev || after.ino !== before.ino ||
+      after.size !== before.size || after.mtimeNs !== before.mtimeNs || after.ctimeNs !== before.ctimeNs) {
+      throw new Error("Upload file changed while it was being read.");
+    }
+    return buffer.subarray(0,bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
 
 export async function run(args: string[], env: Record<string, string | undefined> = process.env, request = fetch): Promise<unknown> {
   const [command, ...rest] = args;
@@ -156,9 +190,7 @@ export async function run(args: string[], env: Record<string, string | undefined
       const mediaType = extension === "txt" ? "text/plain" : extension === "png" ? "image/png" :
         extension === "jpg" || extension === "jpeg" ? "image/jpeg" : extension === "pdf" ? "application/pdf" : undefined;
       if (!mediaType) throw new Error("Use a .txt, .png, .jpg, .jpeg or .pdf file.");
-      const info = await stat(file);
-      if (!info.isFile() || info.size < 1 || info.size > MAX_API_UPLOAD_BYTES) throw new Error("Upload file must be 1 byte to 4 MiB.");
-      return call("/api/v1/uploads","POST",await readFile(file),{
+      return call("/api/v1/uploads","POST",await readUploadFile(file),{
         "x-upload-name": encodeURIComponent(name),"x-upload-media-type": mediaType,
       });
     }
