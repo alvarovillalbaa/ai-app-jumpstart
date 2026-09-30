@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { rename,rm,writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { readBoundedRegularFile,readBoundedRegularFileDetails } from "../lib/security/read-bounded-file.mjs";
+
+const MAX_TEMPLATE_INPUT_BYTES = 16 * 1024 * 1024;
+const readText = async path => (await readBoundedRegularFile(path,{ minBytes: 1,maxBytes: MAX_TEMPLATE_INPUT_BYTES })).toString("utf8");
 
 const usage = `Initialize this copy of AI App Jumpstart.
 
@@ -47,10 +51,10 @@ function replaceTomlProjectId(source, id) {
 
 async function stageFile(root, path, content) {
   const target = join(root, path);
-  const info = await stat(target);
+  const info = await readBoundedRegularFileDetails(target,{ minBytes: 1,maxBytes: MAX_TEMPLATE_INPUT_BYTES });
   const temporary = `${target}.template-init-${process.pid}-${randomUUID()}`;
-  await writeFile(temporary, content, { flag: "wx", mode: info.mode & 0o777 });
-  return { path: target, temporary, original: await readFile(target), mode: info.mode & 0o777 };
+  await writeFile(temporary, content, { flag: "wx", mode: info.mode });
+  return { path: target, temporary, original: info.bytes, mode: info.mode };
 }
 
 async function commitFiles(staged) {
@@ -89,8 +93,8 @@ async function main() {
   let packageJson, packageLock;
   try {
     [packageJson, packageLock] = await Promise.all([
-      readFile(join(root, "package.json"), "utf8").then(JSON.parse),
-      readFile(join(root, "package-lock.json"), "utf8").then(JSON.parse),
+      readText(join(root, "package.json")).then(JSON.parse),
+      readText(join(root, "package-lock.json")).then(JSON.parse),
     ]);
   } catch {
     console.error("Run this command from the root of a template checkout with package.json and package-lock.json.");
@@ -107,9 +111,9 @@ async function main() {
   const lockPackages = { ...packageLock.packages, "": { ...packageLock.packages[""], name: slug } };
   const lockNext = { ...packageLock, name: slug, packages: lockPackages };
   const [appConfigSource, supabaseSource, readmeSource] = await Promise.all([
-    readFile(join(root, "app.config.ts"), "utf8"),
-    readFile(join(root, "supabase/config.toml"), "utf8"),
-    readFile(join(root, "README.md"), "utf8"),
+    readText(join(root, "app.config.ts")),
+    readText(join(root, "supabase/config.toml")),
+    readText(join(root, "README.md")),
   ]);
   if (!readmeSource.startsWith("# ")) throw new Error("README.md must begin with a level-one title.");
   const appConfigNext = replaceTypeScriptString(
@@ -126,7 +130,7 @@ async function main() {
   ];
   const changed = [];
   for (const [path, content] of changes) {
-    if (content !== await readFile(join(root, path), "utf8")) changed.push([path, content]);
+    if (content !== await readText(join(root, path))) changed.push([path, content]);
   }
   if (!changed.length) {
     console.log(`Project identity is already initialized as ${JSON.stringify(options.name)} (${slug}).`);

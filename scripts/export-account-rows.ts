@@ -1,6 +1,6 @@
 import { createHash,randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants,type BigIntStats } from "node:fs";
 import { lstat,link,mkdtemp,open,rm } from "node:fs/promises";
 import { dirname,resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +20,10 @@ type Source = { provider: Provider;counts: Record<string,number>;consistency: st
 const MAX_ROWS = 100_000,MAX_BYTES = 512 * 1024 * 1024,MAX_ROW_BYTES = 2 * 1024 * 1024;
 const MAX_ROW_LINE_BYTES = MAX_ROW_BYTES * 2 + 4096;
 const MAX_CONVEX_PAGES = 10_000;
+function sameFileVersion(left: BigIntStats,right: BigIntStats) {
+  return left.isFile() && right.isFile() && left.dev === right.dev && left.ino === right.ino &&
+    left.size === right.size && left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs;
+}
 const DIRECT_ENTITIES = new Set(allRows().filter(entry => entry.owner === "direct").map(entry => entry.entity));
 const rowPage = z.object({ rows: z.array(z.record(z.string(),z.unknown())).max(10),
   orphans: z.number().int().nonnegative(),scanned: z.number().int().min(0).max(10),
@@ -234,16 +238,14 @@ export async function exportSelectedAccountRows(provider: Provider,owner: Access
 
 /** Offline integrity verification; this deliberately has no backend credentials or network path. */
 export async function verifyAccountRowExportDetails(path: string) {
-  const details = await lstat(path);
-  if (!details.isFile() || details.isSymbolicLink() || (details.mode & 0o077) !== 0 ||
-      details.size < 1 || details.size > MAX_BYTES) throw new Error("Account row export file is unsafe.");
   const file = await open(path,fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
   try {
-    const actual = await file.stat();
-    if (!actual.isFile() || actual.size !== details.size || actual.ino !== details.ino ||
-        (actual.mode & 0o077) !== 0) throw new Error("Account row export file changed.");
+    const actual = await file.stat({ bigint: true });
+    const pathDetails = await lstat(path,{ bigint: true });
+    if (!sameFileVersion(actual,pathDetails) || (actual.mode & BigInt(0o077)) !== BigInt(0) ||
+        actual.size < BigInt(1) || actual.size > BigInt(MAX_BYTES)) throw new Error("Account row export file is unsafe or changed.");
     const finalByte = Buffer.alloc(1);
-    if ((await file.read(finalByte,0,1,actual.size-1)).bytesRead !== 1 || finalByte[0] !== 10)
+    if ((await file.read(finalByte,0,1,Number(actual.size-BigInt(1)))).bytesRead !== 1 || finalByte[0] !== 10)
       throw new Error("Account row export file is incomplete.");
     const digest = createHash("sha256"),reader = createInterface({ input: file.createReadStream({ autoClose: false }),crlfDelay: Infinity });
     let manifest: { provider: Provider;owner: AccessOwner } | null = null,ended = false,rows = 0,bytes = 0;
@@ -284,9 +286,10 @@ export async function verifyAccountRowExportDetails(path: string) {
         if (item.type !== "end") digest.update(line+"\n");
       }
     } finally { reader.close(); }
-    const final = await file.stat();
-    if (!manifest || !ended || bytes !== actual.size || final.size !== actual.size ||
-        final.mtimeMs !== actual.mtimeMs || final.ctimeMs !== actual.ctimeMs)
+    const final = await file.stat({ bigint: true });
+    const pathFinal = await lstat(path,{ bigint: true });
+    if (!manifest || !ended || BigInt(bytes) !== actual.size || !sameFileVersion(actual,final) ||
+        !sameFileVersion(actual,pathFinal))
       throw new Error("Account row export is incomplete or changed during verification.");
     return { provider: manifest.provider,owner: manifest.owner,counts,rows };
   } finally { await file.close(); }

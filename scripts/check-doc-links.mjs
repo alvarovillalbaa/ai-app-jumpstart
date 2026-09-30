@@ -1,6 +1,7 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readBoundedRegularFile } from "../lib/security/read-bounded-file.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const documents = ["README.md", "CONTRIBUTING.md", "SECURITY.md", "THIRD_PARTY_NOTICES.md", "IMPLEMENTATION.md",
@@ -62,7 +63,10 @@ function stripHeadingMarkup(source) {
 }
 
 const sources = new Map();
-for (const name of documents) sources.set(resolve(root, name), withoutFences(await readFile(resolve(root, name), "utf8")));
+async function readMarkdown(path) {
+  return (await readBoundedRegularFile(path,{ minBytes: 0,maxBytes: 16 * 1024 * 1024 })).toString("utf8");
+}
+for (const name of documents) sources.set(resolve(root, name), withoutFences(await readMarkdown(resolve(root,name))));
 const errors = [];
 let checked = 0;
 for (const [source, markdown] of sources) {
@@ -90,14 +94,22 @@ for (const [source, markdown] of sources) {
       errors.push(`${location}: link leaves repository: ${destination}`);
       continue;
     }
-    const details = await stat(target).catch(() => null);
-    if (!details) {
-      errors.push(`${location}: missing target: ${destination}`);
-      continue;
-    }
     if (fragment && extname(target) === ".md") {
-      const targetMarkdown = sources.get(target) ?? withoutFences(await readFile(target, "utf8"));
+      let targetMarkdown = sources.get(target);
+      if (targetMarkdown === undefined) {
+        try { targetMarkdown = withoutFences(await readMarkdown(target)); }
+        catch (error) {
+          errors.push(`${location}: ${error?.code === "ENOENT" ? "missing target" : "unsafe or unreadable target"}: ${destination}`);
+          continue;
+        }
+      }
       if (!headingAnchors(targetMarkdown).has(fragment)) errors.push(`${location}: missing anchor: ${destination}`);
+    } else {
+      const details = await stat(target).catch(() => null);
+      if (!details) {
+        errors.push(`${location}: missing target: ${destination}`);
+        continue;
+      }
     }
     checked++;
   }

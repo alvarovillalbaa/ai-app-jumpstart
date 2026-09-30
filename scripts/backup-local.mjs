@@ -5,6 +5,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { pathToFileURL } from "node:url";
 import { backupSqliteApplication } from "./backup-sqlite.mjs";
 import { DatabaseSync } from "node:sqlite";
+import { readBoundedRegularFileDetails } from "../lib/security/read-bounded-file.mjs";
 
 const manifestName = "manifest.json";
 const format = "jumpstart-local-snapshot";
@@ -89,6 +90,15 @@ function validateManifest(value) {
     fail("manifest file list is incomplete or repeated.");
   return value;
 }
+
+async function readSnapshotManifest(root) {
+  let details;
+  try { details = await readBoundedRegularFileDetails(join(root,manifestName),{ minBytes: 1,maxBytes: 10_000_000 }); }
+  catch { fail("manifest is missing or not private."); }
+  if ((details.mode & 0o077) !== 0) fail("manifest is missing or not private.");
+  try { return validateManifest(JSON.parse(details.bytes.toString("utf8"))); }
+  catch (error) { if (error instanceof SyntaxError) fail("manifest JSON is invalid.");throw error; }
+}
 async function checkApplicationDatabase(path) {
   const database = new DatabaseSync(path,{ readOnly: true });
   try {
@@ -103,12 +113,7 @@ async function checkApplicationDatabase(path) {
 export async function verifyLocalSnapshot(directory) {
   const root = resolve(directory);
   await privateDirectory(root,true);
-  const marker = join(root,manifestName),markerDetails = await lstat(marker);
-  if (!markerDetails.isFile() || markerDetails.isSymbolicLink() || markerDetails.size > 10_000_000 ||
-      (markerDetails.mode & 0o077) !== 0) fail("manifest is missing or not private.");
-  let manifest;
-  try { manifest = validateManifest(JSON.parse(await readFile(marker,"utf8"))); }
-  catch (error) { if (error instanceof SyntaxError) fail("manifest JSON is invalid.");throw error; }
+  const manifest = await readSnapshotManifest(root);
   const actual = await describeFiles(root);
   if (JSON.stringify(actual) !== JSON.stringify(manifest.files)) fail("snapshot files do not match the manifest.");
   await privateDirectory(join(root,"workflow"),true);
@@ -215,7 +220,7 @@ export async function installLocalSnapshot(source,{ appDb,workflowDir,uploadsDir
     fail("the built Workflow world is not the default local world.");
   const root = await realpath(source);
   const verified = await verifyLocalSnapshot(root);
-  const manifest = validateManifest(JSON.parse(await readFile(join(root,manifestName),"utf8")));
+  const manifest = await readSnapshotManifest(root);
   if (process.env.UPLOAD_STORAGE_PROVIDER === "local" && verified.uploads !== "included")
     fail("configured local uploads are missing from the snapshot.");
   if (process.env.UPLOAD_STORAGE_PROVIDER && process.env.UPLOAD_STORAGE_PROVIDER !== "local" && verified.uploads === "included")

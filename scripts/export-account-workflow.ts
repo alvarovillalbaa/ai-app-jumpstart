@@ -1,5 +1,5 @@
 import { createHash,randomUUID } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants,type BigIntStats } from "node:fs";
 import { lstat,link,mkdtemp,open,readFile,rm,unlink } from "node:fs/promises";
 import { dirname,join,resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -12,6 +12,10 @@ import { linkedRunsCte,nativeTables } from "./inspect-account-workflow.mjs";
 
 const MAX_SESSIONS = 100_000,MAX_RUNS = 100_000,MAX_ROWS = 200_000;
 const MAX_BYTES = 1024 * 1024 * 1024,MAX_LINE_BYTES = 32 * 1024 * 1024;
+function sameFileVersion(left: BigIntStats,right: BigIntStats) {
+  return left.isFile() && right.isFile() && left.dev === right.dev && left.ino === right.ino &&
+    left.size === right.size && left.mtimeNs === right.mtimeNs && left.ctimeNs === right.ctimeNs;
+}
 type Table = typeof nativeTables[number];
 type Counts = Record<Table,number>;
 
@@ -64,14 +68,13 @@ function linked(id: string,attributes: Record<string,unknown>,known: Set<string>
 /** Offline integrity, source binding and owner-lineage verification. No database credentials. */
 export async function verifyAccountWorkflowExport(source: string,archive: string) {
   const sourceData = await sourceSessions(source);
-  const path = resolve(archive),details = await lstat(path);
-  if (!details.isFile() || details.isSymbolicLink() || (details.mode & 0o077) !== 0 ||
-      details.size < 1 || details.size > MAX_BYTES) throw new Error("Workflow archive is unsafe.");
+  const path = resolve(archive);
   const file = await open(path,fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
   try {
-    const before = await file.stat();
-    if (before.ino !== details.ino || before.size !== details.size || (before.mode & 0o077) !== 0)
-      throw new Error("Workflow archive changed.");
+    const before = await file.stat({ bigint: true });
+    const pathBefore = await lstat(path,{ bigint: true });
+    if (!sameFileVersion(before,pathBefore) || (before.mode & BigInt(0o077)) !== BigInt(0) ||
+        before.size < BigInt(1) || before.size > BigInt(MAX_BYTES)) throw new Error("Workflow archive is unsafe or changed.");
     const hash = createHash("sha256"),runs = new Map<string,Record<string,unknown>>();
     let archiveTables: string[] = [...nativeTables],counts = emptyCounts();
     const childRunIds: string[] = [];
@@ -121,9 +124,10 @@ export async function verifyAccountWorkflowExport(source: string,archive: string
         if (item.type !== "end") hash.update(line+"\n");
       }
     } finally { reader.close(); }
-    const after = await file.stat();
-    if (!header || !ended || bytes !== before.size || after.size !== before.size ||
-        after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs)
+    const after = await file.stat({ bigint: true });
+    const pathAfter = await lstat(path,{ bigint: true });
+    if (!header || !ended || BigInt(bytes) !== before.size || !sameFileVersion(before,after) ||
+        !sameFileVersion(before,pathAfter))
       throw new Error("Workflow archive is incomplete or changed.");
     const known = new Set(sourceData.ids);
     let previous = -1;

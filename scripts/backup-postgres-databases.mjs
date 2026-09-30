@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { link, lstat, mkdir, open, readFile, readdir, realpath, rm, unlink } from "node:fs/promises";
+import { link,lstat,mkdir,open,readdir,realpath,rm,unlink } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { backupPostgresApplication, backupPostgresWorkflow, libpqEnvironment } from "./backup-postgres.mjs";
 import { checkSnapshotUploadCatalog, copyUploadSnapshot, describeUploadSnapshot, privateUploadDirectory, snapshotObjectName } from "./private-upload-snapshot.mjs";
+import { readBoundedRegularFileDetails } from "../lib/security/read-bounded-file.mjs";
 
 const format = "jumpstart-postgres-databases";
 const archiveNames = ["application.dump", "workflow.dump"];
@@ -34,12 +35,12 @@ export async function verifyPostgresDatabaseSet(directory) {
   if (!details.isDirectory() || details.isSymbolicLink() || (details.mode & 0o077) !== 0)
     fail("expected a private, real snapshot directory.");
   const entries = (await readdir(root)).sort();
-  const marker = join(root, manifestName), markerDetails = await lstat(marker);
-  if (!markerDetails.isFile() || markerDetails.isSymbolicLink() ||
-      (markerDetails.mode & 0o077) !== 0 || markerDetails.size > 20_000_000)
-    fail("manifest is missing or not private.");
+  let markerDetails;
+  try { markerDetails = await readBoundedRegularFileDetails(join(root,manifestName),{ minBytes: 1,maxBytes: 20_000_000 }); }
+  catch { fail("manifest is missing or not private."); }
+  if ((markerDetails.mode & 0o077) !== 0) fail("manifest is missing or not private.");
   let manifest;
-  try { manifest = JSON.parse(await readFile(marker, "utf8")); }
+  try { manifest = JSON.parse(markerDetails.bytes.toString("utf8")); }
   catch { fail("manifest JSON is invalid."); }
   if (!manifest || manifest.format !== format || ![1, 2].includes(manifest.version) ||
       typeof manifest.createdAt !== "string" || !Number.isFinite(Date.parse(manifest.createdAt)) ||
