@@ -29,18 +29,18 @@ it("joins the real SQLite row and local object observations without exposing ide
       db.prepare("INSERT INTO app_records VALUES(?,?,?,'B','private',1,'now','now')").run(crypto.randomUUID(),bob.tenant,bob.subject);
       const id = crypto.randomUUID(),objects = localUploadObjects(root);
       await objects.put(alice,id,new TextEncoder().encode("orphan bytes with no catalog row"));
-      const env = { ACCOUNT_AUDIT_SQLITE_PATH: path,UPLOAD_LOCAL_ROOT: root };
+      const env = { AUTH_PROVIDER: "api-key",ACCOUNT_AUDIT_SQLITE_PATH: path,UPLOAD_LOCAL_ROOT: root };
       const observed = await inspectAccountClosure("sqlite","local",alice,env);
       expect(observed).toMatchObject({ status: "retained_or_unattributable",ownerRowTotal: 1,objectCount: 1,
-        applicationWriteFenced: false,
+        authProvider: "api-key",authIdentityApplicable: false,authIdentityPresent: false,applicationWriteFenced: false,
         remaining: { applicationRows: true,privateObjects: true,globalUnattributableRows: false,applicationWritesPossible: true } });
       expect(JSON.stringify(observed)).not.toContain(alice.tenant);
       expect(JSON.stringify(observed)).not.toContain(alice.subject);
       expect((await inspectAccountClosure("sqlite","local",bob,env)).objectCount).toBe(0);
       const success = spawnSync(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/inspect-account-closure.ts",
         "--metadata","sqlite","--read-only"],{ cwd: process.cwd(),encoding: "utf8",env: { ...process.env,
-          ACCOUNT_AUDIT_TENANT: alice.tenant,ACCOUNT_AUDIT_SUBJECT: alice.subject,ACCOUNT_AUDIT_SQLITE_PATH: path,
-          UPLOAD_STORAGE_PROVIDER: "local",UPLOAD_LOCAL_ROOT: root } });
+        ACCOUNT_AUDIT_TENANT: alice.tenant,ACCOUNT_AUDIT_SUBJECT: alice.subject,ACCOUNT_AUDIT_SQLITE_PATH: path,
+          AUTH_PROVIDER: "api-key",UPLOAD_STORAGE_PROVIDER: "local",UPLOAD_LOCAL_ROOT: root } });
       expect(success.status).toBe(0);
       expect(JSON.parse(success.stdout)).toMatchObject({ ownerRowTotal: 1,objectCount: 1,status: "retained_or_unattributable" });
       expect(success.stdout).not.toContain(alice.tenant);
@@ -65,13 +65,37 @@ it("joins the real SQLite row and local object observations without exposing ide
 
       const failed = spawnSync(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/inspect-account-closure.ts",
         "--metadata","sqlite","--read-only"],{ cwd: process.cwd(),encoding: "utf8",env: { ...process.env,
-          ACCOUNT_AUDIT_TENANT: alice.tenant,ACCOUNT_AUDIT_SUBJECT: alice.subject,ACCOUNT_AUDIT_SQLITE_PATH: path,
-          UPLOAD_STORAGE_PROVIDER: "local",UPLOAD_LOCAL_ROOT: join(dir,"missing") } });
+        ACCOUNT_AUDIT_TENANT: alice.tenant,ACCOUNT_AUDIT_SUBJECT: alice.subject,ACCOUNT_AUDIT_SQLITE_PATH: path,
+          AUTH_PROVIDER: "api-key",UPLOAD_STORAGE_PROVIDER: "local",UPLOAD_LOCAL_ROOT: join(dir,"missing") } });
       expect(failed.status).toBe(1);
       expect(failed.stdout).toBe("");
       expect(failed.stderr).not.toContain(alice.tenant);
       expect(failed.stderr).not.toContain(alice.subject);
       expect(failed.stderr).not.toContain(dir);
+
+      const supabaseOwner = { tenant: "supabase:https://identity.example",subject: "715ed5db-f090-4b8c-a067-640ecee36aa0" };
+      const authEnv = { ...env,AUTH_PROVIDER: "supabase",SUPABASE_AUTH_URL: "https://identity.example",
+        SUPABASE_AUTH_ADMIN_KEY: "sb_secret_disposable_operator_fixture" };
+      let authPresent = true;
+      const request: typeof fetch = async input => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        expect(url.origin).toBe("https://identity.example");
+        expect(url.pathname).toBe(`/auth/v1/admin/users/${supabaseOwner.subject}`);
+        return authPresent ? Response.json({ id: supabaseOwner.subject,email: "private@example.com",role: "authenticated",is_anonymous: false })
+          : Response.json({ code: "user_not_found",msg: "User not found" },{ status: 404 });
+      };
+      await expect(inspectAccountClosure("sqlite","local",supabaseOwner,{ ...authEnv,AUTH_PROVIDER: "api-key" },request))
+        .rejects.toThrow("requires AUTH_PROVIDER=supabase");
+      const authObserved = await inspectAccountClosure("sqlite","local",supabaseOwner,authEnv,request);
+      expect(authObserved).toMatchObject({ status: "retained_or_unattributable",authProvider: "supabase",
+        authIdentityApplicable: true,authIdentityPresent: true,remaining: { authIdentity: true } });
+      expect(JSON.stringify(authObserved)).not.toContain(supabaseOwner.subject);
+      expect(JSON.stringify(authObserved)).not.toContain("private@example.com");
+      expect(JSON.stringify(authObserved)).not.toContain(authEnv.SUPABASE_AUTH_ADMIN_KEY);
+      authPresent = false;
+      expect(await inspectAccountClosure("sqlite","local",supabaseOwner,authEnv,request)).toMatchObject({
+        status: "retained_or_unattributable",authIdentityApplicable: true,authIdentityPresent: false,
+        remaining: { authIdentity: false,globalUnattributableRows: true } });
     } finally { db.close(); }
   } finally { rmSync(dir,{ recursive: true,force: true }); }
 });

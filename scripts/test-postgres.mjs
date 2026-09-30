@@ -173,7 +173,7 @@ async function rehearseUpgrade() {
     const closure = spawn(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/inspect-account-closure.ts",
       "--metadata","postgres","--read-only"],{ cwd: root,env: { ...upgradeEnv,
         ACCOUNT_AUDIT_TENANT: "upgrade-tenant",ACCOUNT_AUDIT_SUBJECT: "upgrade-owner",
-        UPLOAD_STORAGE_PROVIDER: "local",UPLOAD_LOCAL_ROOT: directory },stdio: ["ignore","pipe","ignore"] });
+        AUTH_PROVIDER: "api-key",UPLOAD_STORAGE_PROVIDER: "local",UPLOAD_LOCAL_ROOT: directory },stdio: ["ignore","pipe","ignore"] });
     let closureOutput = "";
     closure.stdout.on("data",chunk => { closureOutput += chunk.toString(); });
     const [closureCode,closureSignal] = await once(closure,"exit");

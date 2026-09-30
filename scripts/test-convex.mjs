@@ -109,7 +109,7 @@ try {
   const closureOutput = await command([join(root,"node_modules/tsx/dist/cli.mjs"),"scripts/inspect-account-closure.ts",
     "--metadata","convex","--read-only"],{ cwd: root,env: { ...env,CONVEX_SITE_URL: siteUrl,
       CONVEX_AUDIT_SECRET: auditSecret,ACCOUNT_AUDIT_TENANT: auditOwner.tenant,ACCOUNT_AUDIT_SUBJECT: auditOwner.subject,
-      UPLOAD_STORAGE_PROVIDER: "local",UPLOAD_LOCAL_ROOT: auditObjects } });
+      AUTH_PROVIDER: "api-key",UPLOAD_STORAGE_PROVIDER: "local",UPLOAD_LOCAL_ROOT: auditObjects } });
   const closureReport = JSON.parse(closureOutput);
   if (closureReport.status !== "retained_or_unattributable" || closureReport.ownerRows.records !== 1 ||
       closureReport.objectCount !== 0) throw new Error("Local Convex closure observation did not combine its row and object probes.");
@@ -125,7 +125,7 @@ try {
   const fencedClosureOutput = await command([join(root,"node_modules/tsx/dist/cli.mjs"),"scripts/inspect-account-closure.ts",
     "--metadata","convex","--read-only"],{ cwd: root,env: { ...env,CONVEX_SITE_URL: siteUrl,
       CONVEX_AUDIT_SECRET: auditSecret,ACCOUNT_AUDIT_TENANT: auditOwner.tenant,ACCOUNT_AUDIT_SUBJECT: auditOwner.subject,
-      UPLOAD_STORAGE_PROVIDER: "local",UPLOAD_LOCAL_ROOT: auditObjects } });
+      AUTH_PROVIDER: "api-key",UPLOAD_STORAGE_PROVIDER: "local",UPLOAD_LOCAL_ROOT: auditObjects } });
   const fencedClosure = JSON.parse(fencedClosureOutput);
   if (fencedClosure.applicationWriteFenced !== true || fencedClosure.remaining.applicationWritesPossible !== false)
     throw new Error("Local Convex closure observation did not see the permanent application-row fence.");

@@ -2,7 +2,6 @@ import { DatabaseSync } from "node:sqlite";
 import { lstatSync } from "node:fs";
 import { isAbsolute,join,resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createClient } from "@supabase/supabase-js";
 import { Client } from "pg";
 import { z } from "zod";
 import { accessOwner,type AccessOwner } from "../lib/agent-access/contract";
@@ -10,19 +9,12 @@ import { sqliteFencedTables } from "../lib/account-closure/sqlite-fences";
 import { trustedHttpOrigin } from "../lib/security/origin";
 import { accountDataInventory } from "./account-data-inventory.mjs";
 import { objectSourceSha256 } from "./account-object-source";
+import { supabaseAuthAdmin } from "./account-auth-admin";
 import { verifyAccountBundle } from "./export-account-bundle";
 import { verifyAccountRowExportDetails } from "./export-account-rows";
 import { inspectAccountClosure } from "./inspect-account-closure";
 
 type MetadataProvider = "sqlite" | "postgres" | "convex";
-
-function operatorAuthKey(value: string) {
-  if (value.startsWith("sb_secret_") && value.length >= 24) return true;
-  try {
-    const parts = value.split(".");
-    return parts.length === 3 && JSON.parse(Buffer.from(parts[1],"base64url").toString()).role === "service_role";
-  } catch { return false; }
-}
 
 async function requirePermanentFence(provider: MetadataProvider,owner: AccessOwner,
   env: Record<string,string | undefined>,request: typeof fetch) {
@@ -94,11 +86,7 @@ async function requirePermanentFence(provider: MetadataProvider,owner: AccessOwn
 export async function eraseAccountAuth(ownerInput: AccessOwner,bundlePath: string,
   env: Record<string,string | undefined>,execute = false,request: typeof fetch = fetch) {
   const owner = accessOwner.parse(ownerInput);
-  const origin = trustedHttpOrigin(env.SUPABASE_AUTH_URL ?? env.SUPABASE_URL);
-  const key = env.SUPABASE_AUTH_ADMIN_KEY ?? "";
-  if (env.AUTH_PROVIDER !== "supabase" || !origin || owner.tenant !== `supabase:${origin}` ||
-      !z.uuid().safeParse(owner.subject).success || !operatorAuthKey(key))
-    throw new Error("Auth origin, owner or operator credential is invalid.");
+  const { auth } = supabaseAuthAdmin(owner,env,request);
   const bundle = await verifyAccountBundle(bundlePath);
   const rows = await verifyAccountRowExportDetails(join(resolve(bundlePath),"rows.ndjson"));
   if (bundle.metadataProvider !== rows.provider || bundle.objectSourceSha256 === undefined ||
@@ -106,12 +94,9 @@ export async function eraseAccountAuth(ownerInput: AccessOwner,bundlePath: strin
       await objectSourceSha256(bundle.objectProvider,env) !== bundle.objectSourceSha256)
     throw new Error("Verified source-bound bundle does not match the account and selected object store.");
   await requirePermanentFence(bundle.metadataProvider,owner,env,request);
-  const observation = await inspectAccountClosure(bundle.metadataProvider,bundle.objectProvider,owner,env);
+  const observation = await inspectAccountClosure(bundle.metadataProvider,bundle.objectProvider,owner,env,request);
   if (observation.ownerRowTotal !== 0 || observation.orphanRowTotal !== 0 || observation.objectCount !== 0)
     throw new Error("Application rows, unattributable rows or private objects remain.");
-  const auth = createClient(origin,key,{ auth: { persistSession: false,autoRefreshToken: false,detectSessionInUrl: false },
-    global: { fetch: (input,init) => request(input,{ ...init,cache: "no-store",redirect: "error",
-      signal: init?.signal ? AbortSignal.any([init.signal,AbortSignal.timeout(8_000)]) : AbortSignal.timeout(8_000) }) } }).auth.admin;
   const before = await auth.getUserById(owner.subject);
   if (before.error?.status === 404) return { status: "auth-identity-already-absent",scope: "selected Supabase Auth user only" };
   if (before.error || before.data.user?.id !== owner.subject || before.data.user.is_anonymous ||
