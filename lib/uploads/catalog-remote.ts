@@ -1,9 +1,9 @@
 import { uploadReview,uploadReviewDecision,uploadReviewResult } from "./review-contract";
 import { createClient } from "@supabase/supabase-js";
-import { Pool } from "pg";
 import { z } from "zod";
 import { ConvexBackend } from "../data/convex-client";
 import type { Database } from "../data/supabase.generated";
+import { acquirePostgresPool } from "../data/postgres-pool";
 import { accessOwner } from "../agent-access/contract";
 import { uploadCleanupCandidates, uploadCleanupLimit, uploadEntry, uploadScanDecision, uploadList, uploadQuota, uploadReservation, uploadReserveResult, uploadUsage, staleUploadCutoff, type UploadCatalog } from "./catalog-contract";
 import { uploadId } from "./schema";
@@ -33,9 +33,8 @@ function adapter(call: (command: string, input: object) => Promise<unknown>, lis
   };
 }
 
-export function postgresUploadCatalog(connectionString: string): UploadCatalog {
-  const pool = new Pool({ connectionString,max: 5,connectionTimeoutMillis: 5000,idleTimeoutMillis: 10_000,statement_timeout: 10_000 });
-  pool.on("error", () => console.error(JSON.stringify({ event: "upload_catalog_pool_error" })));
+export function postgresUploadCatalog(connectionString: string,poolMax = 5): UploadCatalog {
+  const { pool,release } = acquirePostgresPool(connectionString,poolMax);
   return adapter(async (command,input) => {
     const fn = ["getReview","recordReview"].includes(command) ? "app_upload_review_command" : ["get","recordScan","markStored","beginDelete"].includes(command) ? "app_upload_scan_command" : "app_upload_command";
     return (await pool.query(`SELECT public.${fn}($1,$2::jsonb) AS result`,[command === "recordScan" ? "record" : command,JSON.stringify(input)])).rows[0].result;
@@ -55,7 +54,7 @@ export function postgresUploadCatalog(connectionString: string): UploadCatalog {
         WHERE state IN ('pending','deleting') AND created_at<=$1 ORDER BY created_at,id LIMIT $2`,[cutoff,limit]);
       return uploadCleanupCandidates.parse(result.rows.map(row => ({ ...row,createdAt: Number(row.createdAt) })));
     },
-    () => pool.end());
+    release);
 }
 
 export function supabaseUploadCatalog(url: string, secret: string): UploadCatalog {

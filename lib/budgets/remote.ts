@@ -1,7 +1,7 @@
-import { Pool } from "pg";
 import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { ConvexBackend } from "../data/convex-client";
+import { acquirePostgresPool } from "../data/postgres-pool";
 import type { Database } from "../data/supabase.generated";
 import { admission, admissionResult, settlement, settlementCorrection, correctionResult, correctionEntry, budgetInspection, lookup, snapshot, attempt, attemptOwner, reservationState, outstandingOptions, outstandingEntry, outstandingPage, pageOfOutstanding, ledgerOptions, ledgerEntry, ledgerPage, pageOfLedger, ownerCorrectionEntry, ownerCorrectionPage, pageOfOwnerCorrections, type BudgetStore } from "./contract";
 
@@ -25,9 +25,8 @@ function adapter(call: Rpc, getReservation: BudgetStore["getReservation"], inspe
     close,
   };
 }
-export function postgresBudgetStore(connectionString: string) {
-  const pool = new Pool({ connectionString, max: 5, connectionTimeoutMillis: 5000, statement_timeout: 10000 });
-  pool.on("error", () => console.error(JSON.stringify({ event: "budget_pool_error" })));
+export function postgresBudgetStore(connectionString: string,poolMax = 5) {
+  const { pool,release } = acquirePostgresPool(connectionString,poolMax);
   return adapter(async (operation, input) => (await pool.query(operation === "claimAttempt" || operation === "attemptCount" ? "SELECT public.app_budget_attempt_command($1,$2::jsonb) AS result" : "SELECT public.app_budget_command($1,$2::jsonb) AS result", [operation, JSON.stringify(input)])).rows[0].result,
     async raw => {
       const input = attemptOwner.parse(raw);
@@ -78,7 +77,7 @@ export function postgresBudgetStore(connectionString: string) {
       return result.rows.map(row => correctionEntry.parse({ ...row,at: Number(row.at),
         previousActualMicros: row.previousActualMicros === null ? null : Number(row.previousActualMicros),
         correctedActualMicros: Number(row.correctedActualMicros) }));
-    }, () => pool.end());
+    }, release);
 }
 export function supabaseBudgetStore(url: string, secret: string) {
   const client = createClient<Database>(url, secret, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: (input, init) => fetch(input, { ...init, redirect: "error", signal: AbortSignal.timeout(10000) }) } });

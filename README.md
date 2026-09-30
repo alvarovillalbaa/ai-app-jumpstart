@@ -65,7 +65,7 @@ The CLI can also create a private, paged [export of visible application data](do
 | Option | Configuration / status |
 | --- | --- |
 | SQLite | `DATA_PROVIDER=sqlite`; one persistent instance; [consistent private backup command](docs/operations.md) |
-| PostgreSQL / managed PostgreSQL | `DATA_PROVIDER=postgres`, `DATABASE_URL`; adapter, migrations, contract tests and a [private archive/restore rehearsal](docs/operations.md) |
+| PostgreSQL / managed PostgreSQL | `DATA_PROVIDER=postgres`, `DATABASE_URL`; shared process pool (one connection by default on Vercel/AWS Lambda), adapter, migrations, contract tests and a [private archive/restore rehearsal](docs/operations.md) |
 | PostgreSQL with signed-in accounts | Real-Auth account, chat and reviewed-file browser suites run against migrated PostgreSQL application data in CI, with local and real private Supabase Storage; [commands and scope](docs/testing.md) |
 | Supabase PostgREST | `DATA_PROVIDER=supabase`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`; migrated project required |
 | Convex | `DATA_PROVIDER=convex`, `CONVEX_SITE_URL`, `CONVEX_BACKEND_SECRET`; internal functions behind an authenticated HTTP action; disposable signed-in browser/agent suite in CI with local and real private Supabase Storage |

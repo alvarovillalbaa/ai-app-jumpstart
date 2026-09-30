@@ -26,3 +26,14 @@ it("rejects an unsafe Convex origin during configuration rather than after a req
   expect(() => config({ ...base, CONVEX_SITE_URL: "http://remote.convex.site" })).toThrow(expect.objectContaining({ status: 503, code: "configuration_error" }));
   expect(config({ ...base, CONVEX_SITE_URL: "https://test.convex.site" }).CONVEX_SITE_URL).toBe("https://test.convex.site");
 });
+
+it("shares a conservative PostgreSQL pool default across serverless runtimes", () => {
+  const base = { NODE_ENV: "development" as const,DATA_PROVIDER: "postgres" as const,DATABASE_URL: "postgresql://app:secret@db.example/app" };
+  expect(config(base).DATABASE_POOL_MAX).toBe(5);
+  expect(config({ ...base,VERCEL: "1" }).DATABASE_POOL_MAX).toBe(1);
+  expect(config({ ...base,AWS_LAMBDA_FUNCTION_NAME: "records" }).DATABASE_POOL_MAX).toBe(1);
+  expect(config({ ...base,VERCEL: "1",DATABASE_POOL_MAX: "3" }).DATABASE_POOL_MAX).toBe(3);
+  for (const value of ["0","51","not-a-number"]) {
+    expect(() => config({ ...base,DATABASE_POOL_MAX: value })).toThrow(expect.objectContaining({ status: 503,code: "configuration_error" }));
+  }
+});

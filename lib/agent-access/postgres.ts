@@ -1,9 +1,8 @@
-import { Pool } from "pg";
+import { acquirePostgresPool } from "../data/postgres-pool";
 import { SqlSessionAccessStore } from "./sql-store";
 
-export function postgresAccessStore(connectionString: string) {
-  const pool = new Pool({ connectionString, max: 5, connectionTimeoutMillis: 5000, idleTimeoutMillis: 10_000, statement_timeout: 10_000 });
-  pool.on("error", () => console.error(JSON.stringify({ event: "session_access_pool_error" })));
+export function postgresAccessStore(connectionString: string,poolMax = 5) {
+  const { pool,release } = acquirePostgresPool(connectionString,poolMax);
   return new SqlSessionAccessStore({
     lockBinding: true,
     accountFenceTable: "app_private.account_fences",
@@ -11,6 +10,6 @@ export function postgresAccessStore(connectionString: string) {
       let index = 0;
       return (await pool.query(sql.replace(/\?/g, () => `$${++index}`), parameters)).rows;
     },
-    close: () => pool.end(),
+    close: release,
   });
 }

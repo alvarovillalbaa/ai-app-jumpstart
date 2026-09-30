@@ -1,13 +1,12 @@
-import { Pool } from "pg";
 import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "../data/supabase.generated";
 import { ConvexBackend } from "../data/convex-client";
+import { acquirePostgresPool } from "../data/postgres-pool";
 import { limitInput,limitOwner,limitResult,limitSnapshot,snapshotFromRow,type RequestLimitStore } from "./contract";
 
-export function postgresRequestLimitStore(connectionString: string): RequestLimitStore {
-  const pool = new Pool({ connectionString,max: 5,connectionTimeoutMillis: 5000,idleTimeoutMillis: 10000,statement_timeout: 10000 });
-  pool.on("error",() => console.error(JSON.stringify({ event: "request_limit_pool_error" })));
+export function postgresRequestLimitStore(connectionString: string,poolMax = 5): RequestLimitStore {
+  const { pool,release } = acquirePostgresPool(connectionString,poolMax);
   return { async claim(owner,limit) {
     const input = limitInput.parse({ ...limitOwner.parse(owner),limit });
     const { rows } = await pool.query("SELECT public.app_request_limit($1::jsonb) AS result",[JSON.stringify(input)]);
@@ -16,7 +15,7 @@ export function postgresRequestLimitStore(connectionString: string): RequestLimi
     const input = limitOwner.parse(owner);
     const { rows } = await pool.query("SELECT bucket,counter FROM public.app_request_limits WHERE tenant=$1 AND subject=$2",[input.tenant,input.subject]);
     return snapshotFromRow(rows[0] ?? null);
-  },async health() { const { rows } = await pool.query("SELECT public.app_request_limits_ready() AS ready");z.literal(true).parse(rows[0].ready); },close: () => pool.end() };
+  },async health() { const { rows } = await pool.query("SELECT public.app_request_limits_ready() AS ready");z.literal(true).parse(rows[0].ready); },close: release };
 }
 export function supabaseRequestLimitStore(url: string,secret: string): RequestLimitStore {
   const client = createClient<Database>(url,secret,{ auth: { persistSession: false,autoRefreshToken: false },global: {

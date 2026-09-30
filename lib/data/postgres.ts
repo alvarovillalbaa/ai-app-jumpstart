@@ -1,15 +1,16 @@
-import { Pool } from "pg";
 import { randomUUID } from "node:crypto";
 import { page,recordCreateResult, type AppRecord, type ListInput, type Owner, type RecordInput, type RecordRepository, type RecordUpdate } from "./contract";
 import { recordCreationHash } from "./create-request";
+import { acquirePostgresPool } from "./postgres-pool";
 
 type Row = { id: string; title: string; content: string; revision: number; created_at: Date; updated_at: Date };
 export class PostgresRepository implements RecordRepository {
-  private pool: Pool;
-  constructor(connectionString: string) {
-    this.pool = new Pool({ connectionString, max: 5, connectionTimeoutMillis: 5000, idleTimeoutMillis: 10_000, statement_timeout: 10_000 });
-    // Prevent background socket errors from terminating the process; requests still fail explicitly.
-    this.pool.on("error", () => console.error(JSON.stringify({ event: "database_pool_error" })));
+  private pool: ReturnType<typeof acquirePostgresPool>["pool"];
+  private releasePool: () => Promise<void>;
+  constructor(connectionString: string,poolMax = 5) {
+    const lease = acquirePostgresPool(connectionString,poolMax);
+    this.pool = lease.pool;
+    this.releasePool = lease.release;
   }
   private row(r: Row): AppRecord {
     return { id: r.id, title: r.title, content: r.content, revision: r.revision, createdAt: r.created_at.toISOString(), updatedAt: r.updated_at.toISOString() };
@@ -44,5 +45,5 @@ export class PostgresRepository implements RecordRepository {
     return rowCount === 1;
   }
   async health() { await this.pool.query("SELECT id FROM app_records LIMIT 1"); }
-  async close() { await this.pool.end(); }
+  async close() { await this.releasePool(); }
 }
