@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { Client } from "pg";
 import { accessOwner,type AccessOwner } from "../lib/agent-access/contract";
-import { nativeTables,linkedRunsCte } from "./inspect-account-workflow.mjs";
+import { nativeTables,linkedRunsCte,terminalRunStatuses } from "./inspect-account-workflow.mjs";
 import { verifyAccountWorkflowExportDetails } from "./export-account-workflow";
 
 const MAX_JOBS = 200_000;
@@ -15,7 +15,6 @@ const MAX_BYTES = 1024 * 1024 * 1024;
 const MAX_LINE_BYTES = 32 * 1024 * 1024;
 const MAX_BATCH_BYTES = 1024 * 1024;
 const MAX_BATCH_ROWS = 100;
-const terminalStatuses = new Set(["completed","failed","cancelled"]);
 type Table = typeof nativeTables[number];
 
 function ownerDigest(owner: AccessOwner) {
@@ -125,7 +124,7 @@ export async function eraseAccountWorkflow(source: string,archive: string,ownerI
   if (expected.format !== "ai-app-jumpstart-workflow-rows-v2" || expected.ownerSha256 !== ownerDigest(owner) ||
       expected.jobPrefix !== jobPrefix)
     throw new Error("Workflow erasure requires a matching owner and source-bound v2 archive.");
-  if (Object.values(expected.runStatuses).some(status => !terminalStatuses.has(status)))
+  if (Object.values(expected.runStatuses).some(status => !terminalRunStatuses.has(status)))
     throw new Error("Workflow erasure refuses nonterminal runs.");
   if (expected.runIds.length > 100_000 || expected.rows > 200_000 || expected.sessionIds.length > 100_000)
     throw new Error("Workflow archive exceeds erasure limits.");

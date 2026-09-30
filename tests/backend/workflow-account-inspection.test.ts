@@ -34,14 +34,14 @@ it("counts only native Workflow runs linked to an owner's bound session and hide
     expect(migration.status,migration.stderr).toBe(0);
     const pg = new Client({ connectionString: workflow.url });await pg.connect();
     try {
-      for (const [id,attributes] of [
-        ["owned-session",{"$eve.type":"session"}],
-        ["owned-turn",{"$eve.type":"turn","$eve.parent":"owned-session","$eve.root":"owned-session"}],
-        ["owned-child",{"$eve.type":"subagent","$eve.parent":"owned-turn"}],
-        ["retained-child",{"$eve.type":"turn","$eve.parent":"retired-session","$eve.root":"retired-session"}],
-        ["other-session",{"$eve.type":"session"}],
+      for (const [id,attributes,status] of [
+        ["owned-session",{"$eve.type":"session"},"completed"],
+        ["owned-turn",{"$eve.type":"turn","$eve.parent":"owned-session","$eve.root":"owned-session"},"running"],
+        ["owned-child",{"$eve.type":"subagent","$eve.parent":"owned-turn"},"completed"],
+        ["retained-child",{"$eve.type":"turn","$eve.parent":"retired-session","$eve.root":"retired-session"},"completed"],
+        ["other-session",{"$eve.type":"session"},"completed"],
       ] as const) await pg.query(`INSERT INTO workflow.workflow_runs (id,deployment_id,status,name,attributes)
-        VALUES ($1,'fixture','completed','fixture',$2::jsonb)`,[id,JSON.stringify(attributes)]);
+        VALUES ($1,'fixture',$3,'fixture',$2::jsonb)`,[id,JSON.stringify(attributes),status]);
       await pg.query(`INSERT INTO workflow.workflow_events (id,type,run_id) VALUES ('event-1','test','owned-turn')`);
       await pg.query(`INSERT INTO workflow.workflow_invocations (run_id,request_id,payload,fingerprint)
         VALUES ('owned-turn','owned-invocation',$1,'fixture-fingerprint'),
@@ -50,18 +50,18 @@ it("counts only native Workflow runs linked to an owner's bound session and hide
       const env = { ACCOUNT_AUDIT_SQLITE_PATH: path,WORKFLOW_POSTGRES_URL: workflow.url };
       const observed = await inspectAccountWorkflow("sqlite",owner,env);
       expect(observed).toMatchObject({ boundSessionCount: 2,
-        linkedRuns: { runs: 4,events: 1,invocations: 1 },otherSessionRoots: 1 });
+        linkedRuns: { runs: 4,terminalRuns: 3,nonterminalRuns: 1,events: 1,invocations: 1 },otherSessionRoots: 1 });
       expect(JSON.stringify(observed)).not.toContain(owner.tenant);
       expect(JSON.stringify(observed)).not.toContain(owner.subject);
       expect(await inspectAccountWorkflow("sqlite",{ ...owner,subject: "missing" },env)).toMatchObject({
-        boundSessionCount: 0,linkedRuns: { runs: 0,invocations: 0 },otherSessionRoots: 2 });
+        boundSessionCount: 0,linkedRuns: { runs: 0,terminalRuns: 0,nonterminalRuns: 0,invocations: 0 },otherSessionRoots: 2 });
       await pg.query(`CREATE TABLE public.app_conversations
         (tenant text NOT NULL,subject text NOT NULL,session_id text)`);
       await pg.query(`INSERT INTO public.app_conversations (tenant,subject,session_id) VALUES ($1,$2,'owned-session')`,
         [owner.tenant,owner.subject]);
       expect(await inspectAccountWorkflow("postgres",owner,{ DATABASE_URL: workflow.url,
         WORKFLOW_POSTGRES_URL: workflow.url })).toMatchObject({ boundSessionCount: 1,
-        linkedRuns: { runs: 3,events: 1,invocations: 1 } });
+        linkedRuns: { runs: 3,terminalRuns: 2,nonterminalRuns: 1,events: 1,invocations: 1 } });
       const command = spawnSync(process.execPath,["scripts/inspect-account-workflow.mjs","--metadata","sqlite","--read-only"],{
         cwd: process.cwd(),encoding: "utf8",env: { ...process.env,...env,ACCOUNT_AUDIT_TENANT: owner.tenant,
           ACCOUNT_AUDIT_SUBJECT: owner.subject } });
@@ -90,7 +90,7 @@ it("counts only native Workflow runs linked to an owner's bound session and hide
       const convexObservation = await inspectAccountWorkflow("convex",owner,{ WORKFLOW_POSTGRES_URL: workflow.url,
         CONVEX_SITE_URL: "https://test.convex.site",CONVEX_AUDIT_SECRET: auditSecret },convexRequest);
       expect(convexObservation).toMatchObject({ boundSessionCount: 2,
-        linkedRuns: { runs: 4,events: 1,invocations: 1 },otherSessionRoots: 1 });
+        linkedRuns: { runs: 4,terminalRuns: 3,nonterminalRuns: 1,events: 1,invocations: 1 },otherSessionRoots: 1 });
       expect(JSON.stringify(convexObservation)).not.toContain(owner.tenant);
       expect(JSON.stringify(convexObservation)).not.toContain(owner.subject);
     } finally { await pg.end(); }

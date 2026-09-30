@@ -6,6 +6,7 @@ import { z } from "zod";
 
 export const nativeTables = ["workflow_runs", "workflow_steps", "workflow_events", "workflow_hooks",
   "workflow_stream_chunks", "workflow_waits", "workflow_event_slots", "workflow_invocations"];
+export const terminalRunStatuses = new Set(["completed","failed","cancelled"]);
 
 export const linkedRunsCte = `WITH RECURSIVE linked(id) AS (
   SELECT id FROM workflow.workflow_runs WHERE id = ANY($1::text[])
@@ -108,6 +109,10 @@ export async function inspectAccountWorkflow(metadataProvider, owner, env,reques
     const result = await db.query(`${linkedRunsCte}
       SELECT
         (SELECT count(*) FROM linked) AS runs,
+        (SELECT count(*) FROM workflow.workflow_runs WHERE id IN (SELECT id FROM linked)
+          AND status::text = ANY($2::text[])) AS terminal_runs,
+        (SELECT count(*) FROM workflow.workflow_runs WHERE id IN (SELECT id FROM linked)
+          AND (status IS NULL OR NOT (status::text = ANY($2::text[])))) AS nonterminal_runs,
         (SELECT count(*) FROM workflow.workflow_steps WHERE run_id IN (SELECT id FROM linked)) AS steps,
         (SELECT count(*) FROM workflow.workflow_events WHERE run_id IN (SELECT id FROM linked)) AS events,
         (SELECT count(*) FROM workflow.workflow_hooks WHERE run_id IN (SELECT id FROM linked)) AS hooks,
@@ -115,16 +120,18 @@ export async function inspectAccountWorkflow(metadataProvider, owner, env,reques
         (SELECT count(*) FROM workflow.workflow_waits WHERE run_id IN (SELECT id FROM linked)) AS waits,
         (SELECT count(*) FROM workflow.workflow_event_slots WHERE run_id IN (SELECT id FROM linked)) AS event_slots,
         (SELECT count(*) FROM workflow.workflow_invocations WHERE run_id IN (SELECT id FROM linked)) AS invocations,
-        (SELECT count(*) FROM workflow.workflow_runs WHERE attributes->>'$eve.type'='session' AND id NOT IN (SELECT id FROM linked)) AS other_session_roots`, [ids]);
+        (SELECT count(*) FROM workflow.workflow_runs WHERE attributes->>'$eve.type'='session' AND id NOT IN (SELECT id FROM linked)) AS other_session_roots`,
+    [ids,[...terminalRunStatuses]]);
     await db.query("COMMIT");
     const row = result.rows[0];
     return { format: "ai-app-jumpstart-account-workflow-observation-v1", metadataProvider,
       workflowProvider: "postgres", boundSessionCount: ids.length,
-      linkedRuns: { runs: count(row.runs), steps: count(row.steps), events: count(row.events),
+      linkedRuns: { runs: count(row.runs), terminalRuns: count(row.terminal_runs),
+        nonterminalRuns: count(row.nonterminal_runs), steps: count(row.steps), events: count(row.events),
         hooks: count(row.hooks), streamChunks: count(row.stream_chunks), waits: count(row.waits),
         eventSlots: count(row.event_slots), invocations: count(row.invocations) },
       otherSessionRoots: count(row.other_session_roots),
-      scope: "two read-only snapshots; linked PostgreSQL Workflow rows only. Other session roots are global and may belong to other accounts; unlinked auxiliary runs, local/managed Workflow, Auth, providers, logs and backups are not attributed. No write fence or erasure certificate." };
+      scope: "two read-only snapshots; linked PostgreSQL Workflow rows only. Nonterminal linked runs are reported, not cancelled. Other session roots are global and may belong to other accounts; unlinked auxiliary runs, local/managed Workflow, Auth, providers, logs and backups are not attributed. No write fence or erasure certificate." };
   } catch (error) { await db.query("ROLLBACK").catch(() => {}); throw error; } finally { await db.end(); }
 }
 
