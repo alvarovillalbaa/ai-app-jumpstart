@@ -71,6 +71,14 @@ npm run smoke:hosted -- --contract
 
 `--contract` first requires the deployed `/openapi.json` bytes to match this checkout, before the smoke writes a record. It then validates every successful JSON `/api/v1` response it reads against the matching operation and status schema. A mismatch stops the run with an operation name, not private response content. Run it from the exact source revision intended for release; this checks the exposed REST contract and deployment revision, not the internal state of every route or the separate MCP protocol. The other modes below can be combined with `--contract`.
 
+### GitHub Actions hosted acceptance
+
+The manually dispatched [Hosted acceptance workflow](../.github/workflows/hosted-acceptance.yml) runs this contract together with the token-based records browser smoke against Vercel, self-hosted Node, AWS, Azure, GCP, Amplify or another HTTPS deployment. It does not deploy, invoke a model or need provider-control-plane credentials. It creates and deletes a temporary record, so use an isolated staging deployment and disposable credentials.
+
+Before dispatching, create and configure a GitHub environment named `hosted-staging`. Add the exact staging origin as the environment variable `APP_API_URL`; add two distinct temporary `records:read` and `records:write` tokens as environment secrets `APP_API_TOKEN` and `APP_API_OTHER_TOKEN`. Add `VERCEL_AUTOMATION_BYPASS_SECRET` only for a protected Vercel preview. Restrict the environment to the default branch and require a reviewer before secrets are released. GitHub automatically creates a missing environment without protection rules, so configure it in repository Settings before running the workflow. The workflow itself refuses refs other than the repository's default branch. See GitHub's [environment protection and secret behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments).
+
+After the workflow is present on the default branch, use Actions → Hosted acceptance → Run workflow. A passing run verifies the current REST/OpenAPI contract, web health and records UI, plus temporary-record ownership and parity across REST, CLI and MCP. It does not prove authenticated signup, private-upload storage/scanning, chat/model quality, cloud infrastructure configuration, scheduled jobs or recovery; run the specific acceptance mode for each enabled capability.
+
 For a deployment with Supabase accounts and `AI_CHAT_ENABLED=true`, sign in two distinct temporary staging users through the configured Auth provider and put their current access tokens into the same two shell variables. Run:
 
 ```sh
