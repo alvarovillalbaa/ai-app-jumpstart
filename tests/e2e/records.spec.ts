@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { appConfig } from "../../app.config";
 import { runHostedSmoke } from "../../scripts/smoke-hosted.mjs";
 test("unknown pages show a useful 404", async ({ page }) => {
   const response = await page.goto("/a-page-that-does-not-exist");
@@ -9,7 +10,7 @@ test("unknown pages show a useful 404", async ({ page }) => {
 });
 test("workspace navigation stays usable by keyboard and on mobile when chat is disabled", async ({ page }) => {
   await page.goto("/records");
-  await expect(page).toHaveTitle("Records | AI App Jumpstart");
+  await expect(page).toHaveTitle(`Records | ${appConfig.name}`);
   const desktop = page.getByRole("navigation", { name: "Workspace" });
   await expect(desktop.getByRole("link", { name: "Records" })).toHaveAttribute("aria-current", "page");
   await expect(desktop.getByRole("link", { name: "Chat" })).toHaveCount(0);

@@ -1,4 +1,5 @@
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
+import { appConfig } from "../../app.config";
 import { randomUUID } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -209,7 +210,7 @@ test("verified users create, replay and follow up; foreign users cannot resolve 
   await page.locator("header details > summary").click();
   await page.getByRole("navigation",{ name: "Workspace" }).getByRole("link",{ name: "Conversations",exact: true }).click();
   await expect(page.getByRole("heading",{ name: "Conversations" })).toBeVisible();
-  await expect(page).toHaveTitle("Conversations | AI App Jumpstart");
+  await expect(page).toHaveTitle(`Conversations | ${appConfig.name}`);
   await page.getByRole("button",{ name: "Rename",exact: true }).click();
   await page.getByLabel("Title",{ exact: true }).fill("Renamed private chat");
   await page.getByRole("button",{ name: "Save title",exact: true }).click();
@@ -559,7 +560,7 @@ test("an approved tool saves one private artifact; denial saves none",async ({ p
   await page.locator("header details > summary").click();
   await page.getByRole("navigation",{ name: "Workspace" }).getByRole("link",{ name: "Artifacts",exact: true }).click();
   await expect(page.getByRole("heading",{ name: "Artifacts" })).toBeVisible();
-  await expect(page).toHaveTitle("Artifacts | AI App Jumpstart");
+  await expect(page).toHaveTitle(`Artifacts | ${appConfig.name}`);
   await expect(page.getByRole("heading",{ name: "Fixture artifact" })).toBeVisible();
   await page.getByText("View text").click();
   await expect(page.getByText("Exact approved plain-text payload.")).toBeVisible();

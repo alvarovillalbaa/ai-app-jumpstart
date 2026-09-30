@@ -14,6 +14,15 @@ The [AI usage view](docs/usage-budgets.md) at `/usage` shows the account's curre
 
 ## Start locally
 
+After this repository is enabled for GitHub's **Use this template** action, set the generated project's app identity before installing dependencies or starting local Supabase. This gives the new project a distinct npm name, displayed app name, MCP server name and Supabase CLI project ID:
+
+```sh
+npm run init:template -- --name "Acme Assistant" --apply
+npm ci
+```
+
+The package and Supabase IDs use the slug `acme-assistant` derived from the display name. Use `--slug your-own-slug` to choose a different lowercase, hyphen-separated ID. Without `--apply`, the command only previews the changes. It updates project identity fields and the README title; protocol names, database formats and stable API contracts remain unchanged. See [fresh-clone and hosted setup](docs/getting-started.md) before configuring providers.
+
 For browser accounts and a Supabase-backed application, follow the [fresh-clone guide](docs/getting-started.md) for either local or hosted Supabase. The following path is the smaller SQLite/API-key example.
 
 The guide also covers an owner-scoped, repeatable sample-record seed and generation of committed Supabase database types from the local migrated schema.
@@ -36,7 +45,7 @@ Open `http://localhost:3000/records`, enter the token, and create a record. Toke
 
 For a local production process, run `npm run build:local` then `npm start`. The local build compiles both Eve and Next. `npm run test:vercel-build` checks the generated Vercel-mode Next/Eve service graph without a linked project or credentials. A local build is not proof of a successful hosted agent turn.
 
-`npm run test:quickstart` rehearses this SQLite path from a new clone of **committed HEAD**, with a fresh install/cache, disposable CLI-generated keys, build/start, seed reruns, restart persistence, two-owner browser/REST/CLI/MCP access and deterministic AI evals. Install Chromium first with `npx playwright install chromium`. It requires macOS or Linux, uses free loopback ports and removes its own clone/services; local uncommitted changes are excluded. See [testing](docs/testing.md).
+`npm run test:quickstart` rehearses this SQLite path from a new clone of **committed HEAD**, initializes it with a distinct sample identity, then performs a fresh install/cache, build/start, seed reruns, restart persistence, two-owner browser/REST/CLI/MCP access and deterministic AI evals. Install Chromium first with `npx playwright install chromium`. It requires macOS or Linux, uses free loopback ports and removes its own clone/services; local uncommitted changes are excluded. See [testing](docs/testing.md).
 
 ## Shared data access
 

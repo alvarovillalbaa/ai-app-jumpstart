@@ -3,7 +3,7 @@ import { readFile,stat,writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /** Only committed source and a fresh pinned install may enter onboarding proof. */
-export async function cloneCommittedCheckout({ root,directory,env,command,phase }) {
+export async function cloneCommittedCheckout({ root,directory,env,command,phase,initializeTemplate }) {
   const revision = await command("git",["rev-parse","HEAD"]);
   assert.match(revision,/^[a-f0-9]{40}$/);
   const checkout = join(directory,"checkout");
@@ -20,6 +20,10 @@ export async function cloneCommittedCheckout({ root,directory,env,command,phase 
     assert.equal(await stat(join(checkout,path)).then(() => true,failure => {
       if (failure.code === "ENOENT") return false;throw failure;
     }),false,`Fresh clone unexpectedly contains ${path}`);
+  }
+  if (initializeTemplate) {
+    phase("template identity initialization");
+    await command(process.execPath,["scripts/init-template.mjs","--name",initializeTemplate.name,"--slug",initializeTemplate.slug,"--apply"],{ cwd: checkout });
   }
   phase("pinned install");
   const lockBefore = await readFile(join(checkout,"package-lock.json"));

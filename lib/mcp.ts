@@ -38,11 +38,12 @@ import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { failureDiagnostic } from "./observability/request";
 import { getRequestLimitStore } from "./request-limits/store";
 import { limitSnapshot,type LimitSnapshot } from "./request-limits/contract";
+import { appConfig } from "../app.config";
 
 export function createMcpServer(service: RecordService, history?: ConversationHistoryService,artifacts?: ArtifactService,usage?: UsageService,uploads?: UploadService,
   profile?: () => Promise<AccountProfile>,sourceEvents?: (operationId: string,options: unknown) => Promise<unknown>,reconcile?: (operationId: string,options: unknown) => Promise<unknown>,accountPreferences?: PreferenceService,
   requestLimit?: () => Promise<LimitSnapshot>) {
-  const server = new McpServer({ name: "ai-app-jumpstart-data", version: "1.0.0" });
+  const server = new McpServer({ name: `${appConfig.id}-data`, version: "1.0.0" });
   async function result(action: () => Promise<unknown>) {
     try { return { content: [{ type: "text" as const, text: JSON.stringify(await action()) }] }; }
     catch (error) {

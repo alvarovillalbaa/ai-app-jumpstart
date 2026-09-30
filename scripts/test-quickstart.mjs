@@ -7,6 +7,8 @@ import { once } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 // Rehearse committed HEAD, never copy the developer's working files or env.
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -53,8 +55,9 @@ try {
   if (process.argv.length !== 2) throw new Error("This command takes no arguments and tests committed HEAD.");
   if (!["linux", "darwin"].includes(process.platform)) throw new Error("The process-group rehearsal requires macOS or Linux.");
   directory = await mkdtemp(join(tmpdir(), "jumpstart-quickstart-"));
-  const { checkout,revision } = await cloneCommittedCheckout({ root,directory,env,command,phase });
-  console.log(`Rehearsing fresh commit ${revision.slice(0, 7)} with isolated SQLite and no provider credentials...`);
+  const initializedIdentity = { name: "Quickstart Rehearsal",slug: "quickstart-rehearsal" };
+  const { checkout,revision } = await cloneCommittedCheckout({ root,directory,env,command,phase,initializeTemplate: initializedIdentity });
+  console.log(`Rehearsing fresh commit ${revision.slice(0, 7)} as ${initializedIdentity.slug} with isolated SQLite and no provider credentials...`);
   phase("documented configuration");
   const credentials = [];
   for (const subject of ["developer", "other-developer"]) {
@@ -87,6 +90,9 @@ try {
   });
   phase("production startup and repeatable seed");
   server = start(); await ready(origin);
+  const brandedPage = await fetch(`${origin}/records`, { signal: AbortSignal.timeout(5000) });
+  assert.equal(brandedPage.status,200);
+  assert.match(await brandedPage.text(),/<title>Records \| Quickstart Rehearsal<\/title>/);
   const clientEnv = { ...localEnv, APP_API_URL: origin, APP_API_TOKEN: credentials[0].token, APP_API_OTHER_TOKEN: credentials[1].token };
   const seed = async () => JSON.parse(await command("npm", ["run", "--silent", "seed:records"], { cwd: checkout, env: clientEnv }));
   assert.deepEqual(await seed(), { created: 2, existing: 0, titles: JSON.parse(await readFile(join(checkout, "scripts/fixtures/records.json"), "utf8")).map(row => row.title) });
@@ -101,14 +107,24 @@ try {
   assert.deepEqual(await list(), before); assert.equal((await seed()).created, 0);
   phase("two-owner browser, REST, CLI and MCP");
   await command("npm", ["run", "smoke:hosted", "--", "--browser", "--contract"], { cwd: checkout, env: clientEnv });
+  const identityClient = new Client({ name: "quickstart-identity-check",version: "1" });
+  try {
+    await identityClient.connect(new StreamableHTTPClientTransport(new URL(`${origin}/api/mcp`), {
+      requestInit: { headers: { authorization: `Bearer ${credentials[0].token}` } },
+    }));
+    assert.equal(identityClient.getServerVersion()?.name,`${initializedIdentity.slug}-data`);
+  } finally { await identityClient.close(); }
   phase("closed production runtime");
   assert.equal((await fetch(`${origin}/api/v1/conversations`, { method: "POST", headers: { authorization: `Bearer ${credentials[0].token}`, "content-type": "application/json", origin }, body: "{}", signal: AbortSignal.timeout(5000) })).status, 503);
   await server.stop(); server = undefined;
   phase("deterministic AI evals");
   await command("npm", ["run", "test:ai"], { cwd: checkout, env });
-  phase("tracked source remains unchanged");
-  assert.equal(await command("git", ["status", "--porcelain", "--untracked-files=no"], { cwd: checkout }), "");
-  console.log(`Quickstart passed at ${revision.slice(0, 7)}: clean pinned install/check/build, two services, seed/rerun, restart persistence, two-owner browser/REST/CLI/MCP and deterministic AI evals. No paid turn or hosted deployment.`);
+  phase("only intended project identity files changed");
+  const changed = (await command("git", ["diff", "--name-only", "HEAD"], { cwd: checkout }))
+    .split("\n").filter(Boolean).sort();
+  assert.deepEqual(changed,["README.md","app.config.ts","package-lock.json","package.json","supabase/config.toml"].sort());
+  assert.equal(await command("git",["ls-files","--others","--exclude-standard"],{ cwd: checkout }),"");
+  console.log(`Quickstart passed at ${revision.slice(0, 7)}: template initialization, clean pinned install/check/build, two services, seed/rerun, restart persistence, two-owner browser/REST/CLI/MCP and deterministic AI evals. No paid turn or hosted deployment.`);
 } catch (error) {
   console.error(`Quickstart failed during ${stage}: ${redact(error instanceof Error ? error.message : "unknown error")}`);
   process.exitCode = 1;

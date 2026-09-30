@@ -1,4 +1,5 @@
 export const appConfig = {
+  id: "ai-app-jumpstart",
   name: "AI App Jumpstart",
   description: "A portable foundation for AI applications, with shared data access and reusable tests.",
   navigation: [

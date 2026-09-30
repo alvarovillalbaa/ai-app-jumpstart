@@ -1,5 +1,16 @@
 # Start from a fresh clone
 
+## Initialize a repository created from this template
+
+Once GitHub's **Use this template** action is enabled for this repository, choose the generated app's name before installing dependencies or starting Supabase locally:
+
+```sh
+npm run init:template -- --name "Acme Assistant" --apply
+npm ci
+```
+
+The initializer previews changes unless `--apply` is supplied. It updates the browser title and navigation name, MCP server identity, npm package and lockfile names, local Supabase `project_id`, and README heading. The ID defaults to a lowercase hyphen-separated slug derived from the name; pass `--slug acme-assistant` to set it explicitly. It changes no credentials, database schemas, protocol routes, saved-data formats or hosted resources. Select a different ID for each project so local Supabase services and their data remain isolated.
+
 Use Node 24.15.0 or newer 24.x and `npm ci`. The checked-in `.nvmrc` selects the tested version with `nvm use`, and `.npmrc` makes `npm ci` fail on an unsupported Node version instead of continuing after an engine warning. Check `node --version` in the new checkout before installing, especially if your shell does not switch versions automatically. Keep `.env.local` private; `.env.example` lists all supported settings. The root application includes Next and Eve in one install. These steps leave account chat disabled so records and account access can be checked before model costs or workflow storage are configured.
 
 To rehearse the managed path from committed source without hosted credentials, start Docker and run `npx playwright install chromium` followed by `npm run test:managed-quickstart`. The command makes another clean local clone, uses a private npm configuration/cache, builds production Eve and Next, then runs real disposable Supabase Auth/SMTP, PostgreSQL/PostgREST and private Storage account, chat and reviewed-file suites. It removes its temporary checkout and services. This validates the portable onboarding path locally; it does not deploy to Vercel or your Supabase project.
@@ -61,7 +72,7 @@ Before a managed Vercel release, set `AI_CHAT_ENABLED` and `APP_REQUESTS_PER_MIN
 ## Optional capabilities and checks
 
 - **API-key records without accounts:** leave the SQLite defaults, run `npm run auth:key -- local developer write`, place only its configuration array into `APP_API_KEYS`, then use the private token at `/records`. This needs neither Docker nor Supabase.
-- **Clean-clone SQLite rehearsal:** install Chromium with `npx playwright install chromium`, then run `npm run test:quickstart` on macOS/Linux. It tests committed HEAD in a disposable clone with a fresh install/cache, generated keys and separate ports; see [testing](testing.md). This does not provision or validate a Supabase project.
+- **Clean-clone SQLite rehearsal:** install Chromium with `npx playwright install chromium`, then run `npm run test:quickstart` on macOS/Linux. It tests committed HEAD in a disposable clone, initializes a unique app identity, then performs a fresh install/cache with generated keys and separate ports; see [testing](testing.md). This does not provision or validate a Supabase project.
 - **AI chat:** keep it off until both Next and Eve have the same identity, ownership store, signing keyring and a reviewed budget policy. Follow [account chat](account-chat.md); `AI_GATEWAY_API_KEY` may be needed for local model calls. A successful account login alone does not enable chat.
 - **Other data providers:** follow [database setup](databases.md). Application data and Eve workflow storage are independent. The cloud PostgreSQL workflow build has additional build-time and runtime settings in [workflow storage](workflow-storage.md).
 - **Validation:** `npm run check` covers types, lint and unit contracts; `npm run test:providers` uses disposable provider services; `npm run build:local` builds Eve and Next; `npm run test:auth` exercises disposable local Auth and browser flows after that build. `npm run test:chat` requires an additional deterministic Eve fixture and Docker. See [testing](testing.md) for the full matrix. These tests do not validate your hosted project's secrets, SMTP or paid model.
@@ -80,4 +91,4 @@ Before a managed Vercel release, set `AI_CHAT_ENABLED` and `APP_REQUESTS_PER_MIN
 | Migration runner rejects an unknown applied migration | Stop and use the checkout that owns that migration; do not edit the ledger or run an older release over a newer schema. |
 | Chat fails although records work | Check the separate [account chat](account-chat.md) and [workflow storage](workflow-storage.md) settings and readiness endpoints. |
 
-To start over without losing data, stop and restart the local Supabase services. If this **disposable local** database can be erased, first back up anything you need, then run `npx supabase stop --project-id ai-app-jumpstart --no-backup`; that explicitly removes this project's local data volumes. Restart with `npm run db:local:start`, refresh `.env.local` from the new `npm run db:local:status` output, and apply `npm run db:migrate` again. A second clone with the same `project_id` shares the local service rather than creating an isolated dataset. Never use this reset on a hosted project. Release migrations require a reviewed backup and an operator who knows which environment is targeted.
+To start over without losing data, stop and restart the local Supabase services. If this **disposable local** database can be erased, first back up anything you need, then run `npx supabase stop --project-id YOUR_LOCAL_PROJECT_ID --no-backup`, replacing the value with `project_id` from `supabase/config.toml`; that explicitly removes that project's local data volumes. Restart with `npm run db:local:start`, refresh `.env.local` from the new `npm run db:local:status` output, and apply `npm run db:migrate` again. A second clone with the same `project_id` shares the local service rather than creating an isolated dataset. Never use this reset on a hosted project. Release migrations require a reviewed backup and an operator who knows which environment is targeted.
