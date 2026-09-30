@@ -50,6 +50,7 @@
     "budgets:reconcile": "tsx --env-file-if-exists=.env.local scripts/reconcile-budget.ts",
     "check": "npm run typecheck && npm run lint && npm test",
     "check:docs": "node scripts/check-doc-links.mjs",
+    "check:dependencies": "tsx scripts/check-dependencies.ts",
     "check:container-pins": "node scripts/check-container-image-pins.mjs",
     "openapi:generate": "node scripts/openapi.mjs --write",
     "check:openapi": "node scripts/openapi.mjs && redocly lint --extends=spec public/openapi.json",
@@ -150,7 +151,7 @@
     "@supabase/ssr": "0.12.7",
     "@supabase/supabase-js": "2.116.0",
     "@vercel/connect": "^2.1.0",
-    "@workflow/world-postgres": "5.0.0-beta.42",
+    "@workflow/world-postgres": "5.0.0-beta.48",
     "@xyflow/react": "^12.11.6",
     "ai": "7.0.99",
     "ansi-to-react": "^6.2.6",
@@ -220,6 +221,7 @@
   "overrides": {
     "ansi-to-react": {
       "linkify-it": "5.0.2"
-    }
+    },
+    "undici@8.9.0": "8.10.2"
   }
 }

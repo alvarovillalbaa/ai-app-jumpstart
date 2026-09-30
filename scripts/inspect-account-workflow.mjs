@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 import { Client } from "pg";
 
 export const nativeTables = ["workflow_runs", "workflow_steps", "workflow_events", "workflow_hooks",
-  "workflow_stream_chunks", "workflow_waits", "workflow_event_slots"];
+  "workflow_stream_chunks", "workflow_waits", "workflow_event_slots", "workflow_invocations"];
 
 export const linkedRunsCte = `WITH RECURSIVE linked(id) AS (
   SELECT id FROM workflow.workflow_runs WHERE id = ANY($1::text[])
@@ -81,13 +81,15 @@ export async function inspectAccountWorkflow(metadataProvider, owner, env) {
         (SELECT count(*) FROM workflow.workflow_stream_chunks WHERE run_id IN (SELECT id FROM linked)) AS stream_chunks,
         (SELECT count(*) FROM workflow.workflow_waits WHERE run_id IN (SELECT id FROM linked)) AS waits,
         (SELECT count(*) FROM workflow.workflow_event_slots WHERE run_id IN (SELECT id FROM linked)) AS event_slots,
+        (SELECT count(*) FROM workflow.workflow_invocations WHERE run_id IN (SELECT id FROM linked)) AS invocations,
         (SELECT count(*) FROM workflow.workflow_runs WHERE attributes->>'$eve.type'='session' AND id NOT IN (SELECT id FROM linked)) AS other_session_roots`, [ids]);
     await db.query("COMMIT");
     const row = result.rows[0];
     return { format: "ai-app-jumpstart-account-workflow-observation-v1", metadataProvider,
       workflowProvider: "postgres", boundSessionCount: ids.length,
       linkedRuns: { runs: count(row.runs), steps: count(row.steps), events: count(row.events),
-        hooks: count(row.hooks), streamChunks: count(row.stream_chunks), waits: count(row.waits), eventSlots: count(row.event_slots) },
+        hooks: count(row.hooks), streamChunks: count(row.stream_chunks), waits: count(row.waits),
+        eventSlots: count(row.event_slots), invocations: count(row.invocations) },
       otherSessionRoots: count(row.other_session_roots),
       scope: "two read-only snapshots; linked PostgreSQL Workflow rows only. Other session roots are global and may belong to other accounts; unlinked auxiliary runs, local/managed Workflow, Auth, providers, logs and backups are not attributed. No write fence or erasure certificate." };
   } catch (error) { await db.query("ROLLBACK").catch(() => {}); throw error; } finally { await db.end(); }

@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync,mkdirSync,readFileSync,rmSync,statSync,writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -67,19 +68,45 @@ it("preserves linked Workflow payloads in a private source-bound archive and rej
       await pg.query(`INSERT INTO workflow.workflow_waits (wait_id,run_id,status)
         VALUES ('wait-1','owned-turn','completed')`);
       await pg.query(`INSERT INTO workflow.workflow_event_slots (run_id) VALUES ('owned-turn')`);
+      await pg.query(`INSERT INTO workflow.workflow_invocations (run_id,request_id,payload,fingerprint,result)
+        VALUES ('owned-turn','invocation-1',$1,'fixture-fingerprint',$2),
+          ('foreign-session','invocation-2',$3,'foreign-fingerprint',$4)`,
+        [Buffer.from("owned-private-invocation-payload"),Buffer.from("owned-private-invocation-result"),
+          Buffer.from("foreign-private-invocation-payload"),Buffer.from("foreign-private-invocation-result")]);
     } finally { await pg.end(); }
     const result = await exportAccountWorkflow(bundle,archive,database.url,owner);
-    expect(result).toMatchObject({ runs: 3,rows: 114,counts: { workflow_runs: 3,workflow_events: 106,
-      workflow_steps: 1,workflow_hooks: 1,workflow_stream_chunks: 1,workflow_waits: 1,workflow_event_slots: 1 } });
+    expect(result).toMatchObject({ runs: 3,rows: 115,counts: { workflow_runs: 3,workflow_events: 106,
+      workflow_steps: 1,workflow_hooks: 1,workflow_stream_chunks: 1,workflow_waits: 1,workflow_event_slots: 1,
+      workflow_invocations: 1 } });
     expect(statSync(archive).mode & 0o077).toBe(0);
     const content = readFileSync(archive,"utf8");
     expect(content).toContain("owned-private-checkpoint");
     expect(content).toContain("retained-after-root");
     expect(content).toContain(Buffer.from("owned-private-event").toString("hex"));
     expect(content).toContain(Buffer.from("owned-private-stream").toString("hex"));
+    expect(content).toContain(Buffer.from("owned-private-invocation-payload").toString("hex"));
+    expect(content).toContain(Buffer.from("owned-private-invocation-result").toString("hex"));
     expect(content).not.toContain("foreign-private-checkpoint");
+    expect(content).not.toContain("foreign-private-invocation-payload");
     expect(content).not.toContain(owner.subject);
-    expect(await verifyAccountWorkflowExport(bundle,archive)).toMatchObject({ runs: 3,rows: 114 });
+    expect(await verifyAccountWorkflowExport(bundle,archive)).toMatchObject({ runs: 3,rows: 115 });
+    const archiveLines = content.trimEnd().split("\n"),footer = JSON.parse(archiveLines.pop()!) as {
+      value: { rows: number;counts: Record<string,number>;contentSha256: string };
+    };
+    const legacyBody = archiveLines.flatMap(line => {
+      const item = JSON.parse(line) as { type: string;value?: { format?: string;table?: string } };
+      if (item.type === "row" && item.value?.table === "workflow_invocations") return [];
+      if (item.type === "manifest" && item.value) item.value.format = "ai-app-jumpstart-workflow-rows-v1";
+      return [item.type === "manifest" ? JSON.stringify(item) : line];
+    });
+    footer.value.rows = 114;
+    delete footer.value.counts.workflow_invocations;
+    footer.value.contentSha256 = createHash("sha256").update(legacyBody.map(line => `${line}\n`).join("")).digest("hex");
+    const legacyArchive = join(dir,"workflow-v1.ndjson");
+    writeFileSync(legacyArchive,[...legacyBody,JSON.stringify(footer)].join("\n")+"\n",{ mode: 0o600 });
+    expect(await verifyAccountWorkflowExport(bundle,legacyArchive)).toMatchObject({
+      runs: 3,rows: 114,counts: { workflow_invocations: 0 },
+    });
     await database.createDatabase("workflow_account_rehearsal_fixture");
     const rehearsalUrl = new URL(database.url);
     rehearsalUrl.pathname = "/workflow_account_rehearsal_fixture";
@@ -89,14 +116,14 @@ it("preserves linked Workflow payloads in a private source-bound archive and rej
         WORKFLOW_POSTGRES_JOB_PREFIX: "account_rehearsal_test",EVE_WORKFLOW_PROVIDER: "postgres" } });
     expect(targetMigration.status,targetMigration.stderr).toBe(0);
     expect(await rehearseAccountWorkflow(bundle,archive,target)).toEqual({
-      workflowProvider: "postgres",runs: 3,rows: 114,status: "rolled-back-rehearsal",
+      workflowProvider: "postgres",runs: 3,rows: 115,status: "rolled-back-rehearsal",
     });
     const rehearsalCli = spawnSync(process.execPath,["node_modules/tsx/dist/cli.mjs",
       "scripts/rehearse-account-workflow.ts","--source",bundle,"--archive",archive],{
       cwd: process.cwd(),encoding: "utf8",env: { ...process.env,ACCOUNT_REHEARSAL_WORKFLOW_URL: target },
     });
     expect(rehearsalCli.status,rehearsalCli.stderr).toBe(0);
-    expect(JSON.parse(rehearsalCli.stdout)).toMatchObject({ runs: 3,rows: 114,status: "rolled-back-rehearsal" });
+    expect(JSON.parse(rehearsalCli.stdout)).toMatchObject({ runs: 3,rows: 115,status: "rolled-back-rehearsal" });
     expect(rehearsalCli.stdout).not.toContain(owner.subject);
     const targetDb = new Client({ connectionString: target });await targetDb.connect();
     try {
@@ -136,7 +163,7 @@ it("preserves linked Workflow payloads in a private source-bound archive and rej
       "--source",bundle,"--archive",cliArchive],{ cwd: process.cwd(),encoding: "utf8",
       env: { ...process.env,WORKFLOW_POSTGRES_URL: "",ACCOUNT_AUDIT_TENANT: "",ACCOUNT_AUDIT_SUBJECT: "" } });
     expect(offline.status,offline.stderr).toBe(0);
-    expect(JSON.parse(offline.stdout)).toMatchObject({ runs: 3,rows: 114 });
+    expect(JSON.parse(offline.stdout)).toMatchObject({ runs: 3,rows: 115 });
     writeFileSync(archive,content.replace("owned-private-checkpoint","changed-private-checkpoint"),{ mode: 0o600 });
     await expect(verifyAccountWorkflowExport(bundle,archive)).rejects.toThrow("digest or counts differ");
     await expect(rehearseAccountWorkflow(bundle,archive,target)).rejects.toThrow("digest or counts differ");

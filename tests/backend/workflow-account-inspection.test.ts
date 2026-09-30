@@ -38,20 +38,25 @@ it("counts only native Workflow runs linked to an owner's bound session and hide
       ] as const) await pg.query(`INSERT INTO workflow.workflow_runs (id,deployment_id,status,name,attributes)
         VALUES ($1,'fixture','completed','fixture',$2::jsonb)`,[id,JSON.stringify(attributes)]);
       await pg.query(`INSERT INTO workflow.workflow_events (id,type,run_id) VALUES ('event-1','test','owned-turn')`);
+      await pg.query(`INSERT INTO workflow.workflow_invocations (run_id,request_id,payload,fingerprint)
+        VALUES ('owned-turn','owned-invocation',$1,'fixture-fingerprint'),
+          ('other-session','foreign-invocation',$2,'foreign-fingerprint')`,
+        [Buffer.from("private-invocation-payload"),Buffer.from("foreign-invocation-payload")]);
       const env = { ACCOUNT_AUDIT_SQLITE_PATH: path,WORKFLOW_POSTGRES_URL: workflow.url };
       const observed = await inspectAccountWorkflow("sqlite",owner,env);
       expect(observed).toMatchObject({ boundSessionCount: 2,
-        linkedRuns: { runs: 4,events: 1 },otherSessionRoots: 1 });
+        linkedRuns: { runs: 4,events: 1,invocations: 1 },otherSessionRoots: 1 });
       expect(JSON.stringify(observed)).not.toContain(owner.tenant);
       expect(JSON.stringify(observed)).not.toContain(owner.subject);
       expect(await inspectAccountWorkflow("sqlite",{ ...owner,subject: "missing" },env)).toMatchObject({
-        boundSessionCount: 0,linkedRuns: { runs: 0 },otherSessionRoots: 2 });
+        boundSessionCount: 0,linkedRuns: { runs: 0,invocations: 0 },otherSessionRoots: 2 });
       await pg.query(`CREATE TABLE public.app_conversations
         (tenant text NOT NULL,subject text NOT NULL,session_id text)`);
       await pg.query(`INSERT INTO public.app_conversations (tenant,subject,session_id) VALUES ($1,$2,'owned-session')`,
         [owner.tenant,owner.subject]);
       expect(await inspectAccountWorkflow("postgres",owner,{ DATABASE_URL: workflow.url,
-        WORKFLOW_POSTGRES_URL: workflow.url })).toMatchObject({ boundSessionCount: 1,linkedRuns: { runs: 3,events: 1 } });
+        WORKFLOW_POSTGRES_URL: workflow.url })).toMatchObject({ boundSessionCount: 1,
+        linkedRuns: { runs: 3,events: 1,invocations: 1 } });
       const command = spawnSync(process.execPath,["scripts/inspect-account-workflow.mjs","--metadata","sqlite","--read-only"],{
         cwd: process.cwd(),encoding: "utf8",env: { ...process.env,...env,ACCOUNT_AUDIT_TENANT: owner.tenant,
           ACCOUNT_AUDIT_SUBJECT: owner.subject } });

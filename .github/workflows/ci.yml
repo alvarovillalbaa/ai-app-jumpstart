@@ -180,7 +180,7 @@ jobs:
           name: dependency-sbom
           path: dependency-sbom.cdx.json
           retention-days: 14
-      - run: npm audit --audit-level=high
+      - run: npm run check:dependencies
   container:
     runs-on: ubuntu-latest
     timeout-minutes: 35

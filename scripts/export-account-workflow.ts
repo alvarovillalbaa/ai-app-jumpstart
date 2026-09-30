@@ -52,7 +52,9 @@ async function sourceSessions(source: string) {
   return { owner,ids: [...ids],manifestSha256 };
 }
 
-function emptyCounts(): Counts { return Object.fromEntries(nativeTables.map(table => [table,0])) as Counts; }
+function emptyCounts(tables: string[] = nativeTables): Counts {
+  return Object.fromEntries(tables.map(table => [table,0])) as Counts;
+}
 
 function linked(id: string,attributes: Record<string,unknown>,known: Set<string>) {
   return known.has(id) || typeof attributes["$eve.root"] === "string" && known.has(attributes["$eve.root"]) ||
@@ -70,7 +72,8 @@ export async function verifyAccountWorkflowExport(source: string,archive: string
     const before = await file.stat();
     if (before.ino !== details.ino || before.size !== details.size || (before.mode & 0o077) !== 0)
       throw new Error("Workflow archive changed.");
-    const hash = createHash("sha256"),counts = emptyCounts(),runs = new Map<string,Record<string,unknown>>();
+    const hash = createHash("sha256"),runs = new Map<string,Record<string,unknown>>();
+    let archiveTables: string[] = [...nativeTables],counts = emptyCounts();
     const childRunIds: string[] = [];
     let header = false,ended = false,bytes = 0,total = 0;
     const reader = createInterface({ input: file.createReadStream({ autoClose: false }),crlfDelay: Infinity });
@@ -81,13 +84,16 @@ export async function verifyAccountWorkflowExport(source: string,archive: string
           throw new Error("Workflow archive exceeds its limits or has trailing data.");
         const item = JSON.parse(line) as { type?: string;value?: Record<string,unknown> };
         if (item.type === "manifest") {
-          if (header || !item.value || item.value.format !== "ai-app-jumpstart-workflow-rows-v1" ||
+          if (header || !item.value || !["ai-app-jumpstart-workflow-rows-v1","ai-app-jumpstart-workflow-rows-v2"].includes(String(item.value.format)) ||
               item.value.workflowProvider !== "postgres" || item.value.sourceManifestSha256 !== sourceData.manifestSha256 ||
               item.value.ownerSha256 !== ownerDigest(sourceData.owner) || item.value.boundSessionCount !== sourceData.ids.length)
             throw new Error("Workflow archive source does not match its account bundle.");
+          archiveTables = item.value.format === "ai-app-jumpstart-workflow-rows-v1"
+            ? nativeTables.filter(table => table !== "workflow_invocations") : [...nativeTables];
+          counts = emptyCounts(archiveTables);
           header = true;
         } else if (item.type === "row") {
-          if (!header || !item.value || !nativeTables.includes(item.value.table as string) ||
+          if (!header || !item.value || !archiveTables.includes(item.value.table as string) ||
               typeof item.value.rowJson !== "string") throw new Error("Workflow archive has an invalid row.");
           const table = item.value.table as Table;
           const row = JSON.parse(item.value.rowJson) as Record<string,unknown>;
@@ -102,7 +108,7 @@ export async function verifyAccountWorkflowExport(source: string,archive: string
             if (typeof row.run_id !== "string") throw new Error("Workflow child identity is invalid.");
             childRunIds.push(row.run_id);
           }
-          counts[table] = safeCount(counts[table]+1);
+          counts[table] = safeCount((counts[table] ?? 0)+1);
           total = safeCount(total+1);
           if (total > MAX_ROWS) throw new Error("Workflow archive exceeds the row limit.");
         } else if (item.type === "end") {
@@ -127,7 +133,8 @@ export async function verifyAccountWorkflowExport(source: string,archive: string
     }
     if ([...runs.keys()].some(id => !known.has(id)) || childRunIds.some(id => !runs.has(id)))
       throw new Error("Workflow archive contains unlinked rows.");
-    return { runs: counts.workflow_runs,rows: total,counts,sourceManifestSha256: sourceData.manifestSha256 };
+    return { runs: counts.workflow_runs ?? 0,rows: total,counts: { ...emptyCounts(),...counts },
+      sourceManifestSha256: sourceData.manifestSha256 };
   } finally { await file.close(); }
 }
 
@@ -178,7 +185,7 @@ export async function exportAccountWorkflow(source: string,output: string,workfl
       if (type !== "end") hash.update(line);
       await file.writeFile(line);
     }
-    await write("manifest",{ format: "ai-app-jumpstart-workflow-rows-v1",workflowProvider: "postgres",
+    await write("manifest",{ format: "ai-app-jumpstart-workflow-rows-v2",workflowProvider: "postgres",
       sourceManifestSha256: sourceData.manifestSha256,ownerSha256: ownerDigest(owner),
       boundSessionCount: sourceData.ids.length,exportedAt: new Date().toISOString(),
       scope: "linked native Workflow rows in one read snapshot under operator-attested stopped writers; unlinked auxiliary runs, Graphile jobs, managed/local worlds, Auth, providers and backups excluded" });
