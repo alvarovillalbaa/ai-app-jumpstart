@@ -14,7 +14,7 @@ function total(rows) {
   return count(Object.values(rows).reduce((sum, value) => sum + value, 0));
 }
 
-function report(provider, ownerRows, orphanRows) {
+function report(provider, ownerRows, orphanRows, applicationWriteFenced) {
   return {
     format: "ai-app-jumpstart-account-data-inspection-v1",
     provider,
@@ -22,7 +22,8 @@ function report(provider, ownerRows, orphanRows) {
     orphanRows,
     ownerRowTotal: total(ownerRows),
     orphanRowTotal: total(orphanRows),
-    scope: "single application database snapshot; this report does not establish a write fence or inspect private object bytes, Auth, Eve, providers, logs or backups",
+    applicationWriteFenced,
+    scope: "single application database snapshot including the permanent application-row fence; this report does not inspect private object bytes, Auth, Eve, providers, logs or backups",
   };
 }
 
@@ -35,8 +36,10 @@ export function inspectSqliteAccountData(path, tenant, subject) {
       [query.entity, count(db.prepare(query.sql).get(tenant, subject).count)]));
     const orphanRows = Object.fromEntries(accountOrphanCountQueries("sqlite").map(query =>
       [query.entity, count(db.prepare(query.sql).get().count)]));
+    const applicationWriteFenced = db.prepare(`SELECT EXISTS(
+      SELECT 1 FROM app_account_fences WHERE tenant=? AND subject=?) AS fenced`).get(tenant,subject).fenced === 1;
     db.exec("COMMIT");
-    return report("sqlite", ownerRows, orphanRows);
+    return report("sqlite", ownerRows, orphanRows, applicationWriteFenced);
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;
@@ -63,8 +66,10 @@ export async function inspectPostgresAccountData(connectionString, tenant, subje
     const orphanRows = {};
     for (const query of accountOrphanCountQueries("sql"))
       orphanRows[query.entity] = count((await client.query(query.sql)).rows[0].count);
+    const applicationWriteFenced = (await client.query(`SELECT EXISTS(
+      SELECT 1 FROM app_private.account_fences WHERE tenant=$1 AND subject=$2) AS fenced`,[tenant,subject])).rows[0].fenced;
     await client.query("COMMIT");
-    return report("postgres", ownerRows, orphanRows);
+    return report("postgres", ownerRows, orphanRows, applicationWriteFenced);
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;

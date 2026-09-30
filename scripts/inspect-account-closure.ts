@@ -9,7 +9,7 @@ type MetadataProvider = "sqlite" | "postgres" | "convex";
 type ObjectProvider = "local" | "supabase" | "aws-s3";
 type Owner = { tenant: string;subject: string };
 
-/** One fail-closed operator report spanning application rows and private upload objects. */
+/** One fail-closed operator report spanning application rows, their write fence and private upload objects. */
 export async function inspectAccountClosure(metadataProvider: MetadataProvider,objectProvider: ObjectProvider,
   owner: Owner,env: Record<string,string | undefined>) {
   if (!owner.tenant || !owner.subject || owner.tenant.length > 200 || owner.subject.length > 200 ||
@@ -30,14 +30,17 @@ export async function inspectAccountClosure(metadataProvider: MetadataProvider,o
   }
   const objects = await inspectAccountObjects(objectProvider,owner,env);
   const remaining = { applicationRows: rows.ownerRowTotal > 0,privateObjects: objects.objectCount > 0,
-    globalUnattributableRows: rows.orphanRowTotal > 0 };
+    globalUnattributableRows: rows.orphanRowTotal > 0,applicationWritesPossible: !rows.applicationWriteFenced };
+  const observedDataRemains = remaining.applicationRows || remaining.privateObjects || remaining.globalUnattributableRows;
   return { format: "ai-app-jumpstart-account-closure-observation-v1",
-    status: Object.values(remaining).some(Boolean) ? "retained_or_unattributable" : "unfenced_zero",
+    status: observedDataRemains ? "retained_or_unattributable"
+      : rows.applicationWriteFenced ? "application_fenced_zero" : "unfenced_zero",
     metadataProvider,objectProvider,remaining,
+    applicationWriteFenced: rows.applicationWriteFenced,
     ownerRows: rows.ownerRows,orphanRows: rows.orphanRows,ownerRowTotal: rows.ownerRowTotal,
     orphanRowTotal: rows.orphanRowTotal,objectCount: objects.objectCount,
     inspectedEntities: Object.keys(rows.ownerRows).length,
-    scope: "two separate application and object observations; no owner write fence, Auth, Eve, providers, logs, derived copies or backups" };
+    scope: "SQLite/PostgreSQL row counts and permanent row-fence status share one read snapshot; Convex bounded counts and its fence query are separate snapshots. Private objects are a separate observation. The row fence does not fence in-flight work or object writes; Auth, Eve, providers, logs, derived copies and backups are outside this report" };
 }
 
 async function main(args: string[],env: NodeJS.ProcessEnv) {

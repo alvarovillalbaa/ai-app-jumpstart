@@ -12,6 +12,7 @@ import { sqlitePreferenceStore } from "../../lib/preferences/sqlite";
 import { sqliteRequestLimitStore } from "../../lib/request-limits/sqlite";
 import { localUploadObjects } from "../../lib/uploads/local";
 import { inspectAccountClosure } from "../../scripts/inspect-account-closure";
+import { setSqliteAccountFence } from "../../scripts/fence-account-writes";
 import { installSqliteAccountFences } from "../../lib/account-closure/sqlite-fences";
 
 it("joins the real SQLite row and local object observations without exposing identity or partial output",async () => {
@@ -31,7 +32,8 @@ it("joins the real SQLite row and local object observations without exposing ide
       const env = { ACCOUNT_AUDIT_SQLITE_PATH: path,UPLOAD_LOCAL_ROOT: root };
       const observed = await inspectAccountClosure("sqlite","local",alice,env);
       expect(observed).toMatchObject({ status: "retained_or_unattributable",ownerRowTotal: 1,objectCount: 1,
-        remaining: { applicationRows: true,privateObjects: true,globalUnattributableRows: false } });
+        applicationWriteFenced: false,
+        remaining: { applicationRows: true,privateObjects: true,globalUnattributableRows: false,applicationWritesPossible: true } });
       expect(JSON.stringify(observed)).not.toContain(alice.tenant);
       expect(JSON.stringify(observed)).not.toContain(alice.subject);
       expect((await inspectAccountClosure("sqlite","local",bob,env)).objectCount).toBe(0);
@@ -47,13 +49,19 @@ it("joins the real SQLite row and local object observations without exposing ide
       db.prepare("DELETE FROM app_records WHERE tenant=? AND subject=?").run(alice.tenant,alice.subject);
       await objects.delete(alice,id);
       expect(await inspectAccountClosure("sqlite","local",alice,env)).toMatchObject({ status: "unfenced_zero",ownerRowTotal: 0,objectCount: 0 });
+      expect(setSqliteAccountFence(path,alice)).toMatchObject({ status: "fenced",provider: "sqlite" });
+      expect(await inspectAccountClosure("sqlite","local",alice,env)).toMatchObject({ status: "application_fenced_zero",
+        applicationWriteFenced: true,remaining: { applicationRows: false,privateObjects: false,applicationWritesPossible: false } });
+      expect(() => db.prepare("INSERT INTO app_records VALUES(?,?,?,'A','private',1,'now','now')")
+        .run(crypto.randomUUID(),alice.tenant,alice.subject)).toThrow("fenced");
       expect(() => db.exec("INSERT INTO app_budget_attempts VALUES('missing-operation','orphan-attempt')"))
         .toThrow("no attributable owner");
       db.exec("DROP TRIGGER app_budget_attempts_account_fence_insert");
       db.exec("INSERT INTO app_budget_attempts VALUES('missing-operation','orphan-attempt')");
       installSqliteAccountFences(db,["app_budget_attempts"]);
       expect(await inspectAccountClosure("sqlite","local",alice,env)).toMatchObject({ status: "retained_or_unattributable",
-        remaining: { applicationRows: false,privateObjects: false,globalUnattributableRows: true },orphanRowTotal: 1 });
+        applicationWriteFenced: true,
+        remaining: { applicationRows: false,privateObjects: false,globalUnattributableRows: true,applicationWritesPossible: false },orphanRowTotal: 1 });
 
       const failed = spawnSync(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/inspect-account-closure.ts",
         "--metadata","sqlite","--read-only"],{ cwd: process.cwd(),encoding: "utf8",env: { ...process.env,

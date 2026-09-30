@@ -169,6 +169,7 @@ async function rehearseUpgrade() {
     assert.equal(inspection.ownerRows.artifacts,2);
     assert.equal(inspection.ownerRows.uploads,2);
     assert.equal(inspection.orphanRowTotal,0);
+    assert.equal(inspection.applicationWriteFenced,false);
     const closure = spawn(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/inspect-account-closure.ts",
       "--metadata","postgres","--read-only"],{ cwd: root,env: { ...upgradeEnv,
         ACCOUNT_AUDIT_TENANT: "upgrade-tenant",ACCOUNT_AUDIT_SUBJECT: "upgrade-owner",
@@ -182,6 +183,8 @@ async function rehearseUpgrade() {
     assert.equal(closureReport.ownerRows.records,1);
     assert.equal(closureReport.objectCount,0);
     assert.equal(closureReport.status,"retained_or_unattributable");
+    assert.equal(closureReport.applicationWriteFenced,false);
+    assert.equal(closureReport.remaining.applicationWritesPossible,true);
     assert.deepEqual((await probe.query("SELECT revision,title,content,updated_at FROM app_artifact_versions WHERE artifact_id=$1",[artifactId])).rows,
       [{ revision: 1,title: "Before upgrade",content: "Retained approved text",updated_at: "10" }]);
     assert.equal((await probe.query("SELECT count(*)::int AS count FROM app_artifact_versions WHERE artifact_id=$1",[deletedArtifactId])).rows[0].count,0);
@@ -244,6 +247,7 @@ async function rehearseUpgrade() {
     assert.deepEqual(JSON.parse(fenceOutput).status,"fenced");
     assert.equal(JSON.parse(fenceOutput).created,true);
     assert.equal(fenceOutput.includes("upgrade-owner"),false);
+    assert.equal((await inspectPostgresAccountData(upgradeEnv.DATABASE_URL,"upgrade-tenant","upgrade-owner")).applicationWriteFenced,true);
     const rowArchive = join(directory,"account-rows.ndjson");
     const exportEnv = { ...upgradeEnv,ACCOUNT_AUDIT_TENANT: "upgrade-tenant",ACCOUNT_AUDIT_SUBJECT: "upgrade-owner" };
     await run(["node_modules/tsx/dist/cli.mjs","scripts/export-account-rows.ts","--metadata","postgres",

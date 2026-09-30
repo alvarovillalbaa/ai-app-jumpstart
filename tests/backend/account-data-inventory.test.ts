@@ -96,6 +96,7 @@ it("finds two owners' real SQLite rows, including child data and tombstones",asy
       expect((db.prepare(orphanQueries.find(query => query.entity === "budgetAttempts")!.sql).get() as { count: number }).count).toBe(1);
       const report = inspectSqliteAccountData(path,"acme","alice");
       expect(report).toMatchObject({ provider: "sqlite",ownerRowTotal: 9,orphanRowTotal: 1,
+        applicationWriteFenced: false,
         ownerRows: { records: 1,uploads: 1,uploadScans: 1,uploadReviews: 1 },
         orphanRows: { budgetAttempts: 1 } });
       const result = spawnSync(process.execPath,["scripts/inspect-account-data.mjs","--sqlite",path],{

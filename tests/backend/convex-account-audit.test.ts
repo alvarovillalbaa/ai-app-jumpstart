@@ -34,11 +34,15 @@ it("inspects all Convex tables in bounded pages, including child orphans, withou
   const request: typeof fetch = (url,init) => backend.fetch(new URL(url instanceof Request ? url.url : url).pathname,init);
   const result = await inspectConvexAccountData("https://test.convex.site",auditSecret,alice.tenant,alice.subject,request);
   expect(result).toMatchObject({ provider: "convex",ownerRows: { records: 105,conversations: 1,conversationEvents: 1,uploads: 1 },
-    orphanRows: { conversationEvents: 1,artifacts: 1,artifactVersions: 1 },ownerRowTotal: 108,orphanRowTotal: 3 });
+    orphanRows: { conversationEvents: 1,artifacts: 1,artifactVersions: 1 },ownerRowTotal: 108,orphanRowTotal: 3,
+    applicationWriteFenced: false });
   expect(JSON.stringify(result)).not.toContain(alice.tenant);
   expect(JSON.stringify(result)).not.toContain(alice.subject);
+  await backend.run(async ctx => { await ctx.db.insert("accountFences",{ ...alice,createdAt: Date.now() }); });
+  expect(await inspectConvexAccountData("https://test.convex.site",auditSecret,alice.tenant,alice.subject,request))
+    .toMatchObject({ applicationWriteFenced: true });
   const foreign = await inspectConvexAccountData("https://test.convex.site",auditSecret,bob.tenant,bob.subject,request);
-  expect(foreign).toMatchObject({ ownerRowTotal: 1,ownerRows: { records: 1,conversations: 0,uploads: 0 } });
+  expect(foreign).toMatchObject({ ownerRowTotal: 1,applicationWriteFenced: false,ownerRows: { records: 1,conversations: 0,uploads: 0 } });
 });
 
 it("keeps the audit endpoint separate from the application backend credential",async () => {
@@ -50,6 +54,8 @@ it("keeps the audit endpoint separate from the application backend credential",a
     method: "POST",headers: { "content-type": "application/json",...header },body: payload });
   expect((await call({})).status).toBe(401);
   expect((await call({ "x-jumpstart-backend-key": "test-convex-application-secret-".repeat(2) })).status).toBe(401);
+  expect((await call({ "x-jumpstart-backend-key": "test-convex-application-secret-".repeat(2) },JSON.stringify({
+    operation: "accountFenceStatus",tenant: "owner",subject: "subject" }))).status).toBe(401);
   expect((await call({ "x-jumpstart-audit-key": auditSecret },JSON.stringify({ ...JSON.parse(body),entity: "internalNonces" }))).status).toBe(400);
   expect((await call({ "x-jumpstart-audit-key": auditSecret },"x".repeat(4097))).status).toBe(413);
   expect((await call({ "x-jumpstart-audit-key": auditSecret })).status).toBe(200);

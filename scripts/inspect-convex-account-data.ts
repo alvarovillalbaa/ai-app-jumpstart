@@ -39,12 +39,17 @@ export async function inspectConvexAccountData(siteUrl: string,secret: string,te
       cursor = result.cursor;
     } while (cursor !== null);
   }
+  const fenceResponse = await request(endpoint,{ method: "POST",redirect: "error",signal: AbortSignal.timeout(15_000),
+    headers: { "content-type": "application/json","x-jumpstart-audit-key": secret },
+    body: JSON.stringify({ operation: "accountFenceStatus",tenant,subject }) });
+  if (!fenceResponse.ok) throw new Error("Convex account fence inspection request failed.");
+  const applicationWriteFenced = z.object({ fenced: z.boolean() }).strict().parse(await fenceResponse.json()).fenced;
   const ownerRowTotal = Object.values(ownerRows).reduce((sum,value) => sum+value,0);
   const orphanRowTotal = Object.values(orphanRows).reduce((sum,value) => sum+value,0);
   if (!Number.isSafeInteger(ownerRowTotal) || !Number.isSafeInteger(orphanRowTotal)) throw new Error("Convex account inspection total exceeded the supported range.");
-  return { format: "ai-app-jumpstart-account-data-inspection-v1",provider: "convex",ownerRows,orphanRows,
+  return { format: "ai-app-jumpstart-account-data-inspection-v1",provider: "convex",ownerRows,orphanRows,applicationWriteFenced,
     ownerRowTotal,orphanRowTotal,
-    scope: "multiple bounded application read snapshots; this report does not establish a write fence or inspect private object bytes, Auth, Eve, providers, logs or backups" };
+    scope: "multiple bounded application read snapshots plus a separate permanent-fence query; this report does not inspect private object bytes, Auth, Eve, providers, logs or backups" };
 }
 
 async function main(args: string[],env: NodeJS.ProcessEnv) {
