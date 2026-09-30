@@ -19,6 +19,18 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Preflight the managed Vercel and Supabase runtime shape
+        run: npm run check:managed-config
+        env:
+          APP_ORIGIN: https://app.example.org
+          DATA_PROVIDER: supabase
+          AUTH_PROVIDER: supabase
+          AI_CHAT_ENABLED: "false"
+          SUPABASE_URL: https://data.example.org
+          SUPABASE_SECRET_KEY: sb_secret_fixture_backend_key
+          SUPABASE_PUBLISHABLE_KEY: sb_publishable_fixture_public_key
+          APP_REQUESTS_PER_MINUTE: "120"
+          CRON_SECRET: ssssssssssssssssssssssssssssssssssssssss
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run check:docs
