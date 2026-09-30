@@ -101,6 +101,7 @@
     "account:export:workflow": "tsx scripts/export-account-workflow.ts",
     "account:verify:workflow": "tsx scripts/export-account-workflow.ts",
     "account:rehearse:workflow": "tsx scripts/rehearse-account-workflow.ts",
+    "account:erase:workflow": "tsx scripts/erase-account-workflow.ts",
     "account:rehearse:bundle": "tsx scripts/rehearse-account-bundle.ts",
     "account:rehearse:postgres": "tsx scripts/rehearse-postgres-account-bundle.ts",
     "account:verify:rehearsal": "tsx scripts/rehearse-account-bundle.ts --verify",

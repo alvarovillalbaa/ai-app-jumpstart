@@ -19,6 +19,20 @@ function sameFileVersion(left: BigIntStats,right: BigIntStats) {
 type Table = typeof nativeTables[number];
 type Counts = Record<Table,number>;
 
+export type VerifiedAccountWorkflowArchive = {
+  runs: number;
+  rows: number;
+  counts: Counts;
+  sourceManifestSha256: string;
+  ownerSha256: string;
+  contentSha256: string;
+  format: string;
+  jobPrefix: string | null;
+  sessionIds: string[];
+  runIds: string[];
+  runStatuses: Record<string,string>;
+};
+
 function safeCount(value: unknown) {
   const number = Number(value);
   if (!Number.isSafeInteger(number) || number < 0) throw new Error("Workflow archive count is invalid.");
@@ -67,7 +81,7 @@ function linked(id: string,attributes: Record<string,unknown>,known: Set<string>
 }
 
 /** Offline integrity, source binding and owner-lineage verification. No database credentials. */
-export async function verifyAccountWorkflowExport(source: string,archive: string) {
+export async function verifyAccountWorkflowExportDetails(source: string,archive: string): Promise<VerifiedAccountWorkflowArchive> {
   const sourceData = await sourceSessions(source);
   const path = resolve(archive);
   const file = await open(path,fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0) | fsConstants.O_NOFOLLOW);
@@ -77,7 +91,8 @@ export async function verifyAccountWorkflowExport(source: string,archive: string
     if (!sameFileVersion(before,pathBefore) || (before.mode & BigInt(0o077)) !== BigInt(0) ||
         before.size < BigInt(1) || before.size > BigInt(MAX_BYTES)) throw new Error("Workflow archive is unsafe or changed.");
     const hash = createHash("sha256"),runs = new Map<string,Record<string,unknown>>();
-    let archiveTables: string[] = [...nativeTables],counts = emptyCounts();
+    let archiveTables: string[] = [...nativeTables],counts = emptyCounts(),format = "",contentSha256 = "",jobPrefix: string | null = null;
+    const runStatuses = new Map<string,string>();
     const childRunIds: string[] = [];
     let header = false,ended = false,bytes = 0,total = 0;
     const reader = createInterface({ input: file.createReadStream({ autoClose: false }),crlfDelay: Infinity });
@@ -92,7 +107,12 @@ export async function verifyAccountWorkflowExport(source: string,archive: string
               item.value.workflowProvider !== "postgres" || item.value.sourceManifestSha256 !== sourceData.manifestSha256 ||
               item.value.ownerSha256 !== ownerDigest(sourceData.owner) || item.value.boundSessionCount !== sourceData.ids.length)
             throw new Error("Workflow archive source does not match its account bundle.");
-          archiveTables = item.value.format === "ai-app-jumpstart-workflow-rows-v1"
+          if (item.value.jobPrefix !== undefined &&
+              (typeof item.value.jobPrefix !== "string" || !/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/u.test(item.value.jobPrefix)))
+            throw new Error("Workflow archive job prefix is invalid.");
+          jobPrefix = typeof item.value.jobPrefix === "string" ? item.value.jobPrefix : null;
+          format = String(item.value.format);
+          archiveTables = format === "ai-app-jumpstart-workflow-rows-v1"
             ? nativeTables.filter(table => table !== "workflow_invocations") : [...nativeTables];
           counts = emptyCounts(archiveTables);
           header = true;
@@ -103,10 +123,11 @@ export async function verifyAccountWorkflowExport(source: string,archive: string
           const row = JSON.parse(item.value.rowJson) as Record<string,unknown>;
           if (!row || typeof row !== "object" || Array.isArray(row)) throw new Error("Workflow row is invalid.");
           if (table === "workflow_runs") {
-            if (typeof row.id !== "string" || runs.has(row.id) || !row.attributes ||
+            if (typeof row.id !== "string" || runs.has(row.id) || typeof row.status !== "string" || !row.attributes ||
                 typeof row.attributes !== "object" || Array.isArray(row.attributes))
               throw new Error("Workflow run identity is invalid.");
             runs.set(row.id,row.attributes as Record<string,unknown>);
+            runStatuses.set(row.id,row.status);
             if (runs.size > MAX_RUNS) throw new Error("Workflow archive exceeds the run limit.");
           } else {
             if (typeof row.run_id !== "string") throw new Error("Workflow child identity is invalid.");
@@ -120,6 +141,7 @@ export async function verifyAccountWorkflowExport(source: string,archive: string
               JSON.stringify(item.value.counts) !== JSON.stringify(counts) ||
               item.value.contentSha256 !== hash.digest("hex"))
             throw new Error("Workflow archive digest or counts differ.");
+          contentSha256 = String(item.value.contentSha256);
           ended = true;
         } else throw new Error("Workflow archive has an unknown entry.");
         if (item.type !== "end") hash.update(line+"\n");
@@ -139,14 +161,22 @@ export async function verifyAccountWorkflowExport(source: string,archive: string
     if ([...runs.keys()].some(id => !known.has(id)) || childRunIds.some(id => !runs.has(id)))
       throw new Error("Workflow archive contains unlinked rows.");
     return { runs: counts.workflow_runs ?? 0,rows: total,counts: { ...emptyCounts(),...counts },
-      sourceManifestSha256: sourceData.manifestSha256 };
+      sourceManifestSha256: sourceData.manifestSha256,ownerSha256: ownerDigest(sourceData.owner),contentSha256,
+      format,jobPrefix,sessionIds: sourceData.ids,runIds: [...runs.keys()],runStatuses: Object.fromEntries(runStatuses) };
   } finally { await file.close(); }
 }
 
+/** Public offline summary. Keep run identities and row fingerprints out of CLI output. */
+export async function verifyAccountWorkflowExport(source: string,archive: string) {
+  const { runs,rows,counts,sourceManifestSha256 } = await verifyAccountWorkflowExportDetails(source,archive);
+  return { runs,rows,counts,sourceManifestSha256 };
+}
+
 /** Capture native PostgreSQL Workflow rows traceable to a verified account bundle. */
-export async function exportAccountWorkflow(source: string,output: string,workflowUrl: string,ownerInput: AccessOwner) {
+export async function exportAccountWorkflow(source: string,output: string,workflowUrl: string,ownerInput: AccessOwner,jobPrefix: string) {
   const sourceData = await sourceSessions(source),owner = accessOwner.parse(ownerInput);
   if (owner.tenant !== sourceData.owner.tenant || owner.subject !== sourceData.owner.subject || !workflowUrl ||
+      !/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/u.test(jobPrefix) ||
       !output || output.includes("\u0000")) throw new Error("Workflow export configuration does not match the account bundle.");
   const destination = resolve(output),parent = dirname(destination),details = await lstat(parent);
   if (!details.isDirectory() || details.isSymbolicLink() || (details.mode & 0o077) !== 0)
@@ -190,7 +220,7 @@ export async function exportAccountWorkflow(source: string,output: string,workfl
       if (type !== "end") hash.update(line);
       await file.writeFile(line);
     }
-    await write("manifest",{ format: "ai-app-jumpstart-workflow-rows-v2",workflowProvider: "postgres",
+    await write("manifest",{ format: "ai-app-jumpstart-workflow-rows-v2",workflowProvider: "postgres",jobPrefix,
       sourceManifestSha256: sourceData.manifestSha256,ownerSha256: ownerDigest(owner),
       boundSessionCount: sourceData.ids.length,exportedAt: new Date().toISOString(),
       scope: "linked native Workflow rows in one read snapshot under operator-attested stopped writers; unlinked auxiliary runs, Graphile jobs, managed/local worlds, Auth, providers and backups excluded" });
@@ -228,19 +258,20 @@ export async function exportAccountWorkflow(source: string,output: string,workfl
 }
 
 async function main(args: string[],env: NodeJS.ProcessEnv) {
-  const usage = "Usage: npm run account:export:workflow -- --source /private/bundle --output /private/new.ndjson --stopped (set ACCOUNT_AUDIT_TENANT, ACCOUNT_AUDIT_SUBJECT and WORKFLOW_POSTGRES_URL); or npm run account:verify:workflow -- --source /private/bundle --archive /private/workflow.ndjson";
+  const usage = "Usage: npm run account:export:workflow -- --source /private/bundle --output /private/new.ndjson --stopped (set ACCOUNT_AUDIT_TENANT, ACCOUNT_AUDIT_SUBJECT, WORKFLOW_POSTGRES_URL and WORKFLOW_POSTGRES_JOB_PREFIX); or npm run account:verify:workflow -- --source /private/bundle --archive /private/workflow.ndjson";
   if (args.length === 4 && args[0] === "--source" && args[2] === "--archive") {
     try { console.log(JSON.stringify(await verifyAccountWorkflowExport(args[1],args[3]))); }
     catch { console.error("Workflow archive verification failed.");process.exitCode = 1; }
     return;
   }
   if (args.length !== 5 || args[0] !== "--source" || args[2] !== "--output" || args[4] !== "--stopped" ||
-      !env.ACCOUNT_AUDIT_TENANT || !env.ACCOUNT_AUDIT_SUBJECT || !env.WORKFLOW_POSTGRES_URL) {
+      !env.ACCOUNT_AUDIT_TENANT || !env.ACCOUNT_AUDIT_SUBJECT || !env.WORKFLOW_POSTGRES_URL ||
+      !env.WORKFLOW_POSTGRES_JOB_PREFIX) {
     console.error(usage);process.exitCode = 2;return;
   }
   try {
     console.log(JSON.stringify(await exportAccountWorkflow(args[1],args[3],env.WORKFLOW_POSTGRES_URL,
-      { tenant: env.ACCOUNT_AUDIT_TENANT,subject: env.ACCOUNT_AUDIT_SUBJECT })));
+      { tenant: env.ACCOUNT_AUDIT_TENANT,subject: env.ACCOUNT_AUDIT_SUBJECT },env.WORKFLOW_POSTGRES_JOB_PREFIX)));
   } catch {
     console.error("Workflow export failed. Check the verified account bundle, stopped writers, private destination and backend access.");
     process.exitCode = 1;

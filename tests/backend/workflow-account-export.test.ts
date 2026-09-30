@@ -14,6 +14,7 @@ import { sqlitePreferenceStore } from "../../lib/preferences/sqlite";
 import { sqliteRequestLimitStore } from "../../lib/request-limits/sqlite";
 import { exportAccountBundle } from "../../scripts/export-account-bundle";
 import { exportAccountWorkflow,verifyAccountWorkflowExport } from "../../scripts/export-account-workflow";
+import { eraseAccountWorkflow } from "../../scripts/erase-account-workflow";
 import { rehearseAccountWorkflow } from "../../scripts/rehearse-account-workflow";
 import { setSqliteAccountFence } from "../../scripts/fence-account-writes";
 import { workflowPostgresFixture } from "../../scripts/helpers/workflow-postgres-fixture.mjs";
@@ -74,7 +75,7 @@ it("preserves linked Workflow payloads in a private source-bound archive and rej
         [Buffer.from("owned-private-invocation-payload"),Buffer.from("owned-private-invocation-result"),
           Buffer.from("foreign-private-invocation-payload"),Buffer.from("foreign-private-invocation-result")]);
     } finally { await pg.end(); }
-    const result = await exportAccountWorkflow(bundle,archive,database.url,owner);
+    const result = await exportAccountWorkflow(bundle,archive,database.url,owner,"account_export_test");
     expect(result).toMatchObject({ runs: 3,rows: 115,counts: { workflow_runs: 3,workflow_events: 106,
       workflow_steps: 1,workflow_hooks: 1,workflow_stream_chunks: 1,workflow_waits: 1,workflow_event_slots: 1,
       workflow_invocations: 1 } });
@@ -150,9 +151,9 @@ it("preserves linked Workflow payloads in a private source-bound archive and rej
         WHERE id=(SELECT max(id) FROM workflow_drizzle.workflow_migrations)`,[migration.rows[0].hash]);
     } finally { await targetDb.end(); }
     await expect(rehearseAccountWorkflow(bundle,archive,database.url)).rejects.toThrow("disposable loopback");
-    await expect(exportAccountWorkflow(bundle,archive,database.url,owner)).rejects.toThrow();
+    await expect(exportAccountWorkflow(bundle,archive,database.url,owner,"account_export_test")).rejects.toThrow();
     await expect(exportAccountWorkflow(bundle,join(dir,"wrong-owner.ndjson"),database.url,
-      { ...owner,subject: "foreign-user" })).rejects.toThrow("does not match");
+      { ...owner,subject: "foreign-user" },"account_export_test")).rejects.toThrow("does not match");
     const cli = spawnSync(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/export-account-workflow.ts",
       "--source",bundle,"--output",join(dir,"missing-stop.ndjson")],{ cwd: process.cwd(),encoding: "utf8",
       env: { ...process.env,WORKFLOW_POSTGRES_URL: database.url,ACCOUNT_AUDIT_TENANT: owner.tenant,
@@ -163,7 +164,7 @@ it("preserves linked Workflow payloads in a private source-bound archive and rej
     const success = spawnSync(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/export-account-workflow.ts",
       "--source",bundle,"--output",cliArchive,"--stopped"],{ cwd: process.cwd(),encoding: "utf8",
       env: { ...process.env,WORKFLOW_POSTGRES_URL: database.url,ACCOUNT_AUDIT_TENANT: owner.tenant,
-        ACCOUNT_AUDIT_SUBJECT: owner.subject } });
+        ACCOUNT_AUDIT_SUBJECT: owner.subject,WORKFLOW_POSTGRES_JOB_PREFIX: "account_export_test" } });
     expect(success.status,success.stderr).toBe(0);
     expect(JSON.parse(success.stdout).runs).toBe(3);
     expect(success.stdout).not.toContain(owner.subject);
@@ -172,6 +173,100 @@ it("preserves linked Workflow payloads in a private source-bound archive and rej
       env: { ...process.env,WORKFLOW_POSTGRES_URL: "",ACCOUNT_AUDIT_TENANT: "",ACCOUNT_AUDIT_SUBJECT: "" } });
     expect(offline.status,offline.stderr).toBe(0);
     expect(JSON.parse(offline.stdout)).toMatchObject({ runs: 3,rows: 115 });
+    const jobPrefix = "account_export_test",pendingArchive = join(dir,"workflow-pending.ndjson");
+    const pendingDb = new Client({ connectionString: database.url });await pendingDb.connect();
+    try { await pendingDb.query("UPDATE workflow.workflow_runs SET status='running' WHERE id='owned-turn'"); }
+    finally { await pendingDb.end(); }
+    await exportAccountWorkflow(bundle,pendingArchive,database.url,owner,jobPrefix);
+    await expect(eraseAccountWorkflow(bundle,pendingArchive,owner,database.url,jobPrefix))
+      .rejects.toThrow("nonterminal runs");
+    const queueDb = new Client({ connectionString: database.url });await queueDb.connect();
+    try {
+      await queueDb.query("UPDATE workflow.workflow_runs SET status='completed' WHERE id='owned-turn'");
+      for (const [task,payload,queue] of [
+        ["account_export_testflows_executor",{ runId: "owned-turn" },"account_export_testflows:owned-turn:executor"],
+        ["account_export_testflows",{ runId: "owned-turn",stepId: "step-1" },null],
+        ["account_export_testflows_executor",{ runId: "foreign-session" },"account_export_testflows:foreign-session:executor"],
+        ["account_export_testflows",{ healthCheck: true },null],
+      ] as const) await queueDb.query("SELECT graphile_worker.add_job($1,$2::json,$3)",
+        [task,JSON.stringify(payload),queue]);
+      await queueDb.query("SELECT graphile_worker.add_job($1,$2::json,$3)",[
+        "account_export_testflows",JSON.stringify({ __healthCheck: true,correlationId: "pending-start",runId: "owned-turn" }),null,
+      ]);
+    } finally { await queueDb.end(); }
+    await expect(eraseAccountWorkflow(bundle,archive,owner,database.url,jobPrefix))
+      .rejects.toThrow("pending Workflow start check");
+    const clearStartCheckDb = new Client({ connectionString: database.url });await clearStartCheckDb.connect();
+    try { await clearStartCheckDb.query(`DELETE FROM graphile_worker._private_jobs WHERE
+      task_id=(SELECT id FROM graphile_worker._private_tasks WHERE identifier='account_export_testflows')
+        AND payload->>'__healthCheck'='true' AND payload->>'runId'='owned-turn'`); }
+    finally { await clearStartCheckDb.end(); }
+    await expect(eraseAccountWorkflow(bundle,archive,owner,database.url,"other_environment"))
+      .rejects.toThrow("matching owner and source-bound v2 archive");
+    await expect(eraseAccountWorkflow(bundle,archive,owner,database.url,jobPrefix)).resolves.toMatchObject({
+      runs: 3,rows: 115,jobs: 2,queues: 1,deletedRows: 0,deletedJobs: 0,deletedQueues: 0,
+      status: "linked-workflow-state-erasure-planned",
+    });
+    const eraseEnv = { ...process.env,WORKFLOW_POSTGRES_URL: database.url,WORKFLOW_POSTGRES_JOB_PREFIX: jobPrefix,
+      ACCOUNT_AUDIT_TENANT: owner.tenant,ACCOUNT_AUDIT_SUBJECT: owner.subject };
+    const missingConfirm = spawnSync(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/erase-account-workflow.ts",
+      "--source",bundle,"--archive",archive,"--stopped","--erase-workflow-state"],{
+      cwd: process.cwd(),encoding: "utf8",env: eraseEnv,
+    });
+    expect(missingConfirm.status).toBe(2);
+    const erasePlan = spawnSync(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/erase-account-workflow.ts",
+      "--source",bundle,"--archive",archive,"--stopped","--plan"],{
+      cwd: process.cwd(),encoding: "utf8",env: eraseEnv,
+    });
+    expect(erasePlan.status,erasePlan.stderr).toBe(0);
+    expect(JSON.parse(erasePlan.stdout)).toMatchObject({ rows: 115,jobs: 2,status: "linked-workflow-state-erasure-planned" });
+    expect(erasePlan.stdout).not.toContain(owner.subject);
+    const exactDb = new Client({ connectionString: database.url });await exactDb.connect();
+    try { await exactDb.query("UPDATE workflow.workflow_steps SET output=$1::jsonb WHERE run_id='owned-turn'",
+      [JSON.stringify({ changed: true })]); }
+    finally { await exactDb.end(); }
+    await expect(eraseAccountWorkflow(bundle,archive,owner,database.url,jobPrefix)).rejects.toThrow("rows differ");
+    const restoreDb = new Client({ connectionString: database.url });await restoreDb.connect();
+    try {
+      await restoreDb.query("UPDATE workflow.workflow_steps SET output=$1::jsonb WHERE run_id='owned-turn'",
+        [JSON.stringify({ private: "step" })]);
+      await restoreDb.query(`UPDATE graphile_worker._private_jobs SET locked_by='stopped-worker',locked_at=now()
+        WHERE task_id=(SELECT id FROM graphile_worker._private_tasks WHERE identifier='account_export_testflows_executor')
+          AND job_queue_id=(SELECT id FROM graphile_worker._private_job_queues
+            WHERE queue_name='account_export_testflows:owned-turn:executor')`);
+    } finally { await restoreDb.end(); }
+    await expect(eraseAccountWorkflow(bundle,archive,owner,database.url,jobPrefix))
+      .rejects.toThrow("still hold run-linked jobs");
+    const unlockDb = new Client({ connectionString: database.url });await unlockDb.connect();
+    try { await unlockDb.query("UPDATE graphile_worker._private_jobs SET locked_by=NULL,locked_at=NULL WHERE locked_by='stopped-worker'"); }
+    finally { await unlockDb.end(); }
+    await expect(eraseAccountWorkflow(bundle,archive,owner,database.url,jobPrefix,true)).resolves.toMatchObject({
+      runs: 3,rows: 115,jobs: 2,queues: 1,deletedRows: 115,deletedJobs: 2,deletedQueues: 1,
+      status: "linked-workflow-state-erased",
+    });
+    const afterEraseDb = new Client({ connectionString: database.url });await afterEraseDb.connect();
+    try {
+      const owned = await afterEraseDb.query("SELECT count(*)::int AS count FROM workflow.workflow_runs WHERE id=ANY($1::text[])",
+        [["owned-session","owned-turn","retained-child"]]);
+      const foreign = await afterEraseDb.query("SELECT count(*)::int AS count FROM workflow.workflow_runs WHERE id='foreign-session'");
+      const ownedJobs = await afterEraseDb.query(`SELECT count(*)::int AS count FROM graphile_worker._private_jobs jobs
+        JOIN graphile_worker._private_tasks tasks ON tasks.id=jobs.task_id
+        LEFT JOIN graphile_worker._private_job_queues queues ON queues.id=jobs.job_queue_id
+        WHERE queues.queue_name='account_export_testflows:owned-turn:executor' OR
+          (tasks.identifier='account_export_testflows' AND jobs.payload->>'runId'='owned-turn')`);
+      const foreignJob = await afterEraseDb.query("SELECT count(*)::int AS count FROM graphile_worker.jobs WHERE queue_name='account_export_testflows:foreign-session:executor'");
+      const healthJob = await afterEraseDb.query(`SELECT count(*)::int AS count FROM graphile_worker._private_jobs jobs
+        JOIN graphile_worker._private_tasks tasks ON tasks.id=jobs.task_id
+        WHERE tasks.identifier='account_export_testflows' AND jobs.payload->>'healthCheck'='true'`);
+      const ownedQueues = await afterEraseDb.query(`SELECT count(*)::int AS count FROM graphile_worker._private_job_queues
+        WHERE queue_name='account_export_testflows:owned-turn:executor'`);
+      expect(owned.rows[0].count).toBe(0);
+      expect(foreign.rows[0].count).toBe(1);
+      expect(ownedJobs.rows[0].count).toBe(0);
+      expect(foreignJob.rows[0].count).toBe(1);
+      expect(healthJob.rows[0].count).toBe(1);
+      expect(ownedQueues.rows[0].count).toBe(0);
+    } finally { await afterEraseDb.end(); }
     writeFileSync(archive,content.replace("owned-private-checkpoint","changed-private-checkpoint"),{ mode: 0o600 });
     await expect(verifyAccountWorkflowExport(bundle,archive)).rejects.toThrow("digest or counts differ");
     await expect(rehearseAccountWorkflow(bundle,archive,target)).rejects.toThrow("digest or counts differ");
