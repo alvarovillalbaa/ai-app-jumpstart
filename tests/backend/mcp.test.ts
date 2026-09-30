@@ -56,3 +56,62 @@ it("initializes and calls tools over stateless authenticated Streamable HTTP", a
     expect(unauth.status).toBe(401);
   } finally { await client.close(); await repo.close(); }
 });
+
+it("keeps stateless MCP record CRUD owner-scoped over authenticated HTTP",async () => {
+  const ownerToken = "mcp-owner-secret-".repeat(3),otherToken = "mcp-other-secret-".repeat(3);
+  vi.stubEnv("APP_API_KEYS",JSON.stringify([ownerToken,otherToken].map((token,index) => ({
+    sha256: createHash("sha256").update(token).digest("hex"),tenant: "test",subject: `owner-${index}`,scopes: ["records:read","records:write"],
+  }))));
+  const repo = new SqliteRepository(":memory:"),handler = mcpHandler(async () => repo);
+  async function connect(token: string) {
+    const client = new Client({ name: "stateless-mcp-crud",version: "1" });
+    await client.connect(new StreamableHTTPClientTransport(new URL("http://localhost:3000/api/mcp"),{
+      requestInit: { headers: { authorization: `Bearer ${token}` } },
+      fetch: async (url,init) => {
+        const request = new Request(url,init);
+        return request.method === "POST" ? handler(request) : new Response(null,{ status: 405 });
+      },
+    }));
+    return client;
+  }
+  const clients: Client[] = [];
+  const text = (result: unknown) => {
+    if (typeof result !== "object" || result === null || !("content" in result) || !Array.isArray(result.content)) {
+      throw new Error("MCP result omitted its content.");
+    }
+    const block = result.content.find((item): item is { type: string;text: string } =>
+      typeof item === "object" && item !== null && "type" in item && item.type === "text" &&
+      "text" in item && typeof item.text === "string");
+    if (!block) throw new Error("MCP result omitted its JSON payload.");
+    return JSON.parse(block.text);
+  };
+  try {
+    const owner = await connect(ownerToken);clients.push(owner);
+    const other = await connect(otherToken);clients.push(other);
+    const created = await owner.callTool({ name: "records_create",arguments: { title: "MCP private row",content: "Owner only",creationKey: crypto.randomUUID() } });
+    expect(created.isError).not.toBe(true);
+    const record = text(created);
+    const fetched = await owner.callTool({ name: "records_get",arguments: { id: record.id } });
+    expect(fetched.isError).not.toBe(true);
+    expect(text(fetched)).toEqual(record);
+    expect(text(await owner.callTool({ name: "records_list",arguments: {} })).items).toEqual([record]);
+    const resource = (await owner.readResource({ uri: `records:///${record.id}` })).contents[0];
+    expect("text" in resource ? JSON.parse(resource.text) : null).toEqual(record);
+
+    const foreignList = await other.callTool({ name: "records_list",arguments: {} });
+    expect(foreignList.isError).not.toBe(true);
+    expect(text(foreignList).items).toEqual([]);
+    expect((await other.callTool({ name: "records_get",arguments: { id: record.id } })).isError).toBe(true);
+    await expect(other.readResource({ uri: `records:///${record.id}` })).rejects.toThrow();
+    expect((await other.callTool({ name: "records_update",arguments: { id: record.id,revision: 1,title: "Stolen",content: "" } })).isError).toBe(true);
+    expect((await other.callTool({ name: "records_delete",arguments: { id: record.id,revision: 1 } })).isError).toBe(true);
+
+    const updated = await owner.callTool({ name: "records_update",arguments: { id: record.id,revision: 1,title: "MCP updated row",content: "Still private" } });
+    expect(updated.isError).not.toBe(true);
+    const current = text(updated);
+    expect(current).toMatchObject({ id: record.id,title: "MCP updated row",content: "Still private",revision: 2 });
+    expect((await other.callTool({ name: "records_get",arguments: { id: record.id } })).isError).toBe(true);
+    expect((await owner.callTool({ name: "records_delete",arguments: { id: current.id,revision: current.revision } })).isError).not.toBe(true);
+    expect(text(await owner.callTool({ name: "records_list",arguments: {} })).items).toEqual([]);
+  } finally { await Promise.all(clients.map(client => client.close()));await repo.close(); }
+});
