@@ -358,6 +358,39 @@ test("revoked sessions and forged access tokens cannot read the API", async ({ r
   expect((await request.get("/api/v1/records", { headers: { authorization: `Bearer ${parts.join(".")}` } })).status()).toBe(401);
 });
 
+test("global sign-out rejects two sessions through REST, CLI and MCP", async ({ request }) => {
+  const email = `global-revoke-${randomUUID()}@example.test`; await confirmedUser(request, email);
+  const first = await tokenFor(request, email),second = await tokenFor(request, email);
+  const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
+  expect((await request.get("/api/v1/records",{ headers: bearer(first) })).status()).toBe(200);
+  expect((await request.get("/api/v1/records",{ headers: bearer(second) })).status()).toBe(200);
+
+  const mcpClients = [new Client({ name: "global-revoke-first",version: "1" }),
+    new Client({ name: "global-revoke-second",version: "1" })];
+  try {
+    for (const [index,client] of mcpClients.entries()) {
+      const token = index === 0 ? first : second;
+      await client.connect(new StreamableHTTPClientTransport(new URL("/api/mcp",process.env.APP_ORIGIN!),
+        { requestInit: { headers: bearer(token) } }));
+      expect((await client.callTool({ name: "records_list",arguments: {} })).isError).not.toBe(true);
+    }
+    const logout = await request.post(`${auth}/auth/v1/logout?scope=global`,{
+      headers: { ...publicHeaders,authorization: `Bearer ${first}` },
+    });
+    expect(logout.status()).toBe(204);
+    for (const token of [first,second])
+      expect((await request.get("/api/v1/records",{ headers: bearer(token) })).status()).toBe(401);
+    for (const token of [first,second])
+      await expect(runCli(["usage"],{ APP_API_URL: process.env.APP_ORIGIN,APP_API_TOKEN: token })).rejects.toThrow();
+    for (const client of mcpClients) {
+      const result = await client.callTool({ name: "records_list",arguments: {} }).catch(() => null);
+      expect(result === null || result.isError).toBe(true);
+    }
+  } finally {
+    await Promise.all(mcpClients.map(client => client.close().catch(() => {})));
+  }
+});
+
 test("password recovery email and old-password rejection", async ({ page, request }) => {
   const email = `recover-${randomUUID()}@example.test`; await confirmedUser(request, email);
   await page.goto("/recover"); await page.getByLabel("Email", { exact: true }).fill(email);
