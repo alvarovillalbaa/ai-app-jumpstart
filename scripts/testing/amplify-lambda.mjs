@@ -13,7 +13,7 @@ const manifest = JSON.parse(await readFile(resolve(root, ".amplify-build/manifes
 const { handler } = await import(pathToFileURL(resolve(manifest.compute.default.bundle, "index.mjs")));
 const staticRoot = resolve(manifest.staticAssets.directory);
 const staticPaths = new Set(manifest.routes.filter(row => row.target === "s3" && !row.pattern.includes("*")).map(row => row.pattern));
-const types = { ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".woff2": "font/woff2" };
+const types = { ".js": "text/javascript", ".css": "text/css", ".json": "application/json", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".woff2": "font/woff2" };
 const delimiter = Buffer.alloc(8);
 let invocations = 0;
 const server = createServer(async (request, response) => {

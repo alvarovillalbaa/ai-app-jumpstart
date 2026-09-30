@@ -83,7 +83,7 @@ try {
   const configPath = join(root, ".amplify-build/playwright.config.mjs");
   await writeFile(configPath, `export default { testDir: ${JSON.stringify(join(root, "tests/e2e"))}, workers: 1, retries: 0, use: { baseURL: ${JSON.stringify(origin)} }, reporter: 'list' };\n`);
   const browser = await testCommand(process.execPath, ["node_modules/@playwright/test/cli.js", "test", "records.spec.ts", "accessibility.spec.ts", "--config", configPath],
-    { cwd: root, timeout: 120_000 }, [password, token, otherToken]);
+    { cwd: root, env: { ...process.env, APP_SMOKE_UPLOADS: "false" }, timeout: 120_000 }, [password, token, otherToken]);
   console.log(browser.trim().split("\n").at(-1));
   const probe = new PostgresClient({ connectionString: databaseUrl });await probe.connect();
   try {

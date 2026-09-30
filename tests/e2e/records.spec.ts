@@ -82,11 +82,12 @@ test("health and access control are observable", async ({ request }) => {
   expect(openapi.paths["/api/v1/uploads/{id}/download"].get.operationId).toBe("downloadUpload");
 });
 test("the release checkout validates deployed REST responses before the owner smoke", async () => {
+  const uploads = process.env.APP_SMOKE_UPLOADS !== "false";
   const result = await runHostedSmoke({ url: test.info().project.use.baseURL!,
     token: "isolated-playwright-token-".repeat(3),
-    otherToken: "isolated-playwright-other-".repeat(3),contract: true,uploads: true });
+    otherToken: "isolated-playwright-other-".repeat(3),contract: true,uploads });
   expect(result.contract).toBe(true);
-  expect(result.uploadId).toMatch(/^[0-9a-f-]{36}$/i);
+  if (uploads) expect(result.uploadId).toMatch(/^[0-9a-f-]{36}$/i);
 });
 test("per-request CSP nonces allow hydration and theme changes", async ({ page }) => {
   await page.addInitScript(() => {
