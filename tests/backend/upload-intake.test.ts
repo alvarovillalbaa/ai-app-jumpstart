@@ -33,6 +33,38 @@ it("quarantines checked bytes and deletes only the owner's object",async () => {
   } finally { await catalog.close(); }
 });
 
+it("admits one intake scan per owner and allows another owner to scan concurrently",async () => {
+  const catalog = sqliteUploadCatalog(":memory:");
+  const objects: PrivateUploadObjects = {
+    async put() {},
+    async get() { return null; },
+    async delete() { return true; },
+  };
+  let release!: (verdict: "clean") => void;
+  const gate = new Promise<"clean">(resolve => { release = resolve; });
+  const scanner = { scan: vi.fn(async () => gate) };
+  const pending: Promise<unknown>[] = [];
+  try {
+    const intake = new UploadIntake(catalog,objects,undefined,scanner);
+    const first = intake.accept(owner,"first.txt","text/plain",encoder.encode("first"));pending.push(first);
+    await vi.waitFor(() => expect(scanner.scan).toHaveBeenCalledTimes(1));
+    await expect(intake.accept(owner,"second.txt","text/plain",encoder.encode("second")))
+      .rejects.toMatchObject({ status: 429,code: "upload_scan_busy" });
+
+    const otherOwnerScan = intake.accept(other,"other.txt","text/plain",encoder.encode("other"));pending.push(otherOwnerScan);
+    await vi.waitFor(() => expect(scanner.scan).toHaveBeenCalledTimes(2));
+    release("clean");
+    const [firstEntry,otherEntry] = await Promise.all([first,otherOwnerScan]);
+    expect(firstEntry.state).toBe("quarantined");
+    expect(otherEntry.state).toBe("quarantined");
+    expect(scanner.scan).toHaveBeenCalledTimes(2);
+  } finally {
+    release("clean");
+    await Promise.allSettled(pending);
+    await catalog.close();
+  }
+});
+
 it("lets exactly one concurrent intake write under the atomic catalog quota",async () => {
   const catalog = sqliteUploadCatalog(":memory:"),stored = new Map<string,Uint8Array>();
   let writes = 0;

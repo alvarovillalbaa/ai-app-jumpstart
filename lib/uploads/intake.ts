@@ -5,6 +5,7 @@ import type { PrivateUploadObjects } from "./contract";
 import { DEFAULT_UPLOAD_QUOTA, uploadQuota, type UploadCatalog, type UploadQuota } from "./catalog-contract";
 import { checkUpload } from "./validation";
 import type { UploadScanner } from "./scanner";
+import { withUploadScanSlot } from "./scan-admission";
 
 export const STALE_PENDING_UPLOAD_MS = 24 * 60 * 60 * 1000;
 
@@ -29,8 +30,11 @@ export class UploadIntake {
     try {
       if (this.scanner) {
         let verdict;
-        try { verdict = await this.scanner.scan(file.bytes); }
-        catch { throw new AppError(503,"scanner_unavailable","Upload scanner is unavailable."); }
+        try { verdict = await withUploadScanSlot(owner,() => this.scanner!.scan(file.bytes)); }
+        catch (error) {
+          if (error instanceof AppError && error.code === "upload_scan_busy") throw error;
+          throw new AppError(503,"scanner_unavailable","Upload scanner is unavailable.");
+        }
         if (verdict === "infected") throw new AppError(422,"upload_rejected","Upload did not pass malware scanning.");
         if (verdict !== "clean") throw new AppError(503,"scanner_unavailable","Upload scanner is unavailable.");
       }

@@ -7,7 +7,7 @@ import type { UploadCatalog } from "./catalog-contract";
 import type { PrivateUploadObjects } from "./contract";
 import type { UploadScanner } from "./scanner";
 import { checkUpload } from "./validation";
-import { withDownloadScanSlot } from "./download-admission";
+import { withUploadScanSlot } from "./scan-admission";
 import { uploadDownloadConfigured } from "./download-capability";
 import { assertDownloadGrantLive,signUploadDownload,verifyUploadDownload,type DownloadGrant } from "./download-links";
 
@@ -56,7 +56,7 @@ export class UploadService {
     if (grant) assertDownloadGrantLive(grant);
     const scanner = await this.scanner();
     if (!scanner) throw new AppError(503,"scanner_unavailable","A configured scanner is required for downloads.");
-    return withDownloadScanSlot(owner,async () => {
+    return withUploadScanSlot(owner,async () => {
       if (grant) assertDownloadGrantLive(grant);
       const bytes = await (await this.objects()).get(owner,id);
       if (!bytes) throw new AppError(503,"upload_storage_unavailable","Upload bytes are unavailable.");
@@ -87,7 +87,7 @@ export class UploadService {
       }
       if (grant) assertDownloadGrantLive(grant);
       return { row: current,bytes: checked.bytes };
-    });
+    },"upload_download_busy");
   }
   async review(rawId: string) {
     const result = await this.catalog.getReview(this.owner("uploads:read"),uploadId.parse(rawId));

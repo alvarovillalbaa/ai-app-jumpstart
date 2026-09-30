@@ -30,6 +30,8 @@ The key command prints a private token and a configuration array. Put **only the
 npm run dev
 ```
 
+The development server binds to loopback by default, so the local Eve chat is available only from this machine.
+
 Open `http://localhost:3000/records`, enter the token, and create a record. Tokens stay in tab memory; reload requires reconnecting. For browser signup and login, enable the independent Supabase identity provider and open `/account`; see [authentication](docs/authentication.md). Local chat at `/` additionally needs model credentials.
 
 For a local production process, run `npm run build:local` then `npm start`. The local build compiles both Eve and Next. `npm run test:vercel-build` checks the generated Vercel-mode Next/Eve service graph without a linked project or credentials. A local build is not proof of a successful hosted agent turn.
