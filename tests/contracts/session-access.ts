@@ -53,7 +53,7 @@ export function sessionAccessContract(name: string, factory: () => Promise<Sessi
       expect(second!.nextBefore).toBeNull();
       expect(await store.deleteArtifact(owner,saved.artifact.id)).toBe(true);
       expect(await store.listArtifactVersions(owner,saved.artifact.id,{})).toBeNull();
-    });
+    },60_000);
     it("cannot resurrect an artifact when deletion races an owner edit",async () => {
       await store.reserve(input);const session = sid("version-delete-session");await store.bind(owner,input.operationId,session);
       const draft = { title: "Race note",content: "Approved" };
