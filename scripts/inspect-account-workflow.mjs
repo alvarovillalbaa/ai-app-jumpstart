@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { isAbsolute, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "pg";
+import { z } from "zod";
 
 export const nativeTables = ["workflow_runs", "workflow_steps", "workflow_events", "workflow_hooks",
   "workflow_stream_chunks", "workflow_waits", "workflow_event_slots", "workflow_invocations"];
@@ -28,7 +29,38 @@ function validIds(rows) {
   return rows.map(row => row.session_id);
 }
 
-async function boundSessions(metadataProvider, owner, env) {
+async function convexBoundSessions(owner,env,request) {
+  let url;
+  try { url = new URL(env.CONVEX_SITE_URL ?? ""); } catch { throw new Error("A valid Convex audit origin is required."); }
+  const secret = env.CONVEX_AUDIT_SECRET ?? "";
+  if (url.username || url.password || url.pathname !== "/" || url.search || url.hash ||
+      url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost","127.0.0.1","[::1]"].includes(url.hostname)) ||
+      secret.length < 32 || secret.length > 512) throw new Error("A valid Convex audit origin and credential are required.");
+  const endpoint = new URL("/app/audit",url),pageSchema = z.object({
+    sessionIds: z.array(z.string().min(1).max(512)).max(100),scanned: z.number().int().min(0).max(100),
+    done: z.boolean(),cursor: z.string().nullable(),
+  }).strict();
+  const ids = [],seen = new Set();
+  let cursor = null,pages = 0;
+  do {
+    if (++pages > 100_000) throw new Error("Convex account session inspection exceeded the page limit.");
+    const response = await request(endpoint,{ method: "POST",redirect: "error",signal: AbortSignal.timeout(15_000),
+      headers: { "content-type": "application/json","x-jumpstart-audit-key": secret },
+      body: JSON.stringify({ operation: "accountSessionPage",tenant: owner.tenant,subject: owner.subject,cursor }) });
+    if (!response.ok) throw new Error("Convex account session inspection request failed.");
+    const page = pageSchema.parse(await response.json());
+    if (page.done !== (page.cursor === null) || !page.done && (!page.scanned || page.cursor === cursor) ||
+        page.sessionIds.length > page.scanned) throw new Error("Convex account session inspection returned an invalid page.");
+    for (const id of page.sessionIds) {
+      if (seen.has(id) || ids.length >= 100_000) throw new Error("Convex account session inventory is invalid or too large.");
+      seen.add(id);ids.push(id);
+    }
+    cursor = page.cursor;
+  } while (cursor !== null);
+  return ids;
+}
+
+async function boundSessions(metadataProvider, owner, env,request) {
   if (metadataProvider === "sqlite") {
     if (!env.ACCOUNT_AUDIT_SQLITE_PATH || !isAbsolute(env.ACCOUNT_AUDIT_SQLITE_PATH))
       throw new Error("An absolute SQLite audit path is required.");
@@ -41,6 +73,7 @@ async function boundSessions(metadataProvider, owner, env) {
       return ids;
     } catch (error) { db.exec("ROLLBACK"); throw error; } finally { db.close(); }
   }
+  if (metadataProvider === "convex") return convexBoundSessions(owner,env,request);
   if (metadataProvider !== "postgres" || !env.DATABASE_URL) throw new Error("A PostgreSQL application audit URL is required.");
   const db = new Client({ connectionString: env.DATABASE_URL, connectionTimeoutMillis: 5_000 });
   await db.connect();
@@ -56,11 +89,11 @@ async function boundSessions(metadataProvider, owner, env) {
 }
 
 /** Read-only inventory of PostgreSQL Workflow runs traceable to application session bindings. */
-export async function inspectAccountWorkflow(metadataProvider, owner, env) {
+export async function inspectAccountWorkflow(metadataProvider, owner, env,request = fetch) {
   if (!owner?.tenant || !owner?.subject || owner.tenant.length > 200 || owner.subject.length > 200 ||
-      !["sqlite", "postgres"].includes(metadataProvider) || !env.WORKFLOW_POSTGRES_URL)
+      !["sqlite", "postgres", "convex"].includes(metadataProvider) || !env.WORKFLOW_POSTGRES_URL)
     throw new Error("Invalid Workflow account inspection configuration.");
-  const ids = await boundSessions(metadataProvider, owner, env);
+  const ids = await boundSessions(metadataProvider, owner, env,request);
   const db = new Client({ connectionString: env.WORKFLOW_POSTGRES_URL, connectionTimeoutMillis: 5_000 });
   await db.connect();
   try {
@@ -96,8 +129,8 @@ export async function inspectAccountWorkflow(metadataProvider, owner, env) {
 }
 
 async function main(args, env) {
-  const usage = "Usage: npm run account:inspect:workflow -- --metadata sqlite|postgres --read-only (set ACCOUNT_AUDIT_TENANT, ACCOUNT_AUDIT_SUBJECT, WORKFLOW_POSTGRES_URL and selected application backend settings in the operator environment)";
-  if (args.length !== 3 || args[0] !== "--metadata" || !["sqlite", "postgres"].includes(args[1]) ||
+  const usage = "Usage: npm run account:inspect:workflow -- --metadata sqlite|postgres|convex --read-only (set ACCOUNT_AUDIT_TENANT, ACCOUNT_AUDIT_SUBJECT, WORKFLOW_POSTGRES_URL and the selected application backend settings in the operator environment)";
+  if (args.length !== 3 || args[0] !== "--metadata" || !["sqlite", "postgres", "convex"].includes(args[1]) ||
       args[2] !== "--read-only" || !env.ACCOUNT_AUDIT_TENANT || !env.ACCOUNT_AUDIT_SUBJECT) {
     console.error(usage); process.exitCode = 2; return;
   }

@@ -4,10 +4,15 @@ import { mkdtempSync,rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "pg";
-import { expect,it } from "vitest";
+import { afterEach,expect,it,vi } from "vitest";
+import { convexTest } from "convex-test";
+import schema from "../../convex/schema";
 import { sqliteAccessStore } from "../../lib/agent-access/sqlite";
 import { inspectAccountWorkflow } from "../../scripts/inspect-account-workflow.mjs";
 import { workflowPostgresFixture } from "../../scripts/helpers/workflow-postgres-fixture.mjs";
+
+const convexModules = import.meta.glob("../../convex/**/*.ts");
+afterEach(() => vi.unstubAllEnvs());
 
 it("counts only native Workflow runs linked to an owner's bound session and hides account identifiers",async () => {
   const dir = mkdtempSync(join(tmpdir(),"jumpstart-workflow-inspection-"));
@@ -63,6 +68,31 @@ it("counts only native Workflow runs linked to an owner's bound session and hide
       expect(command.status,command.stderr).toBe(0);
       expect(JSON.parse(command.stdout).linkedRuns.runs).toBe(4);
       expect(command.stdout).not.toContain(owner.subject);
+
+      const auditSecret = "test-convex-workflow-audit-secret-".repeat(2);
+      vi.stubEnv("CONVEX_AUDIT_SECRET",auditSecret);
+      const convex = convexTest(schema,convexModules);
+      await convex.run(async ctx => {
+        for (let index = 0;index < 105;index++) await ctx.db.insert("conversations",{
+          ...owner,id: crypto.randomUUID(),operationId: crypto.randomUUID(),requestHash: "d".repeat(64),
+          sessionId: null,status: "active",archived: false,createdAt: index,
+        });
+        for (const [index,sessionId] of ["owned-session","retired-session"].entries()) await ctx.db.insert("conversations",{
+          ...owner,id: crypto.randomUUID(),operationId: crypto.randomUUID(),requestHash: "e".repeat(64),
+          sessionId,status: "active",archived: false,createdAt: 105+index,
+        });
+        await ctx.db.insert("conversations",{ tenant: owner.tenant,subject: "other-owner",id: crypto.randomUUID(),
+          operationId: crypto.randomUUID(),requestHash: "f".repeat(64),sessionId: "other-session",status: "active",
+          archived: false,createdAt: 107 });
+      });
+      const convexRequest: typeof fetch = (url,init) => convex.fetch(
+        new URL(url instanceof Request ? url.url : String(url)).pathname,init);
+      const convexObservation = await inspectAccountWorkflow("convex",owner,{ WORKFLOW_POSTGRES_URL: workflow.url,
+        CONVEX_SITE_URL: "https://test.convex.site",CONVEX_AUDIT_SECRET: auditSecret },convexRequest);
+      expect(convexObservation).toMatchObject({ boundSessionCount: 2,
+        linkedRuns: { runs: 4,events: 1,invocations: 1 },otherSessionRoots: 1 });
+      expect(JSON.stringify(convexObservation)).not.toContain(owner.tenant);
+      expect(JSON.stringify(convexObservation)).not.toContain(owner.subject);
     } finally { await pg.end(); }
   } finally { await workflow.stop();rmSync(dir,{ recursive: true,force: true }); }
 },30_000);

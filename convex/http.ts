@@ -61,6 +61,8 @@ http.route({ path: "/app/audit", method: "POST", handler: httpAction(async (ctx,
       tenant: z.string().min(1).max(200),subject: z.string().min(1).max(200),cursor: z.string().nullable() }).strict(),
     z.object({ operation: z.literal("accountRowPage"),entity: z.enum(accountAuditEntities),
       tenant: z.string().min(1).max(200),subject: z.string().min(1).max(200),cursor: z.string().nullable() }).strict(),
+    z.object({ operation: z.literal("accountSessionPage"),
+      tenant: z.string().min(1).max(200),subject: z.string().min(1).max(200),cursor: z.string().nullable() }).strict(),
     z.object({ operation: z.literal("accountFenceStatus"),tenant: z.string().min(1).max(200),
       subject: z.string().min(1).max(200) }).strict(),
     z.object({ operation: z.literal("setAccountFence"),tenant: z.string().min(1).max(200),
@@ -83,6 +85,9 @@ http.route({ path: "/app/audit", method: "POST", handler: httpAction(async (ctx,
     }
     if (parsed.data.operation === "accountFenceStatus")
       return json(await ctx.runQuery(internal.audit.accountFenceStatus,{ tenant: parsed.data.tenant,subject: parsed.data.subject }));
+    if (parsed.data.operation === "accountSessionPage")
+      return json(await ctx.runQuery(internal.audit.accountSessionPage,{ tenant: parsed.data.tenant,
+        subject: parsed.data.subject,cursor: parsed.data.cursor }));
     if (parsed.data.operation === "accountRowPage")
       return json(await ctx.runQuery(internal.audit.accountRowPage,{ entity: parsed.data.entity,
         tenant: parsed.data.tenant,subject: parsed.data.subject,cursor: parsed.data.cursor }));

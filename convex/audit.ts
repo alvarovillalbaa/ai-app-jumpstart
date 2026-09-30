@@ -84,6 +84,19 @@ export const accountFenceStatus = internalQuery({
   },
 });
 
+/** Owner-bound Eve session IDs for read-only Workflow inspection. Never expose document rows. */
+export const accountSessionPage = internalQuery({
+  args: { tenant: v.string(),subject: v.string(),cursor: v.union(v.string(),v.null()) },
+  handler: async (ctx,args) => {
+    if (!args.tenant || !args.subject || args.tenant.length > 200 || args.subject.length > 200)
+      throw new Error("Invalid account session inspection request.");
+    const page = await ctx.db.query("conversations").withIndex("by_history",q =>
+      q.eq("tenant",args.tenant).eq("subject",args.subject)).paginate({ numItems: 100,cursor: args.cursor });
+    return { sessionIds: page.page.flatMap(row => typeof row.sessionId === "string" ? [row.sessionId] : []),
+      scanned: page.page.length,done: page.isDone,cursor: page.isDone ? null : page.continueCursor };
+  },
+});
+
 /** Called only by the distinct operator audit endpoint. There is no un-fence. */
 export const setAccountFence = internalMutation({
   args: { tenant: v.string(),subject: v.string() },
