@@ -36,7 +36,8 @@ async function sourceSessions(source: string) {
   const owner = accessOwner.parse(rows.owner);
   const manifestSha256 = digest(await readFile(join(resolve(source),"manifest.json")));
   const ids = new Set<string>();
-  const file = await open(join(resolve(source),"rows.ndjson"),fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  const file = await open(join(resolve(source),"rows.ndjson"),
+    fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0) | fsConstants.O_NOFOLLOW);
   try {
     const reader = createInterface({ input: file.createReadStream({ autoClose: false }),crlfDelay: Infinity });
     try {
@@ -69,7 +70,7 @@ function linked(id: string,attributes: Record<string,unknown>,known: Set<string>
 export async function verifyAccountWorkflowExport(source: string,archive: string) {
   const sourceData = await sourceSessions(source);
   const path = resolve(archive);
-  const file = await open(path,fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  const file = await open(path,fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0) | fsConstants.O_NOFOLLOW);
   try {
     const before = await file.stat({ bigint: true });
     const pathBefore = await lstat(path,{ bigint: true });

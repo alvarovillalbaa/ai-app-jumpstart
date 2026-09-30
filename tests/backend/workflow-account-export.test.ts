@@ -90,6 +90,14 @@ it("preserves linked Workflow payloads in a private source-bound archive and rej
     expect(content).not.toContain("foreign-private-invocation-payload");
     expect(content).not.toContain(owner.subject);
     expect(await verifyAccountWorkflowExport(bundle,archive)).toMatchObject({ runs: 3,rows: 115 });
+    if (process.platform !== "win32") {
+      const fifo = join(dir,"workflow.fifo"),created = spawnSync("mkfifo",[fifo],{ encoding: "utf8" });
+      expect(created.status,created.stderr).toBe(0);
+      const rejected = spawnSync(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/export-account-workflow.ts",
+        "--source",bundle,"--archive",fifo],{ cwd: process.cwd(),encoding: "utf8",timeout: 5000 });
+      expect(rejected.error).toBeUndefined();
+      expect(rejected.status).toBe(1);
+    }
     const archiveLines = content.trimEnd().split("\n"),footer = JSON.parse(archiveLines.pop()!) as {
       value: { rows: number;counts: Record<string,number>;contentSha256: string };
     };

@@ -70,6 +70,14 @@ it("exports every fenced SQLite owner row, including descendants, without the ot
     const tampered = join(dir,"tampered.ndjson");
     writeFileSync(tampered,changed,{ mode: 0o600 });
     await expect(verifyAccountRowExport(tampered)).rejects.toThrow("digest");
+    if (process.platform !== "win32") {
+      const fifo = join(dir,"rows.fifo"),created = spawnSync("mkfifo",[fifo],{ encoding: "utf8" });
+      expect(created.status,created.stderr).toBe(0);
+      const rejected = spawnSync(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/export-account-rows.ts",
+        "--verify",fifo],{ cwd: process.cwd(),encoding: "utf8",timeout: 5000 });
+      expect(rejected.error).toBeUndefined();
+      expect(rejected.status).toBe(1);
+    }
     const forged = structuredClone(lines);
     const record = forged.find(line => line.type === "row" && line.value.entity === "records");
     record.value.rowJson = record.value.rowJson.replace(alice.subject,bob.subject);

@@ -238,7 +238,7 @@ export async function exportSelectedAccountRows(provider: Provider,owner: Access
 
 /** Offline integrity verification; this deliberately has no backend credentials or network path. */
 export async function verifyAccountRowExportDetails(path: string) {
-  const file = await open(path,fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  const file = await open(path,fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0) | fsConstants.O_NOFOLLOW);
   try {
     const actual = await file.stat({ bigint: true });
     const pathDetails = await lstat(path,{ bigint: true });
