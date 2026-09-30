@@ -23,12 +23,11 @@ npm ci
 
 The package and Supabase IDs use the slug `acme-assistant` derived from the display name. Use `--slug your-own-slug` to choose a different lowercase, hyphen-separated ID. Without `--apply`, the command only previews the changes. It updates project identity fields and the README title; protocol names, database formats and stable API contracts remain unchanged. See [fresh-clone and hosted setup](docs/getting-started.md) before configuring providers.
 
-For browser accounts and a Supabase-backed application, follow the [fresh-clone guide](docs/getting-started.md) for either local or hosted Supabase. The following path is the smaller SQLite/API-key example.
+For browser accounts and a Supabase-backed application, follow the [fresh-clone guide](docs/getting-started.md) for either local or hosted Supabase. The following smaller SQLite/API-key path assumes the identity setup and dependency install above are complete.
 
 The guide also covers an owner-scoped, repeatable sample-record seed and generation of committed Supabase database types from the local migrated schema.
 
 ```sh
-npm ci
 cp .env.example .env.local
 npm run auth:key -- local developer write
 ```
