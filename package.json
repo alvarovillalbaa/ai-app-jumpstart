@@ -151,7 +151,7 @@
     "@supabase/ssr": "0.12.7",
     "@supabase/supabase-js": "2.116.0",
     "@vercel/connect": "^2.1.0",
-    "@workflow/world-postgres": "5.0.0-beta.48",
+    "@workflow/world-postgres": "5.0.0-beta.45",
     "@xyflow/react": "^12.11.6",
     "ai": "7.0.99",
     "ansi-to-react": "^6.2.6",
@@ -222,6 +222,7 @@
     "ansi-to-react": {
       "linkify-it": "5.0.2"
     },
+    "undici@7.29.0": "7.30.0",
     "undici@8.9.0": "8.10.2"
   }
 }
