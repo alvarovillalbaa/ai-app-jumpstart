@@ -621,13 +621,14 @@ test("an approved tool saves one private artifact; denial saves none",async ({ p
   expect((await (await request.get(artifactsUrl,{ headers: { authorization: `Bearer ${denying.token}` } })).json()).items).toEqual([]);
 });
 
-test("hosted smoke verifies real browser sign-in, replay, logout, account isolation and one owned turn",async ({ request }) => {
+test("hosted smoke verifies real browser sign-in, two-turn replay, logout and account isolation",async ({ request }) => {
   const alice = await user(request),bob = await user(request);
-  const result = await runHostedSmoke({ url: process.env.APP_ORIGIN!,token: alice.token,otherToken: bob.token,accounts: true,agent: true,browser: true,accountBrowser: true,requestLimit: true,uploads: true,contract: true,
+  const result = await runHostedSmoke({ url: process.env.APP_ORIGIN!,token: alice.token,otherToken: bob.token,accounts: true,agent: true,agentFollowUp: true,browser: true,accountBrowser: true,requestLimit: true,uploads: true,contract: true,
     browserAccounts: { primary: { email: alice.email,password },other: { email: bob.email,password } } });
   expect(result.agent?.operationId).toMatch(/^[a-f0-9-]{36}$/);
   expect(result.agent?.sourceEvents).toBeGreaterThan(0);
   expect(result.agent?.sourceIndex).toBeGreaterThan(0);
+  expect(result.agent?.followUpMarker).toMatch(/^[a-f0-9-]{36}$/);
   expect(result.browser).toBe(true);
   expect(result.accountBrowser).toBe(true);
   expect(result.requestLimit).toBe(true);

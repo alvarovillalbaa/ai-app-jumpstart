@@ -36,9 +36,9 @@ export async function verifyBrowserAccounts(accounts,token,otherToken,request) {
 
 /**
  * Actual sign-in and cookie/hydration checks. No injected sessions or model dispatch.
- * @param {{origin: string,protection: Record<string,string>,accounts: AccountBrowserCredentials,title?: string,operationId?: string}} options
+ * @param {{origin: string,protection: Record<string,string>,accounts: AccountBrowserCredentials,title?: string,operationId?: string,prompt?: string,followUpPrompt?: string,followUpMarker?: string|null}} options
  */
-export async function accountBrowserRead({ origin,protection,accounts,title,operationId }) {
+export async function accountBrowserRead({ origin,protection,accounts,title,operationId,prompt,followUpPrompt,followUpMarker }) {
   const { chromium,expect } = await import("@playwright/test");
   let browser,phase = "launch";
   try {
@@ -68,12 +68,12 @@ export async function accountBrowserRead({ origin,protection,accounts,title,oper
       phase = "owner record read";await records(true);
       phase = "owner record reload";await page.reload({ waitUntil: "domcontentloaded" });await records(true);
     }
-    const prompt = "Reply with one short greeting. Do not use tools.";
     if (operationId) {
       phase = "owner chat replay";await page.goto(`${origin}/s/${operationId}`,{ waitUntil: "domcontentloaded" });
       await expect(page.getByPlaceholder("Send a message…")).toBeEnabled({ timeout: 30_000 });
       const log = page.getByRole("log");
-      await expect(log.locator(".is-user")).toHaveText(prompt);
+      await expect(log.locator(".is-user")).toHaveText(followUpPrompt ? [prompt,followUpPrompt] : [prompt]);
+      if (followUpMarker) await expect(log.locator(".is-assistant").last()).toContainText(followUpMarker);
       await expect(log.locator(".is-assistant").last()).not.toHaveText("",{ timeout: 30_000 });
       await expect(page.getByRole("main").getByRole("alert")).toHaveCount(0);
       const before = await log.innerText();

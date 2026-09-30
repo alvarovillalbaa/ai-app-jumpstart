@@ -6,6 +6,11 @@ import { parseReviewedUploadMessage } from "../../../../../lib/uploads/chat-refe
 
 export const fixtureModel = mockModel(async ({ lastUserMessage,toolResults,userMessages }) => {
     await appendFile(process.env.TEST_MODEL_RECEIPTS!, `${JSON.stringify({ message: lastUserMessage ?? "compaction" })}\n`);
+    if (lastUserMessage?.startsWith("What was the code I gave you in my previous message?")) {
+      const previous = userMessages.find(message => message.includes("hosted-follow-up-code: "));
+      const code = previous?.match(/hosted-follow-up-code: ([0-9a-f-]{36})/i)?.[1];
+      return code ?? "I cannot recall a code from the previous message.";
+    }
     if (lastUserMessage?.includes("inflight-restart-test")) {
       const deadline = Date.now() + 60000;
       while (!await access(process.env.TEST_MODEL_GATE!).then(() => true, () => false)) {

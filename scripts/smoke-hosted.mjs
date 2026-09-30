@@ -248,14 +248,18 @@ export async function verifyHostedModelReceipt({ request, token, operationId, so
   throw new Error(`Hosted model cost did not settle for operation ${operationId}`);
 }
 
-async function runAgentSmoke({ origin, token, otherToken, protection, request, modelReceipt }) {
+async function runAgentSmoke({ origin, token, otherToken, protection, request, modelReceipt, followUp }) {
   const operationId = randomUUID();
+  const marker = followUp ? randomUUID() : null;
+  const prompt = marker
+    ? `Reply with one short greeting. Do not use tools. Remember this code for my next turn: hosted-follow-up-code: ${marker}.`
+    : "Reply with one short greeting. Do not use tools.";
   console.log(`Agent smoke operation: ${operationId}`);
   const authorized = { authorization: `Bearer ${token}` };
   const other = { authorization: `Bearer ${otherToken}` };
   const created = await request("/api/v1/conversations", {
     method: "POST", headers: { ...authorized, "content-type": "application/json" },
-    body: JSON.stringify({ operationId, message: "Reply with one short greeting. Do not use tools." }),
+    body: JSON.stringify({ operationId, message: prompt }),
   });
   assert.ok([200, 202].includes(created.status), `Agent creation failed (HTTP ${created.status})`);
   const initial = await created.json();
@@ -358,16 +362,68 @@ async function runAgentSmoke({ origin, token, otherToken, protection, request, m
   }
   assert.ok(sourceTail && sourceAnswer && sourceCompleted, `Agent source stream is incomplete for operation ${operationId}`);
   const receipt = modelReceipt ? await verifyHostedModelReceipt({ request,token,operationId,sourceModels,...modelReceipt }) : undefined;
-  return { operationId, sessionId: conversation.sessionId, sourceEvents, sourceIndex,receipt };
+  let followUpPrompt;
+  if (marker) {
+    followUpPrompt = "What was the code I gave you in my previous message? Reply with only that code; do not use tools.";
+    let followUpTurn;
+    try { followUpTurn = await (await session.send(followUpPrompt)).result(); }
+    catch (error) {
+      throw new Error(`Agent follow-up failed for operation ${operationId} (${error instanceof Error ? error.name : "unknown"}).`);
+    }
+    assert.equal(followUpTurn.sessionId,conversation.sessionId,"Agent follow-up changed session");
+    assert.notEqual(followUpTurn.status,"failed",`Agent follow-up failed for operation ${operationId}`);
+    assert.ok(followUpTurn.events.some(event => event.type === "turn.completed"),"Agent follow-up did not complete a turn");
+    assert.ok(followUpTurn.message?.includes(marker),`Agent follow-up did not recall the first-turn code for operation ${operationId}`);
+    const followUpDeadline = Date.now() + 15_000;
+    let projectedFollowUp = false;
+    do {
+      let cursor = null;
+      for (let pageNumber = 0; pageNumber < 100; pageNumber++) {
+        const query = new URLSearchParams({ limit: "50", ...(cursor === null ? {} : { after: String(cursor) }) });
+        const response = await request(`${projectionPath}?${query}`, { headers: authorized });
+        assert.equal(response.status,200,"Agent follow-up projections failed");
+        const page = await response.json();
+        assert.ok(Array.isArray(page.items),"Agent follow-up projection page is invalid");
+        projectedFollowUp ||= page.items.some(entry => entry.payload?.kind === "message" && entry.payload.role === "assistant" &&
+          entry.payload.parts?.some(part => part.type === "text" && part.text?.includes(marker)));
+        if (page.nextCursor === null) break;
+        assert.ok(page.items.length && Number.isSafeInteger(page.nextCursor) && page.nextCursor > (cursor ?? 0),
+          "Agent follow-up projection pagination did not advance");
+        cursor = page.nextCursor;
+      }
+      if (!projectedFollowUp) await new Promise(resolve => setTimeout(resolve,250));
+    } while (!projectedFollowUp && Date.now() < followUpDeadline);
+    assert.ok(projectedFollowUp,`Agent follow-up was not projected for operation ${operationId}`);
+    let sourceFollowUp = false, sourceTail = false;
+    for (let pageNumber = 0; pageNumber < 100; pageNumber++) {
+      const query = new URLSearchParams({ startIndex: String(sourceIndex),limit: "50" });
+      const response = await request(`${sourcePath}?${query}`, { headers: authorized });
+      assert.equal(response.status,200,"Agent follow-up source stream failed");
+      const page = await response.json();
+      assert.ok(Array.isArray(page.items) && Number.isSafeInteger(page.scanned) && page.scanned >= 0,
+        "Agent follow-up source page is invalid");
+      assert.equal(page.nextIndex,sourceIndex + page.scanned,"Agent follow-up source cursor skipped events");
+      sourceFollowUp ||= page.items.some(entry => entry.payload?.kind === "message" && entry.payload.role === "assistant" &&
+        entry.payload.parts?.some(part => part.type === "text" && part.text?.includes(marker)));
+      sourceEvents += page.items.length;
+      sourceIndex = page.nextIndex;
+      if (page.complete) { sourceTail = true; break; }
+      assert.ok(page.scanned > 0,"Agent follow-up source cursor did not advance");
+    }
+    assert.ok(sourceTail && sourceFollowUp,`Agent follow-up is missing from the durable source stream for operation ${operationId}`);
+  }
+  return { operationId, sessionId: conversation.sessionId, sourceEvents, sourceIndex,receipt,prompt,followUpPrompt,followUpMarker: marker };
 }
 
 /**
- * @param {{url: string,token: string,otherToken: string,accounts?: boolean,agent?: boolean,browser?: boolean,accountBrowser?: boolean,requestLimit?: boolean,uploads?: boolean,uploadDownload?: boolean,contract?: boolean,modelReceipt?: {expectedModel: string,maxObservedMicros: number},browserAccounts?: import("./helpers/hosted-account-browser.mjs").AccountBrowserCredentials}} options
+ * @param {{url: string,token: string,otherToken: string,accounts?: boolean,agent?: boolean,agentFollowUp?: boolean,browser?: boolean,accountBrowser?: boolean,requestLimit?: boolean,uploads?: boolean,uploadDownload?: boolean,contract?: boolean,modelReceipt?: {expectedModel: string,maxObservedMicros: number},browserAccounts?: import("./helpers/hosted-account-browser.mjs").AccountBrowserCredentials}} options
  */
-export async function runHostedSmoke({ url, token, otherToken, accounts = false, agent = false, browser = false,accountBrowser = false,requestLimit = false,uploads = false,uploadDownload = false,contract = false,modelReceipt,browserAccounts }) {
+export async function runHostedSmoke({ url, token, otherToken, accounts = false, agent = false, agentFollowUp = false,browser = false,accountBrowser = false,requestLimit = false,uploads = false,uploadDownload = false,contract = false,modelReceipt,browserAccounts }) {
   const origin = targetOrigin(url);
   if (agent && !accounts) throw new Error("Agent smoke requires the two-account mode.");
+  if (agentFollowUp && !agent) throw new Error("Agent follow-up smoke requires an explicit agent turn.");
   if (modelReceipt && !agent) throw new Error("Model receipt smoke requires an explicit agent turn.");
+  if (agentFollowUp && modelReceipt) throw new Error("Run model-receipt and agent-follow-up smokes separately; the receipt covers only the first turn.");
   if (modelReceipt) checkedModelReceipt(modelReceipt);
   if (!token || !otherToken || token === otherToken) throw new Error("Set distinct APP_API_TOKEN and APP_API_OTHER_TOKEN with record read/write access for different owners.");
   const checkedAccounts = accountBrowser ? checkedBrowserAccounts(browserAccounts) : undefined;
@@ -509,23 +565,24 @@ export async function runHostedSmoke({ url, token, otherToken, accounts = false,
   if (failure && cleanupFailure) throw new Error(`${message(failure)}; cleanup: ${message(cleanupFailure)}`);
   if (failure) throw failure;
   if (cleanupFailure) throw cleanupFailure;
-  const agentResult = agent ? await runAgentSmoke({ origin, token, otherToken, protection, request,modelReceipt }) : undefined;
-  if (checkedAccounts && agentResult) await accountBrowserRead({ origin,protection,accounts: checkedAccounts,operationId: agentResult.operationId });
+  const agentResult = agent ? await runAgentSmoke({ origin, token, otherToken, protection, request,modelReceipt,followUp: agentFollowUp }) : undefined;
+  if (checkedAccounts && agentResult) await accountBrowserRead({ origin,protection,accounts: checkedAccounts,operationId: agentResult.operationId,
+    prompt: agentResult.prompt,followUpPrompt: agentResult.followUpPrompt,followUpMarker: agentResult.followUpMarker });
   return { origin, recordId: record.id, uploadId, agent: agentResult, browser,accountBrowser,requestLimit,contract };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   const flags = new Set(args);
-  if (flags.size !== args.length || args.some(arg => !["--accounts", "--agent", "--model-receipt", "--browser","--account-browser","--request-limit","--uploads","--upload-download","--contract"].includes(arg))) {
-    console.error("Supported options: --accounts (budget access, no model call), --agent (one owned model turn), --model-receipt (exact model and settled nonzero cost), --browser (token records UI), --account-browser (real sign-in, reload, logout and account isolation), --request-limit (active registered-owner admission across REST/CLI/MCP), --uploads (private upload isolation and cleanup), --upload-download (also require fresh-scanned exact bytes), --contract (exact deployed OpenAPI revision and successful REST response schemas).");
+  if (flags.size !== args.length || args.some(arg => !["--accounts", "--agent", "--agent-follow-up", "--model-receipt", "--browser","--account-browser","--request-limit","--uploads","--upload-download","--contract"].includes(arg))) {
+    console.error("Supported options: --accounts (budget access, no model call), --agent (one owned model turn), --agent-follow-up (second owned turn in the same session; use with --agent), --model-receipt (exact model and settled nonzero cost for the first turn), --browser (token records UI), --account-browser (real sign-in, reload, logout and account isolation), --request-limit (active registered-owner admission across REST/CLI/MCP), --uploads (private upload isolation and cleanup), --upload-download (also require fresh-scanned exact bytes), --contract (exact deployed OpenAPI revision and successful REST response schemas).");
     process.exitCode = 2;
   } else {
-    const agent = flags.has("--agent"),accountBrowser = flags.has("--account-browser"),accounts = agent || flags.has("--accounts"), browser = flags.has("--browser"),requestLimit = flags.has("--request-limit"),uploadDownload = flags.has("--upload-download"),uploads = flags.has("--uploads") || uploadDownload,contract = flags.has("--contract"),modelReceipt = flags.has("--model-receipt")
+    const agent = flags.has("--agent"),agentFollowUp = flags.has("--agent-follow-up"),accountBrowser = flags.has("--account-browser"),accounts = agent || flags.has("--accounts"), browser = flags.has("--browser"),requestLimit = flags.has("--request-limit"),uploadDownload = flags.has("--upload-download"),uploads = flags.has("--uploads") || uploadDownload,contract = flags.has("--contract"),modelReceipt = flags.has("--model-receipt")
       ? { expectedModel: process.env.APP_SMOKE_EXPECTED_MODEL,maxObservedMicros: Number(process.env.APP_SMOKE_MAX_OBSERVED_MICROS) } : undefined;
-    runHostedSmoke({ url: process.env.APP_API_URL, token: process.env.APP_API_TOKEN, otherToken: process.env.APP_API_OTHER_TOKEN, accounts, agent, browser,accountBrowser,requestLimit,uploads,uploadDownload,contract,modelReceipt,
+    runHostedSmoke({ url: process.env.APP_API_URL, token: process.env.APP_API_TOKEN, otherToken: process.env.APP_API_OTHER_TOKEN, accounts, agent,agentFollowUp,browser,accountBrowser,requestLimit,uploads,uploadDownload,contract,modelReceipt,
       browserAccounts: accountBrowser ? { primary: { email: process.env.APP_SMOKE_EMAIL,password: process.env.APP_SMOKE_PASSWORD },other: { email: process.env.APP_SMOKE_OTHER_EMAIL,password: process.env.APP_SMOKE_OTHER_PASSWORD } } : undefined })
-      .then(({ origin }) => console.log(`Hosted smoke passed for ${origin}: readiness, Eve, web, ${accounts ? "Supabase accounts, " : ""}REST, keyed creation recovery/deletion, owner isolation, CLI and MCP${contract ? ", exact OpenAPI revision and REST response schemas" : ""}${requestLimit ? ", active owner request admission" : ""}${uploads ? ", private upload and cleanup" : ""}${uploadDownload ? ", fresh-scanned exact download bytes" : ""}${browser ? ", Chromium records UI" : ""}${agent ? ", one owned agent turn and source-stream read" : ""}${modelReceipt ? ", exact model and settled cost receipt" : ""}${accountBrowser ? ", real account sign-in/reload/logout and browser isolation" : ""}.`))
+      .then(({ origin }) => console.log(`Hosted smoke passed for ${origin}: readiness, Eve, web, ${accounts ? "Supabase accounts, " : ""}REST, keyed creation recovery/deletion, owner isolation, CLI and MCP${contract ? ", exact OpenAPI revision and REST response schemas" : ""}${requestLimit ? ", active owner request admission" : ""}${uploads ? ", private upload and cleanup" : ""}${uploadDownload ? ", fresh-scanned exact download bytes" : ""}${browser ? ", Chromium records UI" : ""}${agent ? ", one owned agent turn and source-stream read" : ""}${agentFollowUp ? ", second owned turn and projected context recall" : ""}${modelReceipt ? ", exact model and settled cost receipt" : ""}${accountBrowser ? ", real account sign-in/reload/logout and browser isolation" : ""}.`))
       .catch(error => { console.error(message(error)); process.exitCode = 1; });
   }
 }
