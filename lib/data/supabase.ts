@@ -9,7 +9,7 @@ export class SupabaseRepository implements RecordRepository {
   private client: SupabaseClient<Database>;
   constructor(url: string, secret: string) {
     this.client = createClient<Database>(url, secret, { auth: { persistSession: false, autoRefreshToken: false }, global: {
-      fetch: (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(10_000) }),
+      fetch: (input, init) => fetch(input, { ...init, redirect: "error", signal: AbortSignal.timeout(10_000) }),
     } });
   }
   private scoped(owner: Owner) { return this.client.from("app_records").select("*").eq("tenant", owner.tenant).eq("subject", owner.subject); }
