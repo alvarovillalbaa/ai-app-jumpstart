@@ -22,15 +22,43 @@ function headingAnchors(markdown) {
   const anchors = new Set();
   const repeats = new Map();
   for (const match of markdown.matchAll(/^ {0,3}#{1,6}\s+(.+?)\s*#*\s*$/gm)) {
-    const plain = match[1].replace(/!?\[([^\]]+)\]\([^)]*\)/g, "$1")
-      .replace(/<[^>]+>/g, "").replace(/`/g, "").toLowerCase();
-    const base = plain.replace(/[^\p{L}\p{N}_\- ]/gu, "").replace(/ /g, "-");
+    const plain = stripHeadingMarkup(match[1]).toLowerCase();
+    const base = [...plain].filter(character => /[\p{L}\p{N}_ \-]/u.test(character)).join("").replace(/ /g, "-");
     const count = repeats.get(base) ?? 0;
     repeats.set(base, count + 1);
     anchors.add(count ? `${base}-${count}` : base);
   }
   for (const match of markdown.matchAll(/<a\b[^>]*\b(?:id|name)=["']([^"']+)["'][^>]*>/g)) anchors.add(match[1]);
   return anchors;
+}
+
+function stripHeadingMarkup(source) {
+  let plain = "";
+  for (let index = 0; index < source.length;) {
+    const image = source[index] === "!" && source[index + 1] === "[";
+    const labelStart = image ? index + 1 : index;
+    if (source[labelStart] === "[") {
+      const labelEnd = source.indexOf("]", labelStart + 1);
+      if (labelEnd > labelStart + 1 && source[labelEnd + 1] === "(") {
+        const destinationEnd = source.indexOf(")", labelEnd + 2);
+        if (destinationEnd >= 0) {
+          plain += source.slice(labelStart + 1, labelEnd);
+          index = destinationEnd + 1;
+          continue;
+        }
+      }
+    }
+    if (source[index] === "<") {
+      const tagEnd = source.indexOf(">", index + 1);
+      if (tagEnd > index + 1) {
+        index = tagEnd + 1;
+        continue;
+      }
+    }
+    if (source[index] !== "`") plain += source[index];
+    index += 1;
+  }
+  return plain;
 }
 
 const sources = new Map();
