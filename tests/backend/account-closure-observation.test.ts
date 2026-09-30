@@ -34,6 +34,8 @@ it("joins the real SQLite row and local object observations without exposing ide
       expect(observed).toMatchObject({ status: "retained_or_unattributable",ownerRowTotal: 1,objectCount: 1,
         authProvider: "api-key",authIdentityApplicable: false,authIdentityPresent: false,applicationWriteFenced: false,
         remaining: { applicationRows: true,privateObjects: true,globalUnattributableRows: false,applicationWritesPossible: true } });
+      expect(observed.workflow).toBeNull();
+      expect(observed.remaining.workflowRows).toBeNull();
       expect(JSON.stringify(observed)).not.toContain(alice.tenant);
       expect(JSON.stringify(observed)).not.toContain(alice.subject);
       expect((await inspectAccountClosure("sqlite","local",bob,env)).objectCount).toBe(0);
@@ -43,6 +45,8 @@ it("joins the real SQLite row and local object observations without exposing ide
           AUTH_PROVIDER: "api-key",UPLOAD_STORAGE_PROVIDER: "local",UPLOAD_LOCAL_ROOT: root } });
       expect(success.status).toBe(0);
       expect(JSON.parse(success.stdout)).toMatchObject({ ownerRowTotal: 1,objectCount: 1,status: "retained_or_unattributable" });
+      expect(JSON.parse(success.stdout).workflow).toBeNull();
+      expect(JSON.parse(success.stdout).remaining.workflowRows).toBeNull();
       expect(success.stdout).not.toContain(alice.tenant);
       expect(success.stdout).not.toContain(alice.subject);
 

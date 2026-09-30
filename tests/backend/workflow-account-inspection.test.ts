@@ -1,14 +1,20 @@
 import { DatabaseSync } from "node:sqlite";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync,rmSync } from "node:fs";
+import { mkdirSync,mkdtempSync,rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "pg";
 import { afterEach,expect,it,vi } from "vitest";
 import { convexTest } from "convex-test";
 import schema from "../../convex/schema";
+import { SqliteRepository } from "../../lib/data/sqlite";
 import { sqliteAccessStore } from "../../lib/agent-access/sqlite";
+import { sqliteBudgetStore } from "../../lib/budgets/sqlite";
+import { sqliteUploadCatalog } from "../../lib/uploads/catalog-sqlite";
+import { sqlitePreferenceStore } from "../../lib/preferences/sqlite";
+import { sqliteRequestLimitStore } from "../../lib/request-limits/sqlite";
 import { inspectAccountWorkflow } from "../../scripts/inspect-account-workflow.mjs";
+import { inspectAccountClosure } from "../../scripts/inspect-account-closure";
 import { workflowPostgresFixture } from "../../scripts/helpers/workflow-postgres-fixture.mjs";
 
 const convexModules = import.meta.glob("../../convex/**/*.ts");
@@ -16,10 +22,13 @@ afterEach(() => vi.unstubAllEnvs());
 
 it("counts only native Workflow runs linked to an owner's bound session and hides account identifiers",async () => {
   const dir = mkdtempSync(join(tmpdir(),"jumpstart-workflow-inspection-"));
-  const path = join(dir,"app.sqlite"),workflow = await workflowPostgresFixture();
+  const path = join(dir,"app.sqlite"),uploadRoot = join(dir,"uploads"),workflow = await workflowPostgresFixture();
   const owner = { tenant: "private-tenant",subject: "private-subject" };
   try {
-    const store = sqliteAccessStore(path);await store.close();
+    const stores = [new SqliteRepository(path),sqliteAccessStore(path),sqliteBudgetStore(path),
+      sqliteUploadCatalog(path),sqlitePreferenceStore(path),sqliteRequestLimitStore(path)];
+    for (const store of stores) await store.close();
+    mkdirSync(uploadRoot,{ mode: 0o700 });
     const sqlite = new DatabaseSync(path);
     try {
       const statement = sqlite.prepare(`INSERT INTO app_conversations
@@ -93,6 +102,44 @@ it("counts only native Workflow runs linked to an owner's bound session and hide
         linkedRuns: { runs: 4,terminalRuns: 3,nonterminalRuns: 1,events: 1,invocations: 1 },otherSessionRoots: 1 });
       expect(JSON.stringify(convexObservation)).not.toContain(owner.tenant);
       expect(JSON.stringify(convexObservation)).not.toContain(owner.subject);
+
+      const closure = await inspectAccountClosure("sqlite","local",owner,{
+        AUTH_PROVIDER: "api-key",ACCOUNT_AUDIT_SQLITE_PATH: path,UPLOAD_LOCAL_ROOT: uploadRoot,
+        WORKFLOW_POSTGRES_URL: workflow.url,
+      },fetch,{ workflowPostgres: true });
+      expect(closure).toMatchObject({ format: "ai-app-jumpstart-account-closure-observation-v2",
+        status: "retained_or_unattributable",workflow: { provider: "postgres",boundSessionCount: 2,
+          linkedRuns: { runs: 4,terminalRuns: 3,nonterminalRuns: 1,events: 1,invocations: 1 } },
+        remaining: { workflowRows: true } });
+      expect(JSON.stringify(closure)).not.toContain(owner.tenant);
+      expect(JSON.stringify(closure)).not.toContain(owner.subject);
+      const noLinkedOwner = await inspectAccountClosure("sqlite","local",{ ...owner,subject: "unbound-owner" },{
+        AUTH_PROVIDER: "api-key",ACCOUNT_AUDIT_SQLITE_PATH: path,UPLOAD_LOCAL_ROOT: uploadRoot,
+        WORKFLOW_POSTGRES_URL: workflow.url,
+      },fetch,{ workflowPostgres: true });
+      expect(noLinkedOwner).toMatchObject({ status: "unfenced_zero",remaining: { workflowRows: false },
+        workflow: { linkedRuns: { runs: 0 },otherSessionRoots: 2 } });
+      const closureCommand = spawnSync(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/inspect-account-closure.ts",
+        "--metadata","sqlite","--workflow-postgres","--read-only"],{
+        cwd: process.cwd(),encoding: "utf8",env: { ...process.env,ACCOUNT_AUDIT_TENANT: owner.tenant,
+          ACCOUNT_AUDIT_SUBJECT: owner.subject,ACCOUNT_AUDIT_SQLITE_PATH: path,AUTH_PROVIDER: "api-key",
+          UPLOAD_STORAGE_PROVIDER: "local",UPLOAD_LOCAL_ROOT: uploadRoot,WORKFLOW_POSTGRES_URL: workflow.url,
+        } });
+      expect(closureCommand.status,closureCommand.stderr).toBe(0);
+      expect(JSON.parse(closureCommand.stdout).workflow.linkedRuns.runs).toBe(4);
+      expect(closureCommand.stdout).not.toContain(owner.tenant);
+      expect(closureCommand.stdout).not.toContain(owner.subject);
+      const incompleteCommand = spawnSync(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/inspect-account-closure.ts",
+        "--metadata","sqlite","--workflow-postgres","--read-only"],{
+        cwd: process.cwd(),encoding: "utf8",env: { ...process.env,ACCOUNT_AUDIT_TENANT: owner.tenant,
+          ACCOUNT_AUDIT_SUBJECT: owner.subject,ACCOUNT_AUDIT_SQLITE_PATH: path,AUTH_PROVIDER: "api-key",
+          UPLOAD_STORAGE_PROVIDER: "local",UPLOAD_LOCAL_ROOT: uploadRoot,WORKFLOW_POSTGRES_URL: "",
+        } });
+      expect(incompleteCommand.status).toBe(1);
+      expect(incompleteCommand.stdout).toBe("");
+      expect(incompleteCommand.stderr).toContain("Account closure inspection failed.");
+      expect(incompleteCommand.stderr).not.toContain(owner.tenant);
+      expect(incompleteCommand.stderr).not.toContain(owner.subject);
     } finally { await pg.end(); }
   } finally { await workflow.stop();rmSync(dir,{ recursive: true,force: true }); }
 },30_000);
