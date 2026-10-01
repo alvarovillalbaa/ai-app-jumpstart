@@ -14,6 +14,19 @@ export default defineAgent({
       throw Object.assign(new Error("Fixture model rate limit"), { statusCode: 429 });
     if (message.includes("provider-503-fixture"))
       throw Object.assign(new Error("Fixture model unavailable"), { statusCode: 503 });
+    if (message.includes("approval-fixture-approve") || message.includes("approval-fixture-cancel")) {
+      if (toolResults.length) {
+        const result = JSON.stringify(toolResults.at(-1)?.output);
+        return result.includes('"performed":true')
+          ? "The side effect ran after approval."
+          : "The side effect did not run.";
+      }
+      const approvedCase = message.includes("approval-fixture-approve");
+      return { toolCalls: [{ name: "confirm_side_effect", input: {
+        title: approvedCase ? "Approved release" : "Cancelled release",
+        content: approvedCase ? "Publish this exact draft." : "Keep this draft private.",
+      } }] };
+    }
     if (message.includes("invalid-tool-input-fixture")) {
       if (toolResults.length) return "The tool rejected the invalid argument; no result is available.";
       return { toolCalls: [{ name: "calculate", input: { operation: "multiply", left: "seventeen", right: 23 } }] };
