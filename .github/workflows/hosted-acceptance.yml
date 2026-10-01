@@ -29,6 +29,7 @@ jobs:
         run: npm run smoke:hosted -- --contract --browser
         env:
           APP_API_URL: ${{ vars.APP_API_URL }}
+          APP_SMOKE_TARGET: ${{ vars.APP_SMOKE_TARGET }}
           APP_API_TOKEN: ${{ secrets.APP_API_TOKEN }}
           APP_API_OTHER_TOKEN: ${{ secrets.APP_API_OTHER_TOKEN }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}

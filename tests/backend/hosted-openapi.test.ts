@@ -30,7 +30,7 @@ it("rejects a different deployed contract before a hosted data write", async () 
     if (url.pathname !== "/openapi.json") throw new Error("Unexpected request after contract mismatch");
     return Response.json({ openapi: "3.1.0",paths: {} });
   }));
-  await expect(runHostedSmoke({ url: "https://app.example",token: "primary",otherToken: "other",contract: true }))
+  await expect(runHostedSmoke({ url: "https://app.example",token: "primary",otherToken: "other",target: "staging",contract: true }))
     .rejects.toThrow("Deployed OpenAPI document differs from this checkout");
   expect(requests).toEqual(["/openapi.json"]);
 });
