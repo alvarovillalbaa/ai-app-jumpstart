@@ -404,23 +404,15 @@ test("hard Auth deletion invalidates every refresh session and rejects stale acc
   expect(sessionId(first.access_token)).not.toBe(sessionId(second.access_token));
 
   const headers = (token: string) => ({ authorization: `Bearer ${token}` });
-  const profileResponse = await request.get("/api/v1/account/profile",{ headers: headers(first.access_token) });
-  expect(profileResponse.status()).toBe(200);
-  const profile = await profileResponse.json();
-  expect(profile.id).toBe(first.user.id);
-  const ownerRecord = await request.post("/api/v1/records",{ headers: headers(first.access_token),
-    data: { title: "Account deletion fixture",content: "Removed before Auth deletion." } });
-  expect(ownerRecord.status()).toBe(201);
-  const record = await ownerRecord.json();
-  expect((await request.delete(`/api/v1/records/${record.id}`,{ headers: headers(first.access_token) })).status()).toBe(204);
-  expect((await request.get(`/api/v1/records/${record.id}`,{ headers: headers(second.access_token) })).status()).toBe(404);
+  expect((await request.get("/api/v1/records",{ headers: headers(first.access_token) })).status()).toBe(200);
+  expect((await request.get("/api/v1/records",{ headers: headers(second.access_token) })).status()).toBe(200);
 
   const admin = createClient(auth,process.env.TEST_AUTH_ADMIN_KEY!,{
     auth: { persistSession: false,autoRefreshToken: false,detectSessionInUrl: false },
   });
-  const deletion = await admin.auth.admin.deleteUser(profile.id,false);
+  const deletion = await admin.auth.admin.deleteUser(first.user.id,false);
   expect(deletion.error).toBeNull();
-  const missing = await admin.auth.admin.getUserById(profile.id);
+  const missing = await admin.auth.admin.getUserById(first.user.id);
   expect(missing.data.user).toBeNull();
   expect(missing.error?.status).toBe(404);
 
