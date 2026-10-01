@@ -1,5 +1,7 @@
 "use client";
 
+// Modified for ai-app-jumpstart; original AI Elements component Copyright 2023 Vercel, Inc. (Apache-2.0).
+
 import { useControllableState } from "@radix-ui/react-use-controllable-state";
 import { Button } from "@/components/ui/button";
 import {
@@ -56,7 +58,8 @@ export const useVoiceSelector = () => {
   return context;
 };
 
-export type VoiceSelectorProps = ComponentProps<typeof Dialog> & {
+export type VoiceSelectorProps = Omit<ComponentProps<typeof Dialog>, "onOpenChange"> & {
+  onOpenChange?: (open: boolean) => void;
   value?: string;
   defaultValue?: string;
   onValueChange?: (value: string | undefined) => void;

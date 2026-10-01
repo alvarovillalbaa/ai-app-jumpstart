@@ -1,0 +1,20 @@
+# Add last after compose.yaml and compose.streaming.yaml for a public host.
+# APP_DOMAIN must be one public DNS name pointing to this host; keep 80/443 open.
+services:
+  app:
+    environment:
+      APP_ORIGIN: https://${APP_DOMAIN:?Set APP_DOMAIN to one public DNS name}
+  ingress:
+    ports: !override
+      - "80:80"
+      - "443:443"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?Set APP_DOMAIN to one public DNS name}
+    volumes: !override
+      - ./deploy/public-app.Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/split-app-routes.Caddyfile:/etc/caddy/split-app-routes.Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+volumes:
+  caddy-data:
+  caddy-config:

@@ -1,5 +1,7 @@
 "use client";
 
+// Modified for ai-app-jumpstart; original AI Elements component Copyright 2023 Vercel, Inc. (Apache-2.0).
+
 import { Button } from "@/components/ui/button";
 import {
   HoverCard,
@@ -336,7 +338,7 @@ export const ContextReasoningUsage = ({
   ...props
 }: ContextReasoningUsageProps) => {
   const { usage, modelId } = useContextValue();
-  const reasoningTokens = usage?.reasoningTokens ?? 0;
+  const reasoningTokens = usage?.outputTokenDetails.reasoningTokens ?? 0;
 
   if (children) {
     return children;
@@ -376,7 +378,7 @@ export const ContextCacheUsage = ({
   ...props
 }: ContextCacheUsageProps) => {
   const { usage, modelId } = useContextValue();
-  const cacheTokens = usage?.cachedInputTokens ?? 0;
+  const cacheTokens = usage?.inputTokenDetails.cacheReadTokens ?? 0;
 
   if (children) {
     return children;

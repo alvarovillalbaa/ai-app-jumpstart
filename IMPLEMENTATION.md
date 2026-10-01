@@ -1,14 +1,14 @@
 # AI app jumpstart — implementation specification
 
-Prepared: 14 September 2026. Audience: the template maintainer and a coding agent implementing it.
+Prepared: 14 September 2026. Audience: the template maintainer and a coding agent implementing it. This is the original target specification; [current delivery status](docs/DELIVERY.md) tracks verified implementation and remaining work.
 
 ## Status and scope
 
-This is a domain-neutral application foundation, not a vertical product and not a completed production application. The accompanying `bootstrap-ai-app.sh` contains all scaffolding commands and writes initial integration files. Its shell syntax was checked. Dependency installation, TypeScript compilation, the application build and runtime tests were **not** executed in the preparation environment. Upstream documentation was reviewed; `latest` packages still require a real compatibility run. The script pins the actual installed direct dependency versions and records them after installation.
+This is a domain-neutral application foundation, not a vertical product and not a completed production application. The accompanying `bootstrap-ai-app.sh` describes the original scaffolding process and writes initial integration files. At the time this specification was prepared, its shell syntax was checked but dependency installation, TypeScript compilation, the application build and runtime tests had **not** been executed. Those statements are historical; see [delivery status](docs/DELIVERY.md) for current local verification. Do not rerun the bootstrap over this implemented repository.
 
 The bootstrap installs Next.js, shadcn/ui, AI Elements, Eve, Supabase clients/CLI, Cuelume, theme/toast/form helpers, and test/format/deploy tooling. It creates a minimal setup page, a muted-by-default sound provider, a read-only arithmetic tool, Eve/Next configuration, a deliberately closed Eve channel, test configuration, environment examples, an empty CLI-created migration, and an installed-version manifest.
 
-It does **not** implement authentication, session authorization, persistence, MCP integrations, account settings, uploads, budgets or deployment. Those are explicit implementation tasks below. The empty migration is not a finished schema. Basic smoke tests do not certify those missing capabilities.
+The original bootstrap alone did **not** implement authentication, session authorization, persistence, MCP integrations, account settings, uploads, budgets or deployment. Those remain implementation requirements below; some are now implemented in this repository and others remain open. The bootstrap's empty migration is not a finished schema. Basic smoke tests do not certify missing capabilities.
 
 ## 1. Architectural decisions
 
@@ -82,6 +82,8 @@ npm install --save-dev --save-exact \
 Do not resolve dependency conflicts with `--force` or `--legacy-peer-deps`. Inspect the installed Eve package's peers and choose a compatible version set. Commit the lockfile and the installed-version manifest after the complete integration passes. Template consumers run `npm ci`; they do not rerun the `latest` bootstrap. [S1–S4]
 
 ### Local database and environment
+
+This section records the original bootstrap workflow. The implemented app now uses the root `migrations/` directory and `npm run db:migrate` for SQL, with current runtime variables in `.env.example`; follow [databases](docs/databases.md) and [hosting](docs/hosting.md) for setup. Do not run the bootstrap-era `supabase migration up` commands against this repository.
 
 ```bash
 docker info
@@ -423,37 +425,26 @@ Choose one deployment owner. A custom deployment workflow and Vercel's automatic
 
 Use separate staging and production Supabase projects and Vercel projects/environments. For the first deployment, separate projects are the clearest safety boundary (opinion): Vercel documents that a new project's first deployment is production even when `--prod` is omitted. Never assume omission means safe preview. [S18]
 
-After creating the intended **staging** Supabase project:
+The bootstrap-era Supabase CLI and `NEXT_PUBLIC_*` deployment examples are superseded by the implemented application. Its SQL source is `migrations/`, applied by the repository's transaction/ledger runner rather than `supabase db push`. For the intended **staging** project's private migration connection:
 
 ```bash
-npx supabase login
-npx supabase link --project-ref YOUR_STAGING_PROJECT_REF
-npx supabase db push --dry-run
-npx supabase db push
+npm run db:migrate -- --dry-run
+# Review the pending SQL and a restorable backup, then:
+npm run db:migrate
 ```
 
-Dry-run lists pending migrations; it is not proof they will succeed. Rebuild a disposable database from zero and test an upgrade from the previous release. Use expand/contract changes. Deploying an older app does not automatically undo a database migration. Maintain backup/restore and restore-test instructions. [S9, S19]
+Set `DATABASE_URL` to that staging connection in the release job, not in a browser bundle. The dry run is read-only and lists pending files; it does not prove the SQL will succeed. Rebuild a disposable database from zero and test an upgrade from the previous release. Use expand/contract changes. Deploying an older app does not undo database migrations. Maintain backup/restore and restore-test instructions. [S9, S19]
 
-Link an explicitly separate **staging** Vercel project:
+Configure an explicitly separate **staging** Vercel project. The current runtime reads `APP_ORIGIN`, `DATA_PROVIDER=supabase`, `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `AUTH_PROVIDER=supabase` and `SUPABASE_PUBLISHABLE_KEY` from the server environment. Set `SUPABASE_AUTH_URL` only if Auth uses a different origin. Enable account chat only after configuring the reviewed `AI_BUDGET_POLICY_JSON`, shared `AI_CREATION_SIGNING_JSON` and `AI_CHAT_ENABLED=true`; see `.env.example` and [hosting](docs/hosting.md). Browser-safe Auth settings are passed at request time; the old `NEXT_PUBLIC_APP_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `AI_MODEL` and `EVE_INTERNAL_SIGNING_SECRET` names do not configure this implementation. Vercel AI Gateway can use project OIDC; direct/local paths may require `AI_GATEWAY_API_KEY`.
+
+Use Eve's integrated project workflow from the repository root, selecting the staging project and team explicitly:
 
 ```bash
-npx vercel login
-npx vercel link
+npx eve link --non-interactive --project YOUR_STAGING_PROJECT
+npx eve deploy --non-interactive --yes --project YOUR_STAGING_PROJECT
 ```
 
-For that staging project's production environment, enter its staging values interactively:
-
-```bash
-for variable in NEXT_PUBLIC_APP_URL NEXT_PUBLIC_SUPABASE_URL \
-  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY SUPABASE_SECRET_KEY \
-  AI_GATEWAY_API_KEY AI_MODEL EVE_INTERNAL_SIGNING_SECRET
- do
-  npx vercel env add "$variable" production
- done
-npx vercel deploy --prod
-```
-
-This is a production-target deployment of the staging project, not authorization to deploy the real production project. Use Node 24.x and the generated integrated Eve/Next setup. Configure Supabase site and callback URLs for the real staging origin. Repeat with explicitly selected production project references only after acceptance tests pass. Confirm both the web UI and authenticated Eve service, not just a green web build. [S5, S18–S19]
+These are production-target commands for the selected staging project, not authorization to deploy the real production project. Use Node 24.x and configure Supabase site and callback URLs for the real staging origin. Repeat with explicitly selected production project references only after acceptance tests pass. Confirm both the web UI and authenticated Eve service, not just a green web build. [S5, S18–S19]
 
 ### 4.15 Template distribution and upgradeability
 

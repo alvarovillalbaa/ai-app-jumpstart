@@ -1,0 +1,13 @@
+# Public self-hosted ingress. Caddy provisions HTTPS for APP_DOMAIN and
+# redirects port 80 to 443; keep /data persistent for certificate renewal.
+{
+	servers {
+		strict_sni_host on
+	}
+}
+
+import /etc/caddy/split-app-routes.Caddyfile
+{$APP_DOMAIN} {
+	header >Strict-Transport-Security "max-age=31536000"
+	import jumpstart_routes
+}

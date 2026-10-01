@@ -1,5 +1,7 @@
 "use client";
 
+// Modified for ai-app-jumpstart; original AI Elements component Copyright 2023 Vercel, Inc. (Apache-2.0).
+
 import { useControllableState } from "@radix-ui/react-use-controllable-state";
 import { Button } from "@/components/ui/button";
 import {
@@ -117,6 +119,8 @@ export const useAudioDevices = () => {
   }, [loading]);
 
   useEffect(() => {
+    // This initializes the browser's external device enumeration state.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadDevicesWithoutPermission();
   }, [loadDevicesWithoutPermission]);
 

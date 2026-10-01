@@ -1,0 +1,3708 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "AI app jumpstart REST API",
+    "version": "1.0.0",
+    "description": "Owner-scoped application API. Feature-gated operations need their configured services. CLI and MCP use the same application services; see docs/data-access.md for retention, provider and authorization details."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "The application origin serving this document"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "records"
+    },
+    {
+      "name": "account"
+    },
+    {
+      "name": "conversations"
+    },
+    {
+      "name": "artifacts"
+    },
+    {
+      "name": "uploads"
+    },
+    {
+      "name": "usage"
+    }
+  ],
+  "paths": {
+    "/api/v1/records": {
+      "get": {
+        "tags": [
+          "records"
+        ],
+        "operationId": "listRecords",
+        "summary": "List owner records",
+        "description": "List owner records. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "registered user or API key with the stated records scope: records:read",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 25
+            },
+            "description": "Page size"
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Last record UUID from the prior page"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List owner records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "records"
+        ],
+        "operationId": "createRecord",
+        "summary": "Create an owner record",
+        "description": "Create an owner record. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "registered user or API key with the stated records scope: records:write",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Optional owner-scoped creation key; a matching replay returns 200"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matching keyed replay",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Record"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Create an owner record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Record"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/records/{id}": {
+      "get": {
+        "tags": [
+          "records"
+        ],
+        "operationId": "getRecord",
+        "summary": "Read an owner record",
+        "description": "Read an owner record. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "registered user or API key with the stated records scope: records:read",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read an owner record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Record"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "records"
+        ],
+        "operationId": "updateRecord",
+        "summary": "Replace a record at its current revision",
+        "description": "Replace a record at its current revision. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "registered user or API key with the stated records scope: records:write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Replace a record at its current revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Record"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordUpdate"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "records"
+        ],
+        "operationId": "deleteRecord",
+        "summary": "Delete a record at its current revision",
+        "description": "Delete a record at its current revision. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "registered user or API key with the stated records scope: records:write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "revision",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Current record revision"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Delete a record at its current revision"
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/records/creation/{key}": {
+      "get": {
+        "tags": [
+          "records"
+        ],
+        "operationId": "getRecordCreation",
+        "summary": "Recover keyed creation status",
+        "description": "Recover keyed creation status. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "registered user or API key with the stated records scope: records:read",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recover keyed creation status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordCreationStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/account/profile": {
+      "get": {
+        "tags": [
+          "account"
+        ],
+        "operationId": "getAccountProfile",
+        "summary": "Read selected account profile fields",
+        "description": "Returns selected Supabase Auth profile fields, excluding credentials, sessions and MFA factors. See docs/data-access.md.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "current registered-user access token; record API keys are denied",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Read selected account profile fields",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountProfile"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/account/preferences": {
+      "get": {
+        "tags": [
+          "account"
+        ],
+        "operationId": "getAccountPreferences",
+        "summary": "Read account preferences",
+        "description": "Read account preferences. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "current registered-user access token; record API keys are denied",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Read account preferences",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountPreferences"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "account"
+        ],
+        "operationId": "updateAccountPreferences",
+        "summary": "Update account preferences by revision",
+        "description": "Update account preferences by revision. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "current registered-user access token; record API keys are denied",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Update account preferences by revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountPreferences"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountPreferencesPatch"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/account/request-limit": {
+      "get": {
+        "tags": [
+          "account"
+        ],
+        "operationId": "getAccountRequestLimit",
+        "summary": "Read the current admitted-request window",
+        "description": "Returns the latest stored owner window, not request history. The read itself consumes admission when the limiter is enabled.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "current registered-user access token; record API keys are denied",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Read the current admitted-request window",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestLimitSnapshot"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/conversations": {
+      "get": {
+        "tags": [
+          "conversations"
+        ],
+        "operationId": "listConversations",
+        "summary": "List owner conversation metadata",
+        "description": "List owner conversation metadata. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "current registered-user access token; record API keys are denied",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 20
+            },
+            "description": "Page size"
+          },
+          {
+            "name": "archived",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            },
+            "description": "Include archived instead of active conversations"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor from the previous page"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List owner conversation metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "conversations"
+        ],
+        "operationId": "createConversation",
+        "summary": "Start an owned agent conversation",
+        "description": "A 202 result is still starting; recover by operation ID without redispatching. A previously bound operation returns 200. See docs/account-chat.md.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "current registered-user access token; record API keys are denied; enabled account chat required",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Existing active operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationActive"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Start an owned agent conversation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationStarting"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationCreate"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/conversations/{operationId}": {
+      "get": {
+        "tags": [
+          "conversations"
+        ],
+        "operationId": "getConversationStart",
+        "summary": "Read conversation creation status",
+        "description": "Read conversation creation status. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "current registered-user access token; record API keys are denied; enabled account chat required",
+        "parameters": [
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read conversation creation status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationCreation"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "conversations"
+        ],
+        "operationId": "updateConversation",
+        "summary": "Edit conversation metadata by revision",
+        "description": "Edit conversation metadata by revision. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "current registered-user access token; record API keys are denied",
+        "parameters": [
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Edit conversation metadata by revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationSummary"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationPatch"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/conversations/{operationId}/metadata": {
+      "get": {
+        "tags": [
+          "conversations"
+        ],
+        "operationId": "getConversationMetadata",
+        "summary": "Read conversation metadata",
+        "description": "Read conversation metadata. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "current registered-user access token; record API keys are denied",
+        "parameters": [
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read conversation metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationSummary"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/conversations/{operationId}/runs": {
+      "get": {
+        "tags": [
+          "conversations"
+        ],
+        "operationId": "listConversationRuns",
+        "summary": "List saved run summaries",
+        "description": "List saved run summaries. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "current registered-user access token; record API keys are denied",
+        "parameters": [
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 20
+            },
+            "description": "Page size"
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Last run index"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List saved run summaries",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/conversations/{operationId}/events": {
+      "get": {
+        "tags": [
+          "conversations"
+        ],
+        "operationId": "listConversationEvents",
+        "summary": "List saved stream projections",
+        "description": "List saved stream projections. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "current registered-user access token; record API keys are denied",
+        "parameters": [
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 20
+            },
+            "description": "Page size"
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Last ingestion index"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List saved stream projections",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectionPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/conversations/{operationId}/source-events": {
+      "get": {
+        "tags": [
+          "conversations"
+        ],
+        "operationId": "listConversationSourceEvents",
+        "summary": "Read retained Eve source events",
+        "description": "Absolute source order includes interrupted attempts and is not canonical model history. See docs/conversation-projections.md.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "current registered-user access token; record API keys are denied; enabled account chat required",
+        "parameters": [
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "startIndex",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740741,
+              "default": 0
+            },
+            "description": "Absolute source index"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 20
+            },
+            "description": "Page size"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read retained Eve source events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceEventPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/conversations/{operationId}/reconcile": {
+      "post": {
+        "tags": [
+          "conversations"
+        ],
+        "operationId": "reconcileConversation",
+        "summary": "Reconcile saved projections from Eve",
+        "description": "Reconcile saved projections from Eve. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "current registered-user access token; record API keys are denied; enabled account chat required",
+        "parameters": [
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Reconcile saved projections from Eve",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconcileResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "resume": {
+                    "type": "boolean"
+                  },
+                  "startIndex": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740741
+                  }
+                },
+                "not": {
+                  "required": [
+                    "resume",
+                    "startIndex"
+                  ],
+                  "properties": {
+                    "resume": {
+                      "const": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/conversations/{operationId}/cancel-start": {
+      "post": {
+        "tags": [
+          "conversations"
+        ],
+        "operationId": "cancelConversationStart",
+        "summary": "Cancel an unbound conversation start",
+        "description": "Only an unbound start can settle at verified zero. Active or ambiguous work is not refunded. See docs/account-chat.md.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "current registered-user access token; record API keys are denied; enabled account chat required",
+        "parameters": [
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cancel an unbound conversation start",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CancelledStart"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/artifacts": {
+      "get": {
+        "tags": [
+          "artifacts"
+        ],
+        "operationId": "listArtifacts",
+        "summary": "List private saved artifacts",
+        "description": "List private saved artifacts. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "current registered-user access token; record API keys are denied",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 20
+            },
+            "description": "Page size"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor from the previous page"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List private saved artifacts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/artifacts/{id}": {
+      "get": {
+        "tags": [
+          "artifacts"
+        ],
+        "operationId": "getArtifact",
+        "summary": "Read a private saved artifact",
+        "description": "Read a private saved artifact. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "current registered-user access token; record API keys are denied",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read a private saved artifact",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Artifact"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "artifacts"
+        ],
+        "operationId": "updateArtifact",
+        "summary": "Edit a private artifact by revision",
+        "description": "Edit a private artifact by revision. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "current registered-user access token; record API keys are denied",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Edit a private artifact by revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Artifact"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArtifactPatch"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "artifacts"
+        ],
+        "operationId": "deleteArtifact",
+        "summary": "Delete an artifact and its versions",
+        "description": "Delete an artifact and its versions. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "current registered-user access token; record API keys are denied",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Delete an artifact and its versions"
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/artifacts/{id}/versions": {
+      "get": {
+        "tags": [
+          "artifacts"
+        ],
+        "operationId": "listArtifactVersions",
+        "summary": "List immutable artifact versions",
+        "description": "List immutable artifact versions. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "current registered-user access token; record API keys are denied",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 20
+            },
+            "description": "Page size"
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Revision cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List immutable artifact versions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactVersionPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/artifacts/{id}/download": {
+      "get": {
+        "tags": [
+          "artifacts"
+        ],
+        "operationId": "downloadArtifact",
+        "summary": "Download artifact text",
+        "description": "Download artifact text. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "current registered-user access token; record API keys are denied",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Download artifact text",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/uploads": {
+      "get": {
+        "tags": [
+          "uploads"
+        ],
+        "operationId": "listUploads",
+        "summary": "List private upload metadata and usage",
+        "description": "List private upload metadata and usage. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "registered user or API key with the stated uploads scope: uploads:read",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "List private upload metadata and usage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "operationId": "createUpload",
+        "summary": "Create a quarantined private upload",
+        "description": "Create a quarantined private upload. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "registered user or API key with the stated uploads scope: uploads:write",
+        "parameters": [
+          {
+            "name": "x-upload-name",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 512
+            },
+            "description": "Percent-encoded filename"
+          },
+          {
+            "name": "x-upload-media-type",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Declared media type"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Create a quarantined private upload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadEntry"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "description": "Raw nonempty bytes, at most 4 MiB",
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/uploads/{id}": {
+      "get": {
+        "tags": [
+          "uploads"
+        ],
+        "operationId": "getUpload",
+        "summary": "Read private upload metadata",
+        "description": "Read private upload metadata. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "registered user or API key with the stated uploads scope: uploads:read",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read private upload metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadEntry"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "uploads"
+        ],
+        "operationId": "deleteUpload",
+        "summary": "Delete a private upload and object",
+        "description": "Delete a private upload and object. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "registered user or API key with the stated uploads scope: uploads:write",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Delete a private upload and object"
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/uploads/{id}/review": {
+      "get": {
+        "tags": [
+          "uploads"
+        ],
+        "operationId": "getUploadReview",
+        "summary": "Read the upload review receipt",
+        "description": "Read the upload review receipt. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "registered user or API key with the stated uploads scope: uploads:read",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read the upload review receipt",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadReview"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "uploads"
+        ],
+        "operationId": "updateUploadReview",
+        "summary": "Approve or revoke an upload review",
+        "description": "Approve or revoke an upload review. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "registered user or API key with the stated uploads scope: uploads:write; approval also needs uploads:download",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Approve or revoke an upload review",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadReview"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadReviewDecision"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/uploads/{id}/scan": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "operationId": "scanUpload",
+        "summary": "Run a fresh upload scan",
+        "description": "Run a fresh upload scan. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "registered user or API key with the stated uploads scope: uploads:download",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run a fresh upload scan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadEntry"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/uploads/{id}/text": {
+      "get": {
+        "tags": [
+          "uploads"
+        ],
+        "operationId": "extractUploadText",
+        "summary": "Read approved bounded UTF-8 text",
+        "description": "Read approved bounded UTF-8 text. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "registered user or API key with the stated uploads scope: uploads:download",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read approved bounded UTF-8 text",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtractedUploadText"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/uploads/{id}/download": {
+      "get": {
+        "tags": [
+          "uploads"
+        ],
+        "operationId": "downloadUpload",
+        "summary": "Download fresh-scanned private bytes",
+        "description": "Download fresh-scanned private bytes. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "registered user or API key with the stated uploads scope: uploads:download",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "grant",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Optional 60-second owner-bound download grant"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Download fresh-scanned private bytes",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/uploads/{id}/download-link": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "operationId": "createUploadDownloadLink",
+        "summary": "Create a short-lived owner download link",
+        "description": "Create a short-lived owner download link. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "registered user or API key with the stated uploads scope: uploads:download",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Create a short-lived owner download link",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadDownloadLink"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/usage": {
+      "get": {
+        "tags": [
+          "usage"
+        ],
+        "operationId": "getUsage",
+        "summary": "Read the current owner budget view",
+        "description": "Read the current owner budget view. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "current registered-user access token; record API keys are denied",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Read the current owner budget view",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageView"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/usage/reservations": {
+      "get": {
+        "tags": [
+          "usage"
+        ],
+        "operationId": "listUsageReservations",
+        "summary": "List owner budget reservations",
+        "description": "List owner budget reservations. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "current registered-user access token; record API keys are denied",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor from the previous page"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List owner budget reservations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/usage/corrections": {
+      "get": {
+        "tags": [
+          "usage"
+        ],
+        "operationId": "listUsageCorrections",
+        "summary": "List owner-visible budget corrections",
+        "description": "List owner-visible budget corrections. See docs/data-access.md for ownership and feature policy.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-jumpstart-credential": "current registered-user access token; record API keys are denied",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "description": "Page size"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Opaque cursor from the previous page"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List owner-visible budget corrections",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CorrectionPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/ApiError"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Current registered-user token or a scoped application API key where the operation permits it"
+      }
+    },
+    "responses": {
+      "ApiError": {
+        "description": "Application error; transport/protocol failures may differ",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "ApiError": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "message",
+              "requestId"
+            ],
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "requestId": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          }
+        }
+      },
+      "RecordInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "title",
+          "content"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 32000
+          }
+        }
+      },
+      "RecordUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "title",
+          "content",
+          "revision"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 32000
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "Record": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "content",
+          "revision",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 32000
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "RecordPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Record"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      },
+      "RecordCreationStatus": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status",
+              "record"
+            ],
+            "properties": {
+              "status": {
+                "const": "created"
+              },
+              "record": {
+                "$ref": "#/components/schemas/Record"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status",
+              "id"
+            ],
+            "properties": {
+              "status": {
+                "const": "deleted"
+              },
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          }
+        ]
+      },
+      "AccountPreferences": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "revision",
+          "updatedAt",
+          "theme",
+          "soundEnabled",
+          "soundVolume"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "const": 1
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "updatedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "theme": {
+            "enum": [
+              "system",
+              "light",
+              "dark"
+            ]
+          },
+          "soundEnabled": {
+            "type": "boolean"
+          },
+          "soundVolume": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      },
+      "AccountPreferencesPatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "revision"
+        ],
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "theme": {
+            "enum": [
+              "system",
+              "light",
+              "dark"
+            ]
+          },
+          "soundEnabled": {
+            "type": "boolean"
+          },
+          "soundVolume": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "theme"
+            ]
+          },
+          {
+            "required": [
+              "soundEnabled"
+            ]
+          },
+          {
+            "required": [
+              "soundVolume"
+            ]
+          }
+        ]
+      },
+      "AccountProfile": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Selected Supabase Auth fields; provider metadata may contain private user-supplied values.",
+        "required": [
+          "id",
+          "email",
+          "phone",
+          "createdAt",
+          "updatedAt",
+          "lastSignInAt",
+          "emailConfirmedAt",
+          "phoneConfirmedAt",
+          "providers",
+          "userMetadata"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "updatedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastSignInAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "emailConfirmedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phoneConfirmedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "providers": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "string"
+            }
+          },
+          "userMetadata": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "RequestLimitSnapshot": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "snapshot"
+        ],
+        "properties": {
+          "snapshot": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "windowStartAt",
+                  "admitted"
+                ],
+                "properties": {
+                  "windowStartAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "admitted": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10000
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "ConversationCreate": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "operationId",
+              "message"
+            ],
+            "properties": {
+              "operationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32000
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "operationId",
+              "message",
+              "mode"
+            ],
+            "properties": {
+              "operationId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32000
+              },
+              "mode": {
+                "const": "structured-record"
+              }
+            }
+          }
+        ]
+      },
+      "ConversationStarting": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "conversationId",
+          "operationId",
+          "status",
+          "sessionId"
+        ],
+        "properties": {
+          "conversationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "operationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "const": "starting"
+          },
+          "sessionId": {
+            "type": "null"
+          }
+        }
+      },
+      "ConversationActive": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "conversationId",
+          "operationId",
+          "status",
+          "sessionId"
+        ],
+        "properties": {
+          "conversationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "operationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "const": "active"
+          },
+          "sessionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          }
+        }
+      },
+      "ConversationCreation": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ConversationStarting"
+          },
+          {
+            "$ref": "#/components/schemas/ConversationActive"
+          }
+        ]
+      },
+      "CancelledStart": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "conversationId",
+          "operationId",
+          "status"
+        ],
+        "properties": {
+          "conversationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "operationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "const": "cancelled"
+          }
+        }
+      },
+      "ConversationPatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "revision"
+        ],
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "archived": {
+            "type": "boolean"
+          }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "title"
+            ]
+          },
+          {
+            "required": [
+              "archived"
+            ]
+          }
+        ]
+      },
+      "ConversationSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "operationId",
+          "title",
+          "createdAt",
+          "archived",
+          "revision",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "operationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "createdAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "Unix epoch milliseconds"
+          },
+          "archived": {
+            "type": "boolean"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "status": {
+            "enum": [
+              "starting",
+              "active",
+              "revoked"
+            ]
+          }
+        }
+      },
+      "ConversationPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConversationSummary"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]{1,16}\\.[a-f0-9-]{36}$"
+          }
+        }
+      },
+      "RunView": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "turnId",
+          "firstIndex",
+          "state",
+          "startedAt",
+          "lastBoundaryAt",
+          "lastSourceIndex",
+          "code",
+          "boundarySourceIndex",
+          "unindexedFacts",
+          "models",
+          "boundaryCount",
+          "unindexedBoundaries",
+          "coverage"
+        ],
+        "properties": {
+          "turnId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "firstIndex": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "state": {
+            "enum": [
+              "unverified",
+              "running",
+              "completed",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "startedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "lastBoundaryAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "lastSourceIndex": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 100
+          },
+          "boundarySourceIndex": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "unindexedFacts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          "boundaryCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unindexedBoundaries": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "coverage": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "checkpoint",
+              "indexComplete"
+            ],
+            "properties": {
+              "checkpoint": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "indexComplete": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      },
+      "RunPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "source",
+          "items",
+          "nextCursor"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "const": 1
+          },
+          "source": {
+            "const": "eve-run-boundaries"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunView"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          }
+        }
+      },
+      "ProjectionPayload": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "modelId"
+            ],
+            "properties": {
+              "kind": {
+                "const": "model"
+              },
+              "modelId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "state"
+            ],
+            "properties": {
+              "kind": {
+                "const": "run"
+              },
+              "state": {
+                "enum": [
+                  "running",
+                  "completed",
+                  "failed",
+                  "cancelled"
+                ]
+              },
+              "code": {
+                "type": "string",
+                "maxLength": 100
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "role",
+              "parts"
+            ],
+            "properties": {
+              "kind": {
+                "const": "message"
+              },
+              "role": {
+                "enum": [
+                  "user",
+                  "assistant"
+                ]
+              },
+              "parts": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "type",
+                        "text"
+                      ],
+                      "properties": {
+                        "type": {
+                          "const": "text"
+                        },
+                        "text": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "type",
+                        "mediaType"
+                      ],
+                      "properties": {
+                        "type": {
+                          "const": "file"
+                        },
+                        "filename": {
+                          "type": "string"
+                        },
+                        "mediaType": {
+                          "type": "string"
+                        },
+                        "size": {
+                          "type": "number",
+                          "minimum": 0
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "finishReason": {
+                "type": "string",
+                "maxLength": 100
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "phase",
+              "value"
+            ],
+            "properties": {
+              "kind": {
+                "const": "tool"
+              },
+              "phase": {
+                "enum": [
+                  "requested",
+                  "result"
+                ]
+              },
+              "value": {}
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "value"
+            ],
+            "properties": {
+              "kind": {
+                "const": "result"
+              },
+              "value": {}
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "action"
+            ],
+            "properties": {
+              "kind": {
+                "const": "context"
+              },
+              "action": {
+                "enum": [
+                  "cleared",
+                  "compacted"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "eventType",
+              "reason"
+            ],
+            "properties": {
+              "kind": {
+                "const": "omitted"
+              },
+              "eventType": {
+                "type": "string",
+                "maxLength": 100
+              },
+              "reason": {
+                "const": "size_limit"
+              }
+            }
+          }
+        ]
+      },
+      "ProjectionPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "source",
+          "items",
+          "nextCursor"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "const": 1
+          },
+          "source": {
+            "const": "eve-stream"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "schemaVersion",
+                "eventId",
+                "at",
+                "turnId",
+                "sequence",
+                "payload",
+                "ingestionIndex"
+              ],
+              "properties": {
+                "schemaVersion": {
+                  "const": 1
+                },
+                "eventId": {
+                  "type": "string",
+                  "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "turnId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "sequence": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "stepIndex": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "payload": {
+                  "$ref": "#/components/schemas/ProjectionPayload"
+                },
+                "ingestionIndex": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "sourceIndex": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              }
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          }
+        }
+      },
+      "SourceEventPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "source",
+          "items",
+          "scanned",
+          "nextIndex",
+          "complete"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "const": 1
+          },
+          "source": {
+            "const": "eve-durable-stream"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "schemaVersion",
+                "eventId",
+                "at",
+                "turnId",
+                "sequence",
+                "payload",
+                "sourceIndex"
+              ],
+              "properties": {
+                "schemaVersion": {
+                  "const": 1
+                },
+                "eventId": {
+                  "type": "string",
+                  "pattern": "^evt_[0-9A-HJKMNP-TV-Z]{26}$"
+                },
+                "at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "turnId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 512
+                },
+                "sequence": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "stepIndex": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "payload": {
+                  "$ref": "#/components/schemas/ProjectionPayload"
+                },
+                "sourceIndex": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              }
+            }
+          },
+          "scanned": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "nextIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "complete": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ReconcileResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "processed",
+          "inserted",
+          "duplicates",
+          "nextIndex",
+          "complete",
+          "checkpoint"
+        ],
+        "properties": {
+          "processed": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 250
+          },
+          "inserted": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 250
+          },
+          "duplicates": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 250
+          },
+          "nextIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "checkpoint": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        }
+      },
+      "ArtifactPatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Revision-checked artifact title/content replacement; see docs/approved-artifacts.md.",
+        "required": [
+          "revision",
+          "title",
+          "content"
+        ],
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32000
+          }
+        }
+      },
+      "Artifact": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "operationId",
+          "sourceSessionId",
+          "sourceCallId",
+          "title",
+          "content",
+          "mediaType",
+          "createdAt",
+          "revision",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "operationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sourceSessionId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "sourceCallId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32000
+          },
+          "mediaType": {
+            "const": "text/plain"
+          },
+          "createdAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "Unix epoch milliseconds"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "updatedAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "Unix epoch milliseconds"
+          }
+        }
+      },
+      "ArtifactPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Artifact"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]{1,16}\\.[a-f0-9-]{36}$"
+          }
+        }
+      },
+      "ArtifactVersionPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items",
+          "nextBefore"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Artifact"
+            }
+          },
+          "nextBefore": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 100
+          }
+        }
+      },
+      "UploadScan": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "sha256",
+              "checkedAt",
+              "policyVersion",
+              "status"
+            ],
+            "properties": {
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "checkedAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "description": "Unix epoch milliseconds"
+              },
+              "policyVersion": {
+                "const": 1
+              },
+              "status": {
+                "const": "clean"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "sha256",
+              "checkedAt",
+              "policyVersion",
+              "status",
+              "reason"
+            ],
+            "properties": {
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "checkedAt": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "description": "Unix epoch milliseconds"
+              },
+              "policyVersion": {
+                "const": 1
+              },
+              "status": {
+                "const": "rejected"
+              },
+              "reason": {
+                "enum": [
+                  "malware",
+                  "integrity"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "UploadEntry": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "mediaType",
+          "size",
+          "sha256",
+          "createdAt",
+          "state"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "mediaType": {
+            "enum": [
+              "text/plain",
+              "image/png",
+              "image/jpeg",
+              "application/pdf"
+            ]
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5242880
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "createdAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "Unix epoch milliseconds"
+          },
+          "state": {
+            "enum": [
+              "pending",
+              "quarantined",
+              "clean",
+              "rejected",
+              "deleting",
+              "deleted"
+            ]
+          },
+          "scan": {
+            "$ref": "#/components/schemas/UploadScan"
+          }
+        }
+      },
+      "UploadPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items",
+          "usage"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "maxItems": 1000,
+            "items": {
+              "$ref": "#/components/schemas/UploadEntry"
+            }
+          },
+          "usage": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "files",
+              "bytes"
+            ],
+            "properties": {
+              "files": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      },
+      "UploadReviewDecision": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sha256",
+          "revision",
+          "approved"
+        ],
+        "properties": {
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2147483646
+          },
+          "approved": {
+            "type": "boolean"
+          }
+        }
+      },
+      "UploadReview": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "sha256",
+          "revision",
+          "status",
+          "approvedAt",
+          "checkedAt",
+          "policyVersion"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2147483647
+          },
+          "status": {
+            "enum": [
+              "unreviewed",
+              "approved",
+              "revoked"
+            ]
+          },
+          "approvedAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "checkedAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "policyVersion": {
+            "const": 1
+          }
+        }
+      },
+      "ExtractedUploadText": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "sha256",
+          "reviewRevision",
+          "mediaType",
+          "text",
+          "trust"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "reviewRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2147483647
+          },
+          "mediaType": {
+            "const": "text/plain"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32768
+          },
+          "trust": {
+            "const": "untrusted-user-content"
+          }
+        }
+      },
+      "UploadDownloadLink": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "url",
+          "expiresAt"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "maxLength": 300,
+            "description": "Owner-bound relative application URL; redemption still requires current credentials and a fresh scan."
+          },
+          "expiresAt": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "Unix epoch milliseconds"
+          }
+        }
+      },
+      "UsageView": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "day",
+          "reservedMicros",
+          "chargedMicros",
+          "active",
+          "recent",
+          "unknownCosts",
+          "dailyLimitMicros"
+        ],
+        "properties": {
+          "day": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reservedMicros": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "chargedMicros": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "active": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "recent": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unknownCosts": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "dailyLimitMicros": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 1000000000000
+          }
+        }
+      },
+      "LedgerEntry": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "operationId",
+          "createdAt",
+          "day",
+          "policyId",
+          "estimateMicros",
+          "status",
+          "actualMicros"
+        ],
+        "properties": {
+          "operationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "createdAt": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "description": "Unix epoch milliseconds"
+          },
+          "day": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "policyId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "estimateMicros": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000000000
+          },
+          "status": {
+            "enum": [
+              "reserved",
+              "settled"
+            ]
+          },
+          "actualMicros": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1000000000000
+          }
+        }
+      },
+      "LedgerPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LedgerEntry"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]{1,16}\\.[a-f0-9-]{36}$"
+          }
+        }
+      },
+      "CorrectionEntry": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "correctionId",
+          "operationId",
+          "previousActualMicros",
+          "correctedActualMicros",
+          "at"
+        ],
+        "properties": {
+          "correctionId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "operationId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "previousActualMicros": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1000000000000
+          },
+          "correctedActualMicros": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000000000
+          },
+          "at": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991,
+            "description": "Unix epoch milliseconds"
+          }
+        }
+      },
+      "CorrectionPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CorrectionEntry"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9]{1,16}\\.[a-f0-9-]{36}$"
+          }
+        }
+      }
+    }
+  }
+}

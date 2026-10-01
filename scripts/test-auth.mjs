@@ -1,0 +1,290 @@
+import { randomBytes } from "node:crypto";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createServer } from "node:http";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { existsSync } from "node:fs";
+import { SignJWT } from "jose";
+import { startChatFixture } from "./helpers/eve-chat-fixture.mjs";
+import { testCommand } from "./helpers/test-command.mjs";
+import { uploadScannerFixture } from "./helpers/upload-scanner-fixture.mjs";
+import { startSupabaseDataFixture } from "./helpers/supabase-data-fixture.mjs";
+
+const chat = process.argv.includes("--chat");
+const containerMode = process.argv.includes("--container");
+const uploads = process.argv.includes("--uploads");
+const supabaseData = process.argv.includes("--supabase");
+const postgresData = process.argv.includes("--postgres");
+const convexData = process.argv.includes("--convex");
+const storageSupabase = process.argv.includes("--storage-supabase");
+const supabaseStorage = supabaseData || storageSupabase;
+if (containerMode && !chat) throw new Error("Container mode requires --chat.");
+if (uploads && (!chat || containerMode)) throw new Error("Reviewed uploads require host --chat mode.");
+if (supabaseData && containerMode) throw new Error("Supabase Auth/data mode requires the host browser harness; do not combine --supabase with --container.");
+if (postgresData && supabaseData) throw new Error("PostgreSQL application-data mode cannot combine with --supabase.");
+if (storageSupabase && !(postgresData || convexData)) throw new Error("Mixed Supabase Storage mode requires PostgreSQL or disposable Convex application data.");
+if (convexData) {
+  let site;
+  try { site = new URL(process.env.CONVEX_SITE_URL ?? ""); }
+  catch { throw new Error("Convex browser mode requires a disposable loopback backend."); }
+  if (supabaseData || postgresData || containerMode || process.env.TEST_DISPOSABLE_CONVEX !== "1" ||
+      site.protocol !== "http:" || site.hostname !== "127.0.0.1" || !site.port || site.username || site.password ||
+      site.pathname !== "/" || site.search || site.hash ||
+      !process.env.CONVEX_BACKEND_SECRET || process.env.CONVEX_BACKEND_SECRET.length < 32) {
+    throw new Error("Convex browser mode requires a disposable loopback backend.");
+  }
+}
+// Real isolated Supabase Auth, PostgreSQL and SMTP delivery. No hosted account.
+const name = `jumpstart-auth-${randomBytes(5).toString("hex")}`;
+const directory = await mkdtemp(join(tmpdir(), `${name}-`));
+const password = randomBytes(24).toString("base64url");
+const jwtSecret = randomBytes(32).toString("base64url");
+const redactions = [jwtSecret,password];
+if (convexData) redactions.push(process.env.CONVEX_BACKEND_SECRET);
+const containers = [];
+const image = process.env.TEST_CONTAINER_IMAGE ?? "ai-app-jumpstart:test";
+let web, proxy, runtime, scanner, dataFixture, storageOrigin, databaseUrl, imageManifest, failed = false, webOutput = "";
+async function command(executable, args, options = {}) {
+  return testCommand(executable,args,options,redactions);
+}
+const docker = (...args) => command("docker", args);
+async function runContainer(suffix, image, vars, extra = [], args = []) {
+  const container = `${name}-${suffix}`; containers.push(container);
+  const file = join(directory, `${suffix}.env`);
+  await writeFile(file, Object.entries(vars).map(([key, value]) => `${key}=${value}`).join("\n"), { mode: 0o600 });
+  await docker("run", "--detach", "--name", container, "--network", name, "--network-alias", suffix, "--env-file", file, ...extra, image, ...args);
+  return container;
+}
+const portOf = async (container, port) => (await docker("port", container, `${port}/tcp`)).split(":").at(-1);
+async function waitFor(check, label, alive) {
+  const deadline = Date.now() + 90_000;
+  while (Date.now() < deadline) {
+    if (alive && !await alive()) throw new Error(`${label} stopped before becoming ready.`);
+    if (await check().catch(() => false)) return;
+    await new Promise(resolve => setTimeout(resolve, 300));
+  }
+  throw new Error(`${label} did not become ready.`);
+}
+async function freePort() {
+  const server = createServer(); server.listen(0, "127.0.0.1"); await once(server, "listening");
+  const port = server.address().port; await new Promise(resolve => server.close(resolve)); return port;
+}
+const webPort = await freePort();
+const appOrigin = `http://127.0.0.1:${webPort}`;
+try {
+  if (containerMode) {
+    await docker("image", "inspect", image);
+    // The image is the source of truth for build-time Eve rewrites; CI has no
+    // host .next build when this suite follows the container runtime test.
+    imageManifest = JSON.parse(await docker("run", "--rm", "--entrypoint", "cat", image, "/app/.next/routes-manifest.json"));
+  }
+  await docker("network", "create", name);
+  await runContainer("postgres", "postgres:17-bookworm@sha256:639ab7ceb90e13123085b741fb31ef493fba25463002f6da665352e7b534b652", { POSTGRES_PASSWORD: password, POSTGRES_USER: "auth_test", POSTGRES_DB: "auth_test" },["--publish","127.0.0.1::5432"]);
+  // TCP readiness excludes the image's temporary socket-only bootstrap server.
+  await waitFor(async () => (await docker("exec", `${name}-postgres`, "pg_isready", "-h", "127.0.0.1", "-U", "auth_test", "-d", "auth_test")).includes("accepting"), "PostgreSQL", async () => {
+    if (await docker("inspect", "--format", "{{.State.Running}}", `${name}-postgres`) === "true") return true;
+    const logs = await docker("logs", "--tail", "12", `${name}-postgres`);
+    throw new Error(`PostgreSQL startup failed: ${logs.replaceAll(password,"[redacted]").slice(-1200)}`);
+  });
+  // Operator-side Auth session inspection connects only to this disposable
+  // database through a random host port bound to loopback.
+  const authDatabaseUrl = `postgresql://auth_test:${password}@127.0.0.1:${await portOf(`${name}-postgres`,5432)}/auth_test`;
+  await docker("exec", `${name}-postgres`, "psql", "-U", "auth_test", "-d", "auth_test", "-v", "ON_ERROR_STOP=1", "-c", "CREATE ROLE postgres NOLOGIN; CREATE SCHEMA auth AUTHORIZATION auth_test; ALTER ROLE auth_test SET search_path = auth, public;");
+  if (supabaseStorage || postgresData) {
+    await docker("exec",`${name}-postgres`,"psql","-U","auth_test","-d","auth_test","-v","ON_ERROR_STOP=1","-c","CREATE DATABASE app_data_test;");
+    databaseUrl = `postgresql://auth_test:${password}@127.0.0.1:${new URL(authDatabaseUrl).port}/app_data_test`;
+  }
+  if (supabaseStorage) {
+    dataFixture = await startSupabaseDataFixture({ directory,jwtSecret,databaseUrl,beforeMigrate: async () => {
+      // Version from Supabase's official self-hosting compose. The service owns
+      // both storage.objects and private bytes; this is not the app's local adapter.
+      const storage = await runContainer("storage","supabase/storage-api:v1.74.0",{
+        DATABASE_URL: `postgresql://auth_test:${password}@postgres:5432/app_data_test`,
+        AUTH_JWT_SECRET: jwtSecret,DB_INSTALL_ROLES: "true",
+        STORAGE_BACKEND: "file",STORAGE_FILE_BACKEND_PATH: "/var/lib/storage",STORAGE_S3_BUCKET: name,
+        UPLOAD_FILE_SIZE_LIMIT: "5242880",IMAGE_TRANSFORMATION_ENABLED: "false",S3_PROTOCOL_ENABLED: "false",
+        LOG_LEVEL: "fatal",
+      },["--publish","127.0.0.1::5000","--volume","/var/lib/storage"]);
+      storageOrigin = `http://127.0.0.1:${await portOf(storage,5000)}`;
+      await waitFor(async () => (await fetch(`${storageOrigin}/status`,{ signal: AbortSignal.timeout(1000) })).ok,
+        "Supabase Storage",async () => (await docker("inspect","--format","{{.State.Running}}",storage)) === "true");
+      // Deliberately permissive, only in this disposable database. The app's
+      // restrictive policy must protect quarantine even alongside another policy.
+      await docker("exec",`${name}-postgres`,"psql","-U","auth_test","-d","app_data_test","-v","ON_ERROR_STOP=1","-c",
+        "CREATE POLICY jumpstart_fixture_permissive ON storage.objects FOR ALL TO PUBLIC USING (true) WITH CHECK (true);");
+    } });
+  }
+  const mail = await runContainer("mail", "axllent/mailpit:v1.31.2", {}, ["--publish", "127.0.0.1::8025"]);
+  const mailOrigin = `http://127.0.0.1:${await portOf(mail, 8025)}`;
+  let authOrigin;
+  proxy = createServer(async (req, res) => {
+    // The real Auth service handles credentials. This fixture only supplies the
+    // gateway prefix and CORS normally provided by Supabase's API gateway.
+    res.setHeader("access-control-allow-origin", appOrigin);
+    res.setHeader("access-control-allow-headers", "authorization,apikey,content-type,x-client-info,x-supabase-api-version");
+    res.setHeader("access-control-allow-methods", "GET,POST,PUT,DELETE,OPTIONS");
+    if (req.method === "OPTIONS") { res.writeHead(204).end(); return; }
+    const upstreamUrl = req.url?.startsWith("/auth/v1/") ? `${authOrigin}${req.url.slice("/auth/v1".length)}`
+      : dataFixture && req.url?.startsWith("/rest/v1/") ? `${dataFixture.origin}${req.url.slice("/rest/v1".length)}`
+      : storageOrigin && req.url?.startsWith("/storage/v1/") ? `${storageOrigin}${req.url.slice("/storage/v1".length)}` : null;
+    if (!upstreamUrl) { res.writeHead(404).end(); return; }
+    try {
+      const chunks = []; for await (const chunk of req) chunks.push(chunk);
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(req.headers)) if (value && !["host", "connection", "content-length","transfer-encoding"].includes(key)) headers.set(key, Array.isArray(value) ? value.join(", ") : value);
+      const upstream = await fetch(upstreamUrl, { method: req.method, headers, body: chunks.length ? Buffer.concat(chunks) : undefined, redirect: "manual", signal: AbortSignal.timeout(15_000) });
+      upstream.headers.forEach((value, key) => { if (!["content-encoding", "content-length", "transfer-encoding", "access-control-allow-origin"].includes(key)) res.setHeader(key, value); });
+      res.writeHead(upstream.status).end(Buffer.from(await upstream.arrayBuffer()));
+    } catch { res.writeHead(502).end(); }
+  });
+  proxy.listen(0, "127.0.0.1"); await once(proxy, "listening");
+  const publicAuthOrigin = `http://127.0.0.1:${proxy.address().port}`;
+  const auth = await runContainer("auth", "supabase/gotrue:v2.197.0", {
+    GOTRUE_API_HOST: "0.0.0.0", PORT: "9999", GOTRUE_DB_DRIVER: "postgres", DB_NAMESPACE: "auth",
+    DATABASE_URL: `postgres://auth_test:${password}@postgres:5432/auth_test`,
+    API_EXTERNAL_URL: `${publicAuthOrigin}/auth/v1`, GOTRUE_SITE_URL: appOrigin, GOTRUE_URI_ALLOW_LIST: `${appOrigin}/**`,
+    GOTRUE_JWT_SECRET: jwtSecret, GOTRUE_JWT_EXP: "3600", GOTRUE_JWT_AUD: "authenticated", GOTRUE_JWT_ADMIN_ROLES: "service_role", GOTRUE_JWT_DEFAULT_GROUP_NAME: "authenticated",
+    GOTRUE_EXTERNAL_EMAIL_ENABLED: "true", GOTRUE_DISABLE_SIGNUP: "false", GOTRUE_MAILER_AUTOCONFIRM: "false", GOTRUE_PASSWORD_MIN_LENGTH: "12",
+    GOTRUE_SMTP_HOST: "mail", GOTRUE_SMTP_PORT: "1025", GOTRUE_SMTP_ADMIN_EMAIL: "noreply@example.test", GOTRUE_SMTP_SENDER_NAME: "Jumpstart test", GOTRUE_SMTP_MAX_FREQUENCY: "1s",
+    GOTRUE_RATE_LIMIT_EMAIL_SENT: "100", GOTRUE_MAILER_URLPATHS_CONFIRMATION: "/auth/v1/verify", GOTRUE_MAILER_URLPATHS_RECOVERY: "/auth/v1/verify",
+  }, ["--publish", "127.0.0.1::9999"]);
+  authOrigin = `http://127.0.0.1:${await portOf(auth, 9999)}`;
+  await waitFor(async () => (await fetch(`${authOrigin}/health`)).ok, "Supabase Auth", async () => {
+    if (await docker("inspect", "--format", "{{.State.Running}}", auth) === "true") return true;
+    // Startup diagnostics only, before any users or verification links exist.
+    const logs = await docker("logs", "--tail", "6", auth);
+    const fatal = logs.split("\n").flatMap(line => { try { const item = JSON.parse(line); return item.level === "fatal" ? [String(item.msg).slice(-900)] : []; } catch { return []; } }).join("\n");
+    throw new Error(`Supabase Auth startup failed: ${fatal.replaceAll(password, "[redacted]").replaceAll(jwtSecret, "[redacted]")}`);
+  });
+  const key = new TextEncoder().encode(jwtSecret);
+  const anon = await new SignJWT({ role: "anon" }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("1h").sign(key);
+  const admin = await new SignJWT({ role: "service_role" }).setProtectedHeader({ alg: "HS256" }).setIssuedAt().setExpirationTime("1h").sign(key);
+  redactions.push(anon,admin);
+  const env = { ...process.env, NODE_ENV: "production", AUTH_PROVIDER: "supabase", SUPABASE_AUTH_URL: publicAuthOrigin, SUPABASE_PUBLISHABLE_KEY: anon, APP_API_KEYS: "[]", APP_ORIGIN: appOrigin, DATA_PROVIDER: "sqlite", SQLITE_PATH: join(directory, "records.sqlite"), UPLOAD_STORAGE_PROVIDER: "local", UPLOAD_LOCAL_ROOT: join(directory, "uploads") };
+  if (convexData) env.DATA_PROVIDER = "convex";
+  if (postgresData) {
+    env.DATA_PROVIDER = "postgres";env.DATABASE_URL = databaseUrl;
+    await command(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/migrate.ts"],{ env,stdio: "inherit" });
+  }
+  if (supabaseData) {
+    env.DATA_PROVIDER = "supabase";
+  }
+  if (supabaseStorage) {
+    env.SUPABASE_URL = publicAuthOrigin;env.SUPABASE_SECRET_KEY = admin;
+    env.UPLOAD_STORAGE_PROVIDER = "supabase";
+    const storageEnv = { ...env,DATABASE_URL: databaseUrl,SUPABASE_ANON_KEY: anon,SUPABASE_AUTH_ADMIN_KEY: admin,
+      TEST_STORAGE_PERMISSIVE: "1",TEST_DISPOSABLE_SUPABASE: supabaseData ? "1" : "" };
+    await command(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/check-upload-storage.ts","--create"],{ env: storageEnv,stdio: "inherit" });
+    // Run the reusable real-object contract once, in the account mode. Chat modes
+    // prove the production app and native reader against the same real service.
+    if (!chat && supabaseData) await command(process.execPath,["node_modules/vitest/vitest.mjs","run","--config","vitest.upload-live.config.ts"],{ env: storageEnv,stdio: "inherit" });
+  }
+  env.APP_REQUESTS_PER_MINUTE = "10000";
+  env.AI_CHAT_ENABLED = chat ? "true" : "false";
+  env.UPLOAD_AGENT_POLICY = uploads ? "reviewed-text" : "off";
+  if (uploads) {
+    const control = join(directory,"scanner-control");await writeFile(control,"clean");
+    const socket = join(directory,"s");scanner = await uploadScannerFixture(socket,control);
+    env.UPLOAD_DOWNLOAD_POLICY = "scan-on-read";env.UPLOAD_SCANNER_PROVIDER = "clamd";env.UPLOAD_CLAMD_SOCKET = socket;
+    env.UPLOAD_SCANNER_URL = "";env.UPLOAD_SCANNER_TOKEN = "";env.VERCEL = "";env.AWS_LAMBDA_FUNCTION_NAME = "";
+  }
+  if (chat) {
+    env.AI_CREATION_SIGNING_JSON = JSON.stringify({ audience: name, activeKey: "fixture", keys: { fixture: randomBytes(32).toString("hex") } });
+    env.AI_BUDGET_POLICY_JSON = JSON.stringify({ policy: { id: "fixture", dailyMicros: uploads ? 100 : 60, maxActive: 2, maxPerMinute: 20 }, estimateMicros: 20, maxModelCalls: 2, modelIds: ["model", "eve-mock/model"],
+      costBasis: { sourceUrl: "https://example.test/fixture-prices", reviewedAt: "2026-09-24", maxOtherMicros: 0,
+        models: ["model", "eve-mock/model"].map(id => ({ id, maxInputTokens: 1, maxOutputTokens: 1, inputMicrosPerMillion: 1_000_000, outputMicrosPerMillion: 1_000_000 })) } });
+  }
+  // The portable smoke checks Eve health even when account chat is disabled.
+  // Use the same isolated compiled service; no turn is dispatched in Auth mode.
+  runtime = await startChatFixture(process.cwd(), directory, env, { buildOnly: containerMode, routesManifest: imageManifest });
+  env.AI_RUNTIME_ORIGIN = runtime.origin;
+  if (containerMode) {
+    const containerEnv = {
+      NODE_ENV: "production", AUTH_PROVIDER: "supabase", SUPABASE_AUTH_URL: publicAuthOrigin,
+      SUPABASE_PUBLISHABLE_KEY: anon, APP_API_KEYS: "[]", APP_ORIGIN: appOrigin,
+      DATA_PROVIDER: postgresData ? "postgres" : "sqlite", SQLITE_PATH: "/app/.data/records.sqlite",
+      ...(postgresData ? { DATABASE_URL: `postgresql://auth_test:${password}@postgres:5432/app_data_test` } : {}),
+      AI_CHAT_ENABLED: "true", APP_REQUESTS_PER_MINUTE: "10000",
+      UPLOAD_STORAGE_PROVIDER: supabaseStorage ? "supabase" : "local", UPLOAD_LOCAL_ROOT: "/app/.data/uploads",
+      ...(supabaseStorage ? { SUPABASE_URL: publicAuthOrigin, SUPABASE_SECRET_KEY: admin } : {}),
+      AI_CREATION_SIGNING_JSON: env.AI_CREATION_SIGNING_JSON,
+      AI_BUDGET_POLICY_JSON: env.AI_BUDGET_POLICY_JSON,
+      AI_RUNTIME_ORIGIN: "http://127.0.0.1:4274", WORKFLOW_TARGET_WORLD: "local",
+      WORKFLOW_LOCAL_DATA_DIR: "/app/.eve/.workflow-data", WORKFLOW_LOCAL_BASE_URL: "http://127.0.0.1:4274",
+      TEST_MODEL_RECEIPTS: "/app/.data/models.txt", TEST_FAILURE_RECEIPTS: "/app/.data/failures.txt",
+      TEST_RECEIPT_GATE: "/app/.data/gate", EVE_TELEMETRY_DISABLED: "1",
+    };
+    const app = await runContainer("app", image, containerEnv, ["--init", "--publish", `127.0.0.1:${webPort}:3000`, "--entrypoint", "sleep"], ["600"]);
+    await docker("exec", app, "find", "/app/.output", "-mindepth", "1", "-delete");
+    await docker("cp", `${runtime.output}/.`, `${app}:/app/.output/`);
+    await docker("exec", app, "sh", "-c", "printf ready > /app/.data/gate");
+    // The browser and server use one loopback Supabase gateway. Inside the
+    // app's network namespace, forward that port to real Auth/Storage services.
+    const authPort = String(new URL(publicAuthOrigin).port);
+    const forward = `import http from "node:http"; http.createServer((request,response) => { const storage = request.url.startsWith("/storage/v1/"); const auth = request.url.startsWith("/auth/v1/"); if (!storage && !auth) { response.writeHead(404).end(); return; } const hostname = storage ? "storage" : "auth", port = storage ? 5000 : 9999; const upstream = http.request({ hostname, port, method: request.method, path: request.url.replace(/^\\/(?:auth|storage)\\/v1(?=\\/|$)/, "") || "/", headers: { ...request.headers, host: hostname + ":" + port } }, result => { response.writeHead(result.statusCode ?? 502, result.headers); result.pipe(response); }); upstream.on("error", () => { if (!response.headersSent) response.writeHead(502); response.end(); }); request.pipe(upstream); }).listen(Number(process.env.TEST_AUTH_FORWARD_PORT), "127.0.0.1");`;
+    await docker("exec", "--detach", "--env", `TEST_AUTH_FORWARD_PORT=${authPort}`, app, "node", "--input-type=module", "-e", forward);
+    await waitFor(async () => (await docker("exec", app, "node", "-e", `fetch("http://127.0.0.1:${authPort}/auth/v1/health").then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))`)) === "", "Container Auth forwarder");
+    web = spawn("docker", ["exec", "--user", "node", app, "node", "scripts/start-local.mjs"], { env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+  } else {
+    // Both modes use the temporary Eve fixture and leave the operator's local
+    // Workflow directory untouched.
+    web = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "--hostname", "127.0.0.1", "--port", String(webPort)], { env, stdio: ["ignore", "pipe", "pipe"] });
+  }
+  const capture = chunk => { webOutput = (webOutput + chunk).slice(-10000); }; web.stdout.on("data", capture); web.stderr.on("data", capture);
+  await waitFor(async () => {
+    return (await fetch(`${appOrigin}/api/health/live`, { signal: AbortSignal.timeout(1000) })).ok;
+  }, "Production application", async () => web.exitCode === null && web.signalCode === null);
+  await command(process.execPath, ["node_modules/@playwright/test/cli.js", "test", "--config", "playwright.auth.config.ts", ...process.argv.slice(2).filter(arg => !["--chat","--container","--uploads","--supabase","--postgres","--convex","--storage-supabase"].includes(arg))], { env: { ...env, SUPABASE_AUTH_DATABASE_URL: authDatabaseUrl, TEST_CHAT: chat ? "1" : "", TEST_CHAT_UPLOADS: uploads ? "1" : "", TEST_AUTH_ORIGIN: publicAuthOrigin, TEST_AUTH_ADMIN_KEY: admin, TEST_MAIL_ORIGIN: mailOrigin,
+    TEST_RECEIPT_GATE_HOST: chat ? join(directory, "gate") : "", TEST_MODEL_RECEIPTS_HOST: chat ? join(directory, "models.txt") : "",
+    TEST_FAILURE_RECEIPTS_HOST: chat ? join(directory, "failures.txt") : "", TEST_CHAT_CONTAINER: containerMode ? `${name}-app` : "" }, stdio: "inherit" });
+  if (supabaseData && existsSync(env.SQLITE_PATH)) throw new Error("Supabase mode created an unexpected SQLite application database.");
+  if (supabaseStorage && existsSync(env.UPLOAD_LOCAL_ROOT)) throw new Error("Supabase Storage mode created unexpected local application upload bytes.");
+  if (postgresData && existsSync(env.SQLITE_PATH)) throw new Error("PostgreSQL mode created an unexpected SQLite application database.");
+  if (convexData && existsSync(env.SQLITE_PATH)) throw new Error("Convex mode created an unexpected SQLite application database.");
+  if (storageSupabase && convexData) {
+    const sqlRows = (await docker("exec",`${name}-postgres`,"psql","-U","auth_test","-d","app_data_test","-At","-c",
+      "SELECT (SELECT count(*) FROM public.app_records)+(SELECT count(*) FROM public.app_conversations)+(SELECT count(*) FROM public.app_uploads)+(SELECT count(*) FROM public.app_budget_reservations)+(SELECT count(*) FROM public.app_user_preferences);")).trim();
+    if (sqlRows !== "0") throw new Error("Convex mixed mode wrote application rows to the Storage SQL fixture.");
+  }
+  if (containerMode && postgresData) {
+    await docker("exec", `${name}-app`, "sh", "-c", supabaseStorage
+      ? "test ! -e /app/.data/records.sqlite && test ! -e /app/.data/uploads"
+      : "test ! -e /app/.data/records.sqlite");
+  }
+  console.log(supabaseData ? `Real Supabase Auth, migrated PostgREST and private Storage ${uploads ? "reviewed-upload" : chat ? "account-chat" : "account"} browser contract passed.`
+    : postgresData ? `Real Supabase Auth and migrated PostgreSQL ${uploads ? "reviewed-upload" : chat ? "account-chat" : "account"} browser contract passed${storageSupabase ? " with private Supabase Storage" : ""}.`
+    : convexData ? `Real Supabase Auth and disposable Convex ${uploads ? "reviewed-upload" : chat ? "account-chat" : "account"} browser contract passed${storageSupabase ? " with private Supabase Storage" : ""}.`
+    : containerMode ? "Account chat browser contract passed through the production container." : chat ? "Account chat browser contract passed with real Auth and compiled Eve." : "Real Supabase Auth browser contract passed.");
+} catch (error) {
+  failed = true;
+  let diagnostic = error instanceof Error ? error.message : "Auth integration failed.";
+  for (const secret of redactions) diagnostic = diagnostic.replaceAll(secret,"[redacted]");
+  console.error(diagnostic);
+  let safeOutput = webOutput;
+  for (const secret of redactions) safeOutput = safeOutput.replaceAll(secret,"[redacted]");
+  console.error(safeOutput);
+  // Only SQL diagnostics, never raw request logs or verification links.
+  const logs = await docker("logs", "--tail", "100", `${name}-auth`).catch(() => "");
+  for (const line of logs.split("\n")) {
+    try {
+      const item = JSON.parse(line);
+      if (typeof item.error === "string" && item.error.includes("SQLSTATE")) console.error(item.error.slice(-1000).replaceAll(password, "[redacted]").replaceAll(jwtSecret, "[redacted]"));
+    } catch { /* Non-JSON container diagnostics are omitted. */ }
+  }
+} finally {
+  if (containerMode) await docker("rm", "--force", `${name}-app`).catch(() => {});
+  if (web && web.exitCode === null && web.signalCode === null) {
+    const exited = once(web, "exit"); web.kill("SIGTERM");
+    const timer = setTimeout(() => web.kill("SIGKILL"), 25_000); await exited; clearTimeout(timer);
+  }
+  proxy?.closeAllConnections(); if (proxy) await new Promise(resolve => proxy.close(resolve));
+  await runtime?.stop();
+  await scanner?.stop();
+  await dataFixture?.stop();
+  for (const container of containers.reverse()) await docker("rm", "--force", "--volumes", container).catch(() => {});
+  await docker("network", "rm", name).catch(() => {});
+  await rm(directory, { recursive: true, force: true });
+}
+process.exitCode = failed ? 1 : 0;

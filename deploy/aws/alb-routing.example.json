@@ -1,0 +1,89 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "HTTPS path routing for the AI App Jumpstart Fargate app task.",
+  "Parameters": {
+    "VpcId": {
+      "Type": "AWS::EC2::VPC::Id",
+      "Description": "VPC that contains the ECS tasks and application load balancer."
+    },
+    "LoadBalancerArn": {
+      "Type": "String",
+      "Description": "ARN of the public application load balancer."
+    },
+    "CertificateArn": {
+      "Type": "String",
+      "Description": "ACM certificate ARN for the public application hostname."
+    },
+    "SslPolicy": {
+      "Type": "String",
+      "Default": "ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09",
+      "Description": "Reviewed ALB TLS policy; the default is AWS's current post-quantum-capable recommendation."
+    },
+    "EveRulePriority": {
+      "Type": "Number",
+      "Default": 20,
+      "MinValue": 1,
+      "MaxValue": 50000,
+      "Description": "Unused HTTPS listener rule priority for Eve and Workflow paths."
+    }
+  },
+  "Resources": {
+    "NextTargetGroup": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties": {
+        "VpcId": { "Ref": "VpcId" },
+        "Protocol": "HTTP",
+        "Port": 3000,
+        "TargetType": "ip",
+        "HealthCheckEnabled": true,
+        "HealthCheckProtocol": "HTTP",
+        "HealthCheckPort": "traffic-port",
+        "HealthCheckPath": "/api/health/ready",
+        "Matcher": { "HttpCode": "200" },
+        "TargetGroupAttributes": [{ "Key": "deregistration_delay.timeout_seconds", "Value": "30" }]
+      }
+    },
+    "EveTargetGroup": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties": {
+        "VpcId": { "Ref": "VpcId" },
+        "Protocol": "HTTP",
+        "Port": 4274,
+        "TargetType": "ip",
+        "HealthCheckEnabled": true,
+        "HealthCheckProtocol": "HTTP",
+        "HealthCheckPort": "traffic-port",
+        "HealthCheckPath": "/eve/v1/health",
+        "Matcher": { "HttpCode": "200" },
+        "TargetGroupAttributes": [{ "Key": "deregistration_delay.timeout_seconds", "Value": "30" }]
+      }
+    },
+    "HttpsListener": {
+      "Type": "AWS::ElasticLoadBalancingV2::Listener",
+      "Properties": {
+        "LoadBalancerArn": { "Ref": "LoadBalancerArn" },
+        "Port": 443,
+        "Protocol": "HTTPS",
+        "SslPolicy": { "Ref": "SslPolicy" },
+        "Certificates": [{ "CertificateArn": { "Ref": "CertificateArn" } }],
+        "DefaultActions": [{ "Type": "forward", "TargetGroupArn": { "Ref": "NextTargetGroup" } }]
+      }
+    },
+    "EveListenerRule": {
+      "Type": "AWS::ElasticLoadBalancingV2::ListenerRule",
+      "Properties": {
+        "ListenerArn": { "Ref": "HttpsListener" },
+        "Priority": { "Ref": "EveRulePriority" },
+        "Conditions": [{
+          "Field": "path-pattern",
+          "PathPatternConfig": { "Values": ["/eve/*", "/.well-known/workflow/*"] }
+        }],
+        "Actions": [{ "Type": "forward", "TargetGroupArn": { "Ref": "EveTargetGroup" } }]
+      }
+    }
+  },
+  "Outputs": {
+    "NextTargetGroupArn": { "Value": { "Ref": "NextTargetGroup" } },
+    "EveTargetGroupArn": { "Value": { "Ref": "EveTargetGroup" } }
+  }
+}

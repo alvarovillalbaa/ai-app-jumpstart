@@ -1,5 +1,6 @@
-import { AgentChat } from "@/app/_components/agent-chat";
+import { ChatPage } from "@/app/_components/chat-page";
+export const metadata = { title: "Chat" };
 
 export default function NewSessionPage() {
-  return <AgentChat sessionless />;
+  return <ChatPage sessionless />;
 }

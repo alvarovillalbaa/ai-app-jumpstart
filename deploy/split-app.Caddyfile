@@ -1,0 +1,5 @@
+# Internal HTTP ingress for a trusted TLS load balancer or loopback Compose.
+import /etc/caddy/split-app-routes.Caddyfile
+:8080 {
+	import jumpstart_routes
+}

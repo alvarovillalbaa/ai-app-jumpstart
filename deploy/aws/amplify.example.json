@@ -1,0 +1,19 @@
+{
+  "stackName": "jumpstart-staging",
+  "account": "REPLACE_WITH_12_DIGIT_ACCOUNT",
+  "region": "eu-west-1",
+  "appOrigin": "https://app.example.org",
+  "eveOrigin": "https://eve.example.org",
+  "certificateArn": "REPLACE_WITH_US_EAST_1_CERTIFICATE_ARN",
+  "originGuardSecretArn": "REPLACE_WITH_ORIGIN_GUARD_COMPLETE_SECRET_ARN",
+  "dataProvider": "supabase",
+  "supabaseAuthUrl": "https://REPLACE_PROJECT.supabase.co",
+  "supabasePublishableKey": "REPLACE_WITH_PUBLIC_PUBLISHABLE_KEY",
+  "supabaseUrl": "https://REPLACE_PROJECT.supabase.co",
+  "chatEnabled": false,
+  "requestsPerMinute": 120,
+  "secrets": {
+    "SUPABASE_SECRET_KEY": "REPLACE_WITH_BACKEND_COMPLETE_SECRET_ARN",
+    "CRON_SECRET": "REPLACE_WITH_CLEANUP_COMPLETE_SECRET_ARN"
+  }
+}

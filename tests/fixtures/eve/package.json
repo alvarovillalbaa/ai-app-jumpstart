@@ -1,0 +1,8 @@
+{
+  "name": "jumpstart-eve-contract-fixture",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "eve": "0.54.5"
+  }
+}

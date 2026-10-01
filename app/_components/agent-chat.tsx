@@ -1,9 +1,10 @@
 "use client";
 
 import type { UserContent } from "ai";
+import Link from "next/link";
 import { useEveAgent } from "eve/react";
 import { AlertCircleIcon, BrainIcon, PlusIcon, SquareIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect,useRef,useState } from "react";
 import {
   Conversation,
   ConversationContent,
@@ -14,28 +15,47 @@ import { Message, MessageContent } from "@/components/ai-elements/message";
 import {
   PromptInput,
   PromptInputButton,
+  PromptInputProvider,
   type PromptInputMessage,
   PromptInputSubmit,
   PromptInputTextarea,
   usePromptInputAttachments,
 } from "@/components/ai-elements/prompt-input";
 import { Shimmer } from "@/components/ai-elements/shimmer";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { AgentMessage } from "./agent-message";
+import { WorkspaceMenu } from "./workspace-navigation";
+import { appConfig } from "@/app.config";
+import { encodeReviewedUploadMessage,type ChatUploadReference } from "@/lib/uploads/chat-reference";
+import { ReviewedUploadPicker,validateChatUpload } from "./reviewed-upload-picker";
 
-const AGENT_NAME = "eve-agent";
+const AGENT_NAME = appConfig.name;
 
 export function AgentChat({
   sessionId,
   sessionless = false,
+  credential,
+  onCreate,
+  managed = false,
+  uploadsEnabled = false,
+  agentReadingEnabled = false,
 }: {
   readonly sessionId?: string;
   readonly sessionless?: boolean;
+  readonly credential?: () => Promise<string>;
+  readonly onCreate?: (message: string) => Promise<void>;
+  readonly managed?: boolean;
+  readonly uploadsEnabled?: boolean;
+  readonly agentReadingEnabled?: boolean;
 }) {
   const [cancellationError, setCancellationError] = useState<string>();
   const [hasInputText, setHasInputText] = useState(false);
+  const [fileReference,setFileReference] = useState<ChatUploadReference | null>(null);
+  const [preparing,setPreparing] = useState(false);
+  const preparation = useRef<AbortController | null>(null);
+  useEffect(() => () => preparation.current?.abort(),[]);
   const agent = useEveAgent({
+    auth: credential ? { bearer: credential } : undefined,
     initialSession:
       sessionId === undefined
         ? undefined
@@ -45,7 +65,7 @@ export function AgentChat({
           },
     resume: sessionId !== undefined,
     onSessionChange(session) {
-      if (sessionId === undefined && session !== undefined) {
+      if (!managed && sessionId === undefined && session !== undefined) {
         // Next patches window.history to navigate, which would detach the active stream.
         History.prototype.replaceState.call(
           window.history,
@@ -81,15 +101,37 @@ export function AgentChat({
   };
 
   const handleSubmit = async (message: PromptInputMessage) => {
-    const text = message.text.trim();
-    if ((text.length === 0 && message.files.length === 0) || isResuming) return;
+    let text = message.text.trim();
+    if ((text.length === 0 && message.files.length === 0) || isResuming || preparation.current) return;
 
-    setHasInputText(false);
     setCancellationError(undefined);
+    if (managed && message.files.length > 0) {
+      setCancellationError("Attachments are not available yet.");
+      return;
+    }
+    if (managed && agentReadingEnabled && credential && fileReference) {
+      const abort = new AbortController();preparation.current = abort;setPreparing(true);
+      try {
+        await validateChatUpload(fileReference,credential,abort.signal);
+        text = encodeReviewedUploadMessage(text,fileReference);
+      } catch (error) {
+        if (!abort.signal.aborted) setCancellationError(toErrorMessage(error));
+        throw error; // Preserve the authored request in PromptInput on a failed check.
+      } finally { if (!abort.signal.aborted) setPreparing(false);preparation.current = null; }
+      if (abort.signal.aborted) return;
+    }
+    setHasInputText(false);
+    if (managed && !sessionId) {
+      if (!onCreate) throw new Error("Conversation creation is unavailable.");
+      await onCreate(text);
+      setFileReference(null);
+      return;
+    }
     const options = isBusy ? { turnPolicy: "steer" as const } : undefined;
 
     if (message.files.length === 0) {
       await agent.send(text, options);
+      setFileReference(null);
       return;
     }
 
@@ -110,26 +152,25 @@ export function AgentChat({
   };
 
   const composer = (
-    <PromptInput onSubmit={handleSubmit}>
+    <PromptInputProvider><PromptInput onSubmit={handleSubmit}>
       <PromptInputTextarea
-        disabled={isResuming}
+        disabled={isResuming || preparing}
         onChange={(event) => setHasInputText(event.currentTarget.value.trim().length > 0)}
         placeholder="Send a message…"
       />
       <ComposerAction
         hasInputText={hasInputText}
         isBusy={isBusy}
-        isResuming={isResuming}
+        isResuming={isResuming || preparing}
         onCancel={requestCancellation}
       />
-    </PromptInput>
+    </PromptInput></PromptInputProvider>
   );
 
   return (
     <main className="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
-      {showConversationLayout ? (
-        <ChatHeader canStartNewChat={activeSessionId !== undefined} />
-      ) : null}
+      <ChatHeader canStartNewChat={activeSessionId !== undefined} managed={managed} uploadsEnabled={uploadsEnabled} />
+      {showConversationLayout ? <h1 className="sr-only">{AGENT_NAME}</h1> : null}
 
       {showConversationLayout ? (
         <Conversation
@@ -143,7 +184,7 @@ export function AgentChat({
           }
         >
           <ConversationTopFade className="top-14" />
-          <ConversationContent className="mx-auto w-full max-w-3xl gap-6 px-4 pt-20 pb-36 sm:px-6">
+          <ConversationContent className={cn("mx-auto w-full max-w-3xl gap-6 px-4 pt-20 sm:px-6",agentReadingEnabled ? "pb-8" : "pb-36")}>
             {agent.data.messages.map((message, index) =>
               showPendingThinking &&
               isPendingAssistantShell &&
@@ -173,7 +214,9 @@ export function AgentChat({
         className={cn(
           "mx-auto w-full px-4 sm:px-6",
           showConversationLayout
-            ? "fixed bottom-0 left-1/2 z-20 max-w-3xl -translate-x-1/2 bg-gradient-to-t from-background via-background to-transparent pt-4 pb-6"
+            ? agentReadingEnabled
+              ? "relative z-20 max-w-3xl shrink-0 bg-background pt-4 pb-6"
+              : "fixed bottom-0 left-1/2 z-20 max-w-3xl -translate-x-1/2 bg-gradient-to-t from-background via-background to-transparent pt-4 pb-6"
             : "flex max-w-xl flex-1 flex-col items-center justify-center gap-8 pb-[10vh]",
         )}
       >
@@ -182,7 +225,10 @@ export function AgentChat({
             <h1 className="font-medium text-5xl tracking-tighter">{AGENT_NAME}</h1>
           </div>
         )}
-        <div className="w-full">{composer}</div>
+        <div id="chat-composer" tabIndex={-1} className="w-full focus-visible:outline-2 focus-visible:outline-ring">
+          {managed && agentReadingEnabled && credential && <ReviewedUploadPicker credential={credential} value={fileReference} onChange={setFileReference} disabled={isResuming || preparing} />}
+          {composer}
+        </div>
       </div>
     </main>
   );
@@ -237,24 +283,19 @@ function ErrorMessage({ message }: { readonly message: string }) {
   );
 }
 
-function ChatHeader({ canStartNewChat }: { readonly canStartNewChat: boolean }) {
+function ChatHeader({ canStartNewChat, managed, uploadsEnabled }: { readonly canStartNewChat: boolean; readonly managed: boolean; readonly uploadsEnabled: boolean }) {
   return (
-    <header className="pointer-events-none fixed top-0 right-0 left-0 z-20 h-14">
-      <div className="relative mx-auto flex h-full w-full max-w-3xl items-center justify-center bg-background px-24">
-        <span className="truncate text-muted-foreground text-sm">{AGENT_NAME}</span>
+    <header className="fixed top-0 right-0 left-0 z-20 h-14 border-b bg-background">
+      <a href="#chat-composer" className="sr-only absolute top-2 left-2 z-30 rounded-md bg-background px-3 py-2 shadow-md focus:not-sr-only">Skip to composer</a>
+      <div className="mx-auto flex h-full w-full max-w-3xl items-center justify-between gap-3 px-4 sm:px-6">
+        <WorkspaceMenu chatEnabled={managed} accountEnabled={managed} uploadsEnabled={uploadsEnabled} />
+        <span className="hidden truncate text-muted-foreground text-sm sm:block">{AGENT_NAME}</span>
         {canStartNewChat ? (
-          <Button
-            aria-label="Start a new chat"
-            className="pointer-events-auto fixed top-3 right-6 pr-4"
-            onClick={() => window.location.assign("/s")}
-            size="sm"
-            type="button"
-            variant="ghost"
-          >
+          <Link aria-label="Start a new chat" className="inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring" href="/s">
             <PlusIcon className="size-4" />
             <span className="hidden font-normal text-sm sm:inline">New chat</span>
-          </Button>
-        ) : null}
+          </Link>
+        ) : <span className="w-9" aria-hidden="true" />}
       </div>
     </header>
   );

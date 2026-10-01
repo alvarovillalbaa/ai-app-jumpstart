@@ -1,0 +1,253 @@
+name: Quality
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Preflight the managed Vercel and Supabase runtime shape
+        run: npm run check:managed-config
+        env:
+          APP_ORIGIN: https://app.example.org
+          DATA_PROVIDER: supabase
+          AUTH_PROVIDER: supabase
+          AI_CHAT_ENABLED: "false"
+          SUPABASE_URL: https://data.example.org
+          SUPABASE_SECRET_KEY: sb_secret_fixture_backend_key
+          SUPABASE_PUBLISHABLE_KEY: sb_publishable_fixture_public_key
+          APP_REQUESTS_PER_MINUTE: "120"
+          CRON_SECRET: ssssssssssssssssssssssssssssssssssssssss
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run check:docs
+      - run: npm run check:openapi
+      - run: npm run check:container-pins
+      - run: npm test
+      - run: npm run check:cloud-templates
+      - run: npm run check:account-data-inventory
+      - run: npm run test:template-init
+      - run: npm run test:ai
+      - run: npm run test:reference-mcp
+      - run: npm run test:session-runtime
+      - run: npm run test:workflow-retention
+      - run: npm run test:agent-uploads
+      - run: TMPDIR=/tmp PG_CLIENT_RUNNER=./scripts/testing/postgres-client-docker.sh npm run test:workflow-postgres
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: ai-eval-results
+          path: tests/fixtures/eve/.eve/evals
+          include-hidden-files: true
+  cloudformation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --disable-pip-version-check --no-input cfn-lint==1.57.1
+      - run: cfn-lint deploy/aws/alb-routing.example.json
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build:local
+      - run: npm run test:e2e
+      - run: npm run test:upload-scans
+      - run: npm run test:auth
+      - run: npm run test:chat
+      - run: npm run test:chat:uploads
+      - run: npm run test:auth:postgres
+      - run: npm run test:chat:postgres
+      - run: npm run test:chat:uploads:postgres
+      - run: npm run test:auth:postgres:storage-supabase
+      - run: npm run test:chat:uploads:postgres:storage-supabase
+      - run: npm run test:quickstart
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: browser-results
+          path: |
+            playwright-report
+            test-results
+  supabase-accounts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Fresh-clone managed onboarding and real account contracts
+        run: npm run test:managed-quickstart
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: supabase-account-results
+          path: |
+            playwright-report
+            test-results
+  convex-accounts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build:local
+      - name: Disposable Convex account, chat and reviewed-file contracts with local and Supabase Storage
+        run: npm run test:convex:accounts
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: convex-account-results
+          path: |
+            playwright-report
+            test-results
+  vercel-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run test:vercel-build
+  amplify-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --disable-pip-version-check --no-input cfn-lint==1.57.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Build and test the Amplify adapter while exporting its reviewed synthetic stack
+        run: npm run test:amplify-build
+        env:
+          JUMPSTART_AMPLIFY_CFN_TEMPLATE_OUTPUT: ${{ runner.temp }}/amplify-cloudformation.json
+      - name: Lint the synthesized Amplify stack for CloudFormation errors
+        run: cfn-lint --non-zero-exit-code error "$RUNNER_TEMP/amplify-cloudformation.json"
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_DB: app_test
+          POSTGRES_USER: app_test
+          POSTGRES_PASSWORD: isolated-ci-password
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U app_test -d app_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATA_PROVIDER: postgres
+      DATABASE_URL: postgresql://app_test:isolated-ci-password@localhost:5432/app_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run db:migrate -- --dry-run
+      - run: npm run db:migrate
+      - run: npm run db:migrate -- --dry-run
+      - run: npm run db:types:check:ci
+      - run: npm run test:integration
+  provider-portability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run test:providers
+      - run: TMPDIR=/tmp PG_CLIENT_RUNNER=./scripts/testing/postgres-client-docker.sh npm run test:postgres-backup
+      - run: npm run --silent sbom > dependency-sbom.cdx.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dependency-sbom
+          path: dependency-sbom.cdx.json
+          retention-days: 14
+      - run: npm run check:dependencies
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:container
+      - run: npm run test:chat:container
+      - run: npm run test:chat:container:postgres:storage-supabase
+  workflow-container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - run: npm run test:split-ingress
+      - run: npm run test:public-ingress
+      - run: npm run test:compose-data-providers
+      - run: npm run test:amplify-ingress
+      - run: npm run test:workflow-compose
+  upload-scanner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run test:upload-scanner:compose
