@@ -160,7 +160,10 @@ export function validateCloudManifest(provider: CloudProvider,raw: unknown,templ
     ingressEnv = envMap(array(ingress.env,"ingress.env"),"ingress environment");
   } else {
     const spec = child(child(child(manifest,"spec","manifest"),"template","spec"),"spec","template");
-    string(spec.serviceAccountName,"Cloud Run serviceAccountName");
+    const serviceAccountName = string(spec.serviceAccountName,"Cloud Run serviceAccountName");
+    const serviceAccountEmail = /^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$/;
+    if (!(template && serviceAccountName === "REPLACE_WITH_SERVICE_ACCOUNT_EMAIL") && !serviceAccountEmail.test(serviceAccountName))
+      fail("Cloud Run serviceAccountName must be a user-managed IAM service account email.");
     const containers = array(spec.containers,"spec.containers");
     app = named(containers,"app","spec.containers");ingress = named(containers,"ingress","spec.containers");
     if (containers.length !== 2 || array(ingress.ports,"ingress.ports").length !== 1 ||

@@ -17,7 +17,7 @@ type FixtureManifest = { containerDefinitions: FixtureContainer[];
   properties: { configuration: { secrets: { name: string; keyVaultUrl: string; identity: string }[];
     registries?: { server: string; identity?: string; username?: string; passwordSecretRef?: string; password?: string }[] };
     template: { containers: FixtureContainer[] } };
-  spec: { template: { spec: { containers: FixtureContainer[] } } } };
+  spec: { template: { spec: { serviceAccountName?: string;containers: FixtureContainer[] } } } };
 const providers = Object.keys(files) as CloudProvider[];
 const templates = Object.fromEntries(providers.map(provider => [provider,
   JSON.parse(readFileSync(files[provider],"utf8"))])) as Record<CloudProvider,FixtureManifest>;
@@ -33,6 +33,19 @@ it("accepts the three authored templates and filled release-shaped manifests",()
   for (const provider of providers) {
     expect(validateCloudManifest(provider,templates[provider],true)).toMatchObject({ provider,dataProvider: "supabase" });
     expect(validateCloudManifest(provider,filled(provider))).toMatchObject({ provider,dataProvider: "supabase",secretReferences: 8,requestLimitPerMinute: 120 });
+  }
+});
+
+it("requires a user-managed Cloud Run service identity email",() => {
+  const valid = filled("gcp");
+  expect(valid.spec.template.spec.serviceAccountName).toBe("jumpstart-runtime@fixture-project.iam.gserviceaccount.com");
+  expect(validateCloudManifest("gcp",valid)).toMatchObject({ provider: "gcp" });
+
+  for (const serviceAccountName of ["run@fixture-project.iam.gserviceaccount.com","x@fixture-project.iam.gserviceaccount.com",
+    "123456789-compute@developer.gserviceaccount.com","not-an-email"]) {
+    const invalid = filled("gcp");
+    invalid.spec.template.spec.serviceAccountName = serviceAccountName;
+    expect(() => validateCloudManifest("gcp",invalid)).toThrow("must be a user-managed IAM service account email");
   }
 });
 
