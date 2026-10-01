@@ -103,19 +103,30 @@ export function validateCloudManifest(provider: CloudProvider,raw: unknown,templ
     if (scale.minReplicas !== 1 || scale.maxReplicas !== 1) fail("Azure needs one dedicated replica until rollout is proven.");
     string(properties.workloadProfileName,"workloadProfileName");
     const identity = child(manifest,"identity","manifest");
-    if (identity.type !== "UserAssigned") fail("Azure needs a user-assigned identity.");
-    const attachedIdentities = object(identity.userAssignedIdentities,"identity.userAssignedIdentities");
+    const identityTypes = string(identity.type,"identity.type").split(",").map(value => value.trim());
+    const allowedIdentityTypes = new Set(["SystemAssigned","UserAssigned"]);
+    if (!identityTypes.length || identityTypes.some(value => !allowedIdentityTypes.has(value)) ||
+        new Set(identityTypes).size !== identityTypes.length)
+      fail("Azure needs a system-assigned or user-assigned identity.");
+    const hasSystemIdentity = identityTypes.includes("SystemAssigned");
+    const hasUserAssignedIdentity = identityTypes.includes("UserAssigned");
+    const attachedIdentities = identity.userAssignedIdentities === undefined ? {} :
+      object(identity.userAssignedIdentities,"identity.userAssignedIdentities");
     const identityIds = Object.keys(attachedIdentities);
-    if (!identityIds.length) fail("Azure needs an attached user-assigned identity for Key Vault secrets.");
+    if (hasUserAssignedIdentity && !identityIds.length)
+      fail("Azure needs an attached user-assigned identity for its UserAssigned identity type.");
+    if (!hasUserAssignedIdentity && identityIds.length)
+      fail("Azure userAssignedIdentities requires the UserAssigned identity type.");
     for (const id of identityIds) object(attachedIdentities[id],"attached user-assigned identity");
     const attachedIdentityIds = new Set(identityIds);
+    const identityIsEnabled = (value: string) => value === "system" ? hasSystemIdentity : attachedIdentityIds.has(value);
     probe(app,"Readiness","/api/health/ready",3000,"app");
     probe(ingress,"Readiness","/api/health/ready",8080,"ingress");
     secretNames = new Set(array(configuration.secrets,"configuration.secrets").map(item => {
       const secret = object(item,"configuration secret");
       const url = string(secret.keyVaultUrl,"Key Vault URL");
-      if (!attachedIdentityIds.has(string(secret.identity,"Key Vault identity")))
-        fail("Azure Key Vault secrets must use an identity attached to the app.");
+      if (!identityIsEnabled(string(secret.identity,"Key Vault identity")))
+        fail("Azure Key Vault secrets must use an identity enabled on the app.");
       if (!template) {
         try { const parsed = new URL(url);if (parsed.protocol !== "https:" || !parsed.pathname.startsWith("/secrets/") ||
           parsed.pathname.split("/").filter(Boolean).length < 3 || parsed.username || parsed.password) throw new Error(); }
@@ -125,6 +136,26 @@ export function validateCloudManifest(provider: CloudProvider,raw: unknown,templ
     }));
     if (secretNames.size !== array(configuration.secrets,"configuration.secrets").length)
       fail("Azure secret names must be unique.");
+    if (configuration.registries !== undefined) {
+      const registries = array(configuration.registries,"configuration.registries");
+      if (!registries.length) fail("Azure registry configuration must include at least one registry.");
+      for (const item of registries) {
+        const registry = object(item,"configuration registry"),server = string(registry.server,"registry server");
+        if (/\s|\/|\\|[?#]|:\/\//.test(server)) fail("Azure registry server must be a hostname, without a URL path.");
+        if (registry.password !== undefined) fail("Azure registry passwords must use a secret reference.");
+        if (registry.identity !== undefined) {
+          if (!identityIsEnabled(string(registry.identity,"registry identity")))
+            fail("Azure registry identity must be enabled on the app.");
+          if (registry.username !== undefined || registry.passwordSecretRef !== undefined)
+            fail("Azure registry identity must not be combined with username or passwordSecretRef.");
+        } else {
+          string(registry.username,"registry username");
+          const passwordSecretRef = string(registry.passwordSecretRef,"registry passwordSecretRef");
+          if (!secretNames.has(passwordSecretRef))
+            fail("Azure registry passwordSecretRef must name a declared Key Vault secret.");
+        }
+      }
+    }
     appEnv = envMap(array(app.env,"app.env"),"app environment");
     ingressEnv = envMap(array(ingress.env,"ingress.env"),"ingress environment");
   } else {

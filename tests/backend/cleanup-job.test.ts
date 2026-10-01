@@ -78,7 +78,10 @@ it("keeps only Azure registry identity and a GCP secret alias needed by the clea
   const azure = configured("azure");
   azure.properties.configuration.registries = [{ server: "registry.example",identity: "fixture-identity" }];
   expect(cleanupJob("azure",azure,"cleanup").properties?.configuration.registries).toEqual(azure.properties.configuration.registries);
-  azure.properties.configuration.registries[0].passwordSecretRef = "registry-password";
+  azure.properties.configuration.secrets.push({ name: "registry-password",
+    keyVaultUrl: "https://fixture.vault.azure.net/secrets/registry-password/version1",identity: "fixture-identity" });
+  azure.properties.configuration.registries = [{ server: "registry.example",username: "fixture-user",
+    passwordSecretRef: "registry-password" }];
   expect(() => cleanupJob("azure",azure,"cleanup")).toThrow("identity-based");
 
   const gcp = configured("gcp");

@@ -13,8 +13,9 @@ type FixtureContainer = { name?: string;image: string;environment: FixtureEnv[];
   healthCheck: { command: string[] };startupProbe: { httpGet: { path: string;port: number } };
   portMappings?: { containerPort: number;protocol?: string }[];ports?: { containerPort: number }[] };
 type FixtureManifest = { containerDefinitions: FixtureContainer[];
-  identity?: { type: string; userAssignedIdentities: Record<string,unknown> };
-  properties: { configuration: { secrets: { name: string; keyVaultUrl: string; identity: string }[] };
+  identity?: { type: string; userAssignedIdentities?: Record<string,unknown> };
+  properties: { configuration: { secrets: { name: string; keyVaultUrl: string; identity: string }[];
+    registries?: { server: string; identity?: string; username?: string; passwordSecretRef?: string; password?: string }[] };
     template: { containers: FixtureContainer[] } };
   spec: { template: { spec: { containers: FixtureContainer[] } } } };
 const providers = Object.keys(files) as CloudProvider[];
@@ -45,13 +46,62 @@ it("requires Azure Key Vault secrets to use an identity attached to the app",() 
 
   const multiple = filled("azure");
   const secondIdentity = "/subscriptions/fixture/other-identity";
-  multiple.identity!.userAssignedIdentities[secondIdentity] = {};
+  multiple.identity!.userAssignedIdentities![secondIdentity] = {};
   multiple.properties.configuration.secrets[0].identity = secondIdentity;
   expect(validateCloudManifest("azure",multiple)).toMatchObject({ provider: "azure" });
 
   const mismatch = filled("azure");
   mismatch.properties.configuration.secrets[0].identity = "/subscriptions/fixture/unattached-identity";
-  expect(() => validateCloudManifest("azure",mismatch)).toThrow("must use an identity attached to the app");
+  expect(() => validateCloudManifest("azure",mismatch)).toThrow("must use an identity enabled on the app");
+});
+
+it("validates Azure registry pull identities against the identities enabled on the app",() => {
+  const userAssigned = filled("azure");
+  userAssigned.properties.configuration.registries = [{ server: "registry.example",identity: "fixture-identity" }];
+  expect(validateCloudManifest("azure",userAssigned)).toMatchObject({ provider: "azure" });
+
+  const hybrid = filled("azure");
+  hybrid.identity!.type = "SystemAssigned, UserAssigned";
+  hybrid.properties.configuration.registries = [{ server: "registry.example",identity: "system" }];
+  expect(validateCloudManifest("azure",hybrid)).toMatchObject({ provider: "azure" });
+
+  const systemOnly = filled("azure");
+  systemOnly.identity = { type: "SystemAssigned" };
+  for (const secret of systemOnly.properties.configuration.secrets) secret.identity = "system";
+  systemOnly.properties.configuration.registries = [{ server: "registry.example",identity: "system" }];
+  expect(validateCloudManifest("azure",systemOnly)).toMatchObject({ provider: "azure" });
+
+  const unattached = filled("azure");
+  unattached.properties.configuration.registries = [{ server: "registry.example",identity: "/subscriptions/fixture/unattached-identity" }];
+  expect(() => validateCloudManifest("azure",unattached)).toThrow("registry identity must be enabled on the app");
+
+  const systemWithoutIdentity = filled("azure");
+  systemWithoutIdentity.properties.configuration.registries = [{ server: "registry.example",identity: "system" }];
+  expect(() => validateCloudManifest("azure",systemWithoutIdentity)).toThrow("registry identity must be enabled on the app");
+});
+
+it("requires Azure registry credentials to reference a declared Key Vault secret without mixing auth modes",() => {
+  const credentials = filled("azure");
+  credentials.properties.configuration.secrets.push({ name: "registry-password",
+    keyVaultUrl: "https://fixture.vault.azure.net/secrets/registry-password/version1",identity: "fixture-identity" });
+  credentials.properties.configuration.registries = [{ server: "registry.example",username: "fixture-user",
+    passwordSecretRef: "registry-password" }];
+  expect(validateCloudManifest("azure",credentials)).toMatchObject({ provider: "azure" });
+
+  const missingSecret = filled("azure");
+  missingSecret.properties.configuration.registries = [{ server: "registry.example",username: "fixture-user",
+    passwordSecretRef: "unlisted-secret" }];
+  expect(() => validateCloudManifest("azure",missingSecret)).toThrow("passwordSecretRef must name a declared Key Vault secret");
+
+  const mixed = filled("azure");
+  mixed.properties.configuration.registries = [{ server: "registry.example",identity: "fixture-identity",
+    username: "fixture-user",passwordSecretRef: "model-key" }];
+  expect(() => validateCloudManifest("azure",mixed)).toThrow("must not be combined");
+
+  const plaintext = filled("azure");
+  plaintext.properties.configuration.registries = [{ server: "registry.example",password: "private-password" }];
+  try { validateCloudManifest("azure",plaintext);throw new Error("Expected rejection."); }
+  catch (error) { expect(String(error)).toContain("passwords must use a secret reference");expect(String(error)).not.toContain("private-password"); }
 });
 
 it("accepts PostgreSQL and Convex application data with unchanged Supabase identity",() => {
