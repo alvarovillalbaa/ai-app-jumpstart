@@ -640,6 +640,11 @@ test("real account tokens share history across production REST, MCP resources/to
   const created = await request.post("/api/v1/conversations",{ headers: { authorization: `Bearer ${alice.token}` },data: { operationId,message: "Shared metadata across transports" } });
   expect([200,202]).toContain(created.status());
   await expect.poll(async () => (await (await request.get(`/api/v1/conversations/${operationId}`,{ headers: { authorization: `Bearer ${alice.token}` } })).json()).status).toBe("active");
+  expect((await request.get(`/api/v1/conversations/${operationId}/source-events?limit=1`)).status()).toBe(401);
+  await page.goto(`/conversations/${operationId}/source`);
+  const signInUrl = new URL(page.url());
+  expect(signInUrl.pathname).toBe("/login");
+  expect(signInUrl.searchParams.get("next")).toBe(`/conversations/${operationId}/source`);
   const client = new Client({ name: "history-browser-contract",version: "1" });
   const env = { APP_API_URL: process.env.APP_ORIGIN!,APP_API_TOKEN: alice.token };
   const directory = await mkdtemp(join(tmpdir(),"jumpstart-chat-cli-"));
