@@ -635,11 +635,16 @@ test("hosted smoke verifies real browser sign-in, two-turn replay, logout and ac
   expect(result.requestLimit).toBe(true);
 });
 
-test("real account tokens share history across production REST, MCP resources/tools, CLI and saved activity UI",async ({ page,browser,request }) => {
+test("real account tokens share history across production REST, MCP resources/tools, CLI and conversation history UI",async ({ page,browser,request }) => {
   const alice = await user(request), bob = await user(request), operationId = randomUUID();
   const created = await request.post("/api/v1/conversations",{ headers: { authorization: `Bearer ${alice.token}` },data: { operationId,message: "Shared metadata across transports" } });
   expect([200,202]).toContain(created.status());
   await expect.poll(async () => (await (await request.get(`/api/v1/conversations/${operationId}`,{ headers: { authorization: `Bearer ${alice.token}` } })).json()).status).toBe("active");
+  expect((await request.get(`/api/v1/conversations/${operationId}/source-events?limit=1`)).status()).toBe(401);
+  await page.goto(`/conversations/${operationId}/source`);
+  const signInUrl = new URL(page.url());
+  expect(signInUrl.pathname).toBe("/login");
+  expect(signInUrl.searchParams.get("next")).toBe(`/conversations/${operationId}/source`);
   const client = new Client({ name: "history-browser-contract",version: "1" });
   const env = { APP_API_URL: process.env.APP_ORIGIN!,APP_API_TOKEN: alice.token };
   const directory = await mkdtemp(join(tmpdir(),"jumpstart-chat-cli-"));
@@ -684,6 +689,9 @@ test("real account tokens share history across production REST, MCP resources/to
       await foreignPage.goto(`/conversations/${operationId}/runs`);
       await expect(foreignPage.locator("main [role=alert]")).toContainText("Conversation not found");
       await expect(foreignPage.getByRole("heading",{ name: "Run completed" })).toHaveCount(0);
+      await foreignPage.goto(`/conversations/${operationId}/source`);
+      await expect(foreignPage.locator("main [role=alert]")).toContainText("Conversation not found");
+      await expect(foreignPage.locator("ol")).not.toContainText("Shared metadata across transports");
     } finally { await foreignContext.close(); }
     const sourceResponse = await request.get(`/api/v1/conversations/${operationId}/source-events?limit=1`,{
       headers: { authorization: `Bearer ${alice.token}` },
@@ -699,6 +707,12 @@ test("real account tokens share history across production REST, MCP resources/to
     const sourceTool = await client.callTool({ name: "conversations_source_events",arguments: { operationId } });
     expect(sourceTool.isError).not.toBe(true);
     expect(JSON.parse((sourceTool.content as { text: string }[])[0].text).items[0]).toEqual(sourcePage.items[0]);
+    await page.goto(`/conversations/${operationId}/source`);
+    await expect(page.getByRole("heading",{ name: "Source stream" })).toBeVisible();
+    await expect(page.locator("ol")).toContainText("Shared metadata across transports");
+    await page.reload();
+    await expect(page.locator("ol")).toContainText("Shared metadata across transports");
+    await auditAccessibility(page,"source stream");
     expect(await runCli(["conversations","reconcile",operationId],env)).toMatchObject({ complete: true,checkpoint: expect.any(Number) });
     const reconcileTool = await client.callTool({ name: "conversations_reconcile",arguments: { operationId } });
     expect(reconcileTool.isError).not.toBe(true);

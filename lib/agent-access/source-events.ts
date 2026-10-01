@@ -3,21 +3,8 @@ import { z } from "zod";
 import { AppError } from "../http/errors";
 import { accessOwner, operationId, type AccessOwner, type SessionAccessStore } from "./contract";
 import { projectEvent } from "./projection";
-import { projectionEntry } from "./projection-contract";
-
-export const sourceEventOptions = z.object({
-  startIndex: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER-250).default(0),
-  limit: z.number().int().min(1).max(50).default(20),
-}).strict();
-
-export const sourceEventPage = z.object({
-  schemaVersion: z.literal(1),
-  source: z.literal("eve-durable-stream"),
-  items: z.array(z.object({ ...projectionEntry.shape,sourceIndex: z.number().int().nonnegative() }).strict()),
-  scanned: z.number().int().nonnegative(),
-  nextIndex: z.number().int().nonnegative(),
-  complete: z.boolean(),
-}).strict();
+import { sourceEventOptions, sourceEventPage } from "./source-contract";
+export { sourceEventOptions, sourceEventPage } from "./source-contract";
 
 /** Read selected safe events in exact Eve stream order; never infer model-history winners. */
 export async function readSourceEvents(store: SessionAccessStore,owner: AccessOwner,operation: string,input: unknown,
