@@ -119,10 +119,14 @@ try {
   await server.stop(); server = undefined;
   phase("deterministic AI evals");
   await command("npm", ["run", "test:ai"], { cwd: checkout, env });
-  phase("only intended project identity files changed");
+  phase("only intended template initialization files changed");
   const changed = (await command("git", ["diff", "--name-only", "HEAD"], { cwd: checkout }))
     .split("\n").filter(Boolean).sort();
-  assert.deepEqual(changed,["README.md","app.config.ts","package-lock.json","package.json","supabase/config.toml"].sort());
+  assert.deepEqual(changed,["README.md","app.config.ts","docs/DELIVERY.md","package-lock.json","package.json","supabase/config.toml"].sort());
+  const deliveryLog = await readFile(join(checkout,"docs/DELIVERY.md"),"utf8");
+  assert.match(deliveryLog,/^<!-- PROJECT_DELIVERY_LOG -->/);
+  assert.match(deliveryLog,/No application release checkpoints have been recorded yet\./);
+  assert.doesNotMatch(deliveryLog,/draft PR #1|current account-closure inspection checkpoint/);
   assert.equal(await command("git",["ls-files","--others","--exclude-standard"],{ cwd: checkout }),"");
   console.log(`Quickstart passed at ${revision.slice(0, 7)}: template initialization, clean pinned install/check/build, two services, seed/rerun, restart persistence, two-owner browser/REST/CLI/MCP and deterministic AI evals. No paid turn or hosted deployment.`);
 } catch (error) {
