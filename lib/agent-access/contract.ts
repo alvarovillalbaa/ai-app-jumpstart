@@ -61,7 +61,7 @@ export interface SessionAccessStore {
   bind(owner: AccessOwner, operation: string, session: string): Promise<boolean>;
   cancelStarting(owner: AccessOwner, operation: string): Promise<boolean>;
   ownsSession(owner: AccessOwner, session: string): Promise<boolean>;
-  /** Permanent application-row fence; also blocks new Eve input for this owner. */
+  /** Permanent application-row fence; app data and Eve session routes are denied except cancellation. */
   isFenced(owner: AccessOwner): Promise<boolean>;
   revoke(owner: AccessOwner, id: string): Promise<boolean>;
   claimNonce(id: string, expiresAt: number, now: number): Promise<boolean>;

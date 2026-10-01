@@ -24,8 +24,8 @@ it("lets a verified owner cancel a pending start with an exhausted quota while r
     await budgets.reserve({ ...owner,operationId: id,requestHash: hash,estimateMicros: 60,
       policy: { id: "fixture",dailyMicros: 100,maxActive: 1,maxPerMinute: 2 },now: Date.now() });
     await access.reserve({ ...owner,id: randomUUID(),operationId: id,requestHash: hash });
-    await admitDataRequest(owner,process.env,async () => limits);
-    await expect(admitDataRequest(owner,process.env,async () => limits)).rejects.toMatchObject({ status: 429,code: "request_limit" });
+    await admitDataRequest(owner,process.env,async () => limits,async () => access);
+    await expect(admitDataRequest(owner,process.env,async () => limits,async () => access)).rejects.toMatchObject({ status: 429,code: "request_limit" });
     application.mockResolvedValue({ cancelStart: (user: typeof owner,operation: string) => cancelPendingStart(access,budgets,user,operation) });
     const request = () => new Request("http://localhost:3000/api/v1/conversations/"+id+"/cancel-start",{ method: "POST" });
     const context = { params: Promise.resolve({ operationId: id }) };
@@ -39,6 +39,6 @@ it("lets a verified owner cancel a pending start with an exhausted quota while r
     expect(await response.json()).toMatchObject({ operationId: id,status: "cancelled" });
     expect(await budgets.snapshot({ ...owner,now: Date.now() })).toMatchObject({ active: 0,reservedMicros: 0,chargedMicros: 0 });
     expect(await access.bind(owner,id,"late-runtime")).toBe(false);
-    await expect(admitDataRequest(owner,process.env,async () => limits)).rejects.toMatchObject({ status: 429 });
+    await expect(admitDataRequest(owner,process.env,async () => limits,async () => access)).rejects.toMatchObject({ status: 429 });
   } finally { await Promise.all([access.close(),budgets.close(),limits.close()]); }
 });

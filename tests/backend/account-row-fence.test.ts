@@ -40,7 +40,10 @@ it("permanently fences an owner's SQLite application rows across stores while pr
         VALUES('oa',?,?,'hash','policy',1,1,1,'reserved')`).run(alice.tenant,alice.subject);
       db.prepare(`INSERT INTO app_budget_reservations(operation_id,tenant,subject,request_hash,policy_id,estimate_micros,day,created_at,status)
         VALUES('ob',?,?,'hash','policy',1,1,1,'reserved')`).run(bob.tenant,bob.subject);
-      expect(setSqliteAccountFence(path,alice)).toMatchObject({ status: "fenced",created: true });
+      const firstFence = setSqliteAccountFence(path,alice);
+      expect(firstFence).toMatchObject({ status: "fenced",created: true,
+        scope: expect.stringContaining("application-row inserts/updates and authenticated app-data requests are fenced") });
+      expect(firstFence.scope).toContain("Eve session routes are denied except cancellation");
       expect(setSqliteAccountFence(path,alice)).toMatchObject({ status: "fenced",created: false });
       expect(() => db.prepare("INSERT INTO app_records VALUES('a2',?,?,'A2','late',1,'now','now')")
         .run(alice.tenant,alice.subject)).toThrow("fenced");

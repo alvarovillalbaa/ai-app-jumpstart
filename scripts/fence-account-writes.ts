@@ -30,7 +30,7 @@ export function setSqliteAccountFence(path: string,owner: Owner) {
       .run(owner.tenant,owner.subject);
     db.exec("COMMIT");
     return { format: "ai-app-jumpstart-account-row-fence-v1",provider: "sqlite",status: "fenced",created: result.changes === 1,
-      scope: "application-row INSERT/UPDATE in this database only; private objects, Auth, Eve/Workflow and external copies remain unfenced" };
+      scope: "application-row inserts/updates and authenticated app-data requests are fenced; Eve session routes are denied except cancellation; active work, private object stores, Auth, Workflow and external copies remain outside this fence" };
   } catch (error) { if (db.isTransaction) db.exec("ROLLBACK");throw error; }
   finally { db.close(); }
 }
@@ -57,7 +57,7 @@ export async function setPostgresAccountFence(url: string,owner: Owner) {
     const inserted = await client.query("INSERT INTO app_private.account_fences(tenant,subject) VALUES($1,$2) ON CONFLICT DO NOTHING RETURNING 1",[owner.tenant,owner.subject]);
     await client.query("COMMIT");
     return { format: "ai-app-jumpstart-account-row-fence-v1",provider: "postgres",status: "fenced",created: inserted.rowCount === 1,
-      scope: "application-row INSERT/UPDATE in this database only; private objects, Auth, Eve/Workflow and external copies remain unfenced" };
+      scope: "application-row inserts/updates and authenticated app-data requests are fenced; Eve session routes are denied except cancellation; active work, private object stores, Auth, Workflow and external copies remain outside this fence" };
   } catch (error) { await client.query("ROLLBACK").catch(() => {});throw error; }
   finally { await client.end(); }
 }
@@ -75,7 +75,7 @@ export async function setConvexAccountFence(siteUrl: string,secret: string,owner
   if (!response.ok) throw new Error("Convex account fence request failed.");
   const result = z.object({ status: z.literal("fenced"),created: z.boolean() }).strict().parse(await response.json());
   return { format: "ai-app-jumpstart-account-row-fence-v1",provider: "convex",...result,
-    scope: "application-row mutations only; private objects, Auth, Eve/Workflow and external copies remain unfenced" };
+    scope: "application-row inserts/updates and authenticated app-data requests are fenced; Eve session routes are denied except cancellation; active work, private object stores, Auth, Workflow and external copies remain outside this fence" };
 }
 
 async function main(args: string[],env: NodeJS.ProcessEnv) {

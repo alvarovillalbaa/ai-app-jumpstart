@@ -1,4 +1,6 @@
 import { authenticate,bearerToken } from "./auth";
+import { getSessionAccessStore } from "../agent-access/store";
+import type { SessionAccessStore } from "../agent-access/contract";
 import { chatIdentity } from "../agent-access/identity";
 import { verifySupabaseIdentity } from "../auth/identity";
 import type { PublicAuthSettings } from "../auth/settings";
@@ -8,7 +10,13 @@ import { getRequestLimitStore } from "../request-limits/store";
 import { requestsPerMinute } from "../request-limits/settings";
 import { limitResult,type RequestLimitStore } from "../request-limits/contract";
 
-export async function admitDataRequest(owner: Owner,env: Record<string,string | undefined> = process.env,store: () => Promise<RequestLimitStore> = getRequestLimitStore) {
+export async function admitDataRequest(owner: Owner,env: Record<string,string | undefined> = process.env,
+  store: () => Promise<RequestLimitStore> = getRequestLimitStore,
+  accessStore: () => Promise<Pick<SessionAccessStore,"isFenced">> = getSessionAccessStore) {
+  let fenced: boolean;
+  try { fenced = await (await accessStore()).isFenced(owner); }
+  catch { throw new AppError(503,"account_state_unavailable","Account access could not be verified. Try again later."); }
+  if (fenced) throw new AppError(403,"account_fenced","Application access is permanently closed for this account.");
   const limit = requestsPerMinute(env);
   if (!limit) return;
   let result;

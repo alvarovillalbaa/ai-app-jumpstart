@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { once } from "node:events";
 import { spawn } from "node:child_process";
 import { afterEach, expect, it, vi } from "vitest";
+import * as accessStores from "../../lib/agent-access/store";
+import type { SessionAccessStore } from "../../lib/agent-access/contract";
 import { sqliteUploadCatalog } from "../../lib/uploads/catalog-sqlite";
 import { UploadIntake } from "../../lib/uploads/intake";
 import { createUploadScanner, pingClamd, pingRemoteScanner, remoteScannerSettings, scanWithClamd, scanWithRemote } from "../../lib/uploads/scanner";
@@ -17,13 +19,19 @@ import { run } from "../../scripts/app-cli";
 const roots: string[] = [];
 const servers: Server[] = [];
 afterEach(async () => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => server.close(() => resolve()))));
   await Promise.all(roots.splice(0).map(root => rm(root,{ recursive: true,force: true })));
 });
 
+function allowOpenAccountRequests() {
+  vi.spyOn(accessStores,"getSessionAccessStore").mockResolvedValue({ isFenced: async () => false } as unknown as SessionAccessStore);
+}
+
 it("uses an authenticated HTTPS scanner for managed scan-on-read without releasing an unscanned byte",async () => {
+  allowOpenAccountRequests();
   const settings = { UPLOAD_SCANNER_PROVIDER: "remote",UPLOAD_SCANNER_URL: "https://scanner.example.test/v1/scan",
     UPLOAD_SCANNER_TOKEN: "r".repeat(48) };
   const token = "managed-upload-owner-token-".repeat(3);
@@ -103,6 +111,7 @@ it("rejects malformed remote scanner configuration and replies, and probes manag
 });
 
 it("uses a fresh socket verdict for each owner download through HTTP and CLI",async () => {
+  allowOpenAccountRequests();
   const token = "upload-download-scanner-token-".repeat(3);
   vi.stubEnv("AUTH_PROVIDER","api-key");
   vi.stubEnv("APP_API_KEYS",JSON.stringify([{ sha256: createHash("sha256").update(token).digest("hex"),
