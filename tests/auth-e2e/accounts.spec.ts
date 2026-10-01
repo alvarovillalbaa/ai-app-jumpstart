@@ -7,6 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { auditAccessibility } from "../helpers/accessibility";
 import { run as runCli } from "../../scripts/app-cli";
+import { inspectSupabaseAuthSessionRows } from "../../scripts/inspect-account-auth-sessions";
 import { preferences,defaultPreferences } from "../../lib/preferences/contract";
 import { runHostedSmoke } from "../../scripts/smoke-hosted.mjs";
 import { createSessionAccessStore } from "../../lib/agent-access/store";
@@ -403,6 +404,7 @@ test("hard Auth deletion rejects every stale session through REST, CLI and MCP",
   const sessionId = (token: string) => JSON.parse(Buffer.from(token.split(".")[1],"base64url").toString()).session_id;
   expect(sessionId(first.access_token)).toBeTruthy();
   expect(sessionId(first.access_token)).not.toBe(sessionId(second.access_token));
+  expect(await inspectSupabaseAuthSessionRows(process.env.SUPABASE_AUTH_DATABASE_URL!,first.user.id,true)).toBe(2);
 
   const headers = (token: string) => ({ authorization: `Bearer ${token}` });
   for (const session of sessions)
@@ -426,6 +428,7 @@ test("hard Auth deletion rejects every stale session through REST, CLI and MCP",
     const missing = await admin.auth.admin.getUserById(first.user.id);
     expect(missing.data.user).toBeNull();
     expect(missing.error?.status).toBe(404);
+    expect(await inspectSupabaseAuthSessionRows(process.env.SUPABASE_AUTH_DATABASE_URL!,first.user.id,false)).toBe(0);
 
     for (const [index,session] of sessions.entries()) {
       const refresh = await request.post(`${auth}/auth/v1/token?grant_type=refresh_token`,{

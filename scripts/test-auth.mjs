@@ -81,17 +81,20 @@ try {
     imageManifest = JSON.parse(await docker("run", "--rm", "--entrypoint", "cat", image, "/app/.next/routes-manifest.json"));
   }
   await docker("network", "create", name);
-  await runContainer("postgres", "postgres:17-bookworm@sha256:639ab7ceb90e13123085b741fb31ef493fba25463002f6da665352e7b534b652", { POSTGRES_PASSWORD: password, POSTGRES_USER: "auth_test", POSTGRES_DB: "auth_test" },supabaseStorage || postgresData ? ["--publish","127.0.0.1::5432"] : []);
+  await runContainer("postgres", "postgres:17-bookworm@sha256:639ab7ceb90e13123085b741fb31ef493fba25463002f6da665352e7b534b652", { POSTGRES_PASSWORD: password, POSTGRES_USER: "auth_test", POSTGRES_DB: "auth_test" },["--publish","127.0.0.1::5432"]);
   // TCP readiness excludes the image's temporary socket-only bootstrap server.
   await waitFor(async () => (await docker("exec", `${name}-postgres`, "pg_isready", "-h", "127.0.0.1", "-U", "auth_test", "-d", "auth_test")).includes("accepting"), "PostgreSQL", async () => {
     if (await docker("inspect", "--format", "{{.State.Running}}", `${name}-postgres`) === "true") return true;
     const logs = await docker("logs", "--tail", "12", `${name}-postgres`);
     throw new Error(`PostgreSQL startup failed: ${logs.replaceAll(password,"[redacted]").slice(-1200)}`);
   });
+  // Operator-side Auth session inspection connects only to this disposable
+  // database through a random host port bound to loopback.
+  const authDatabaseUrl = `postgresql://auth_test:${password}@127.0.0.1:${await portOf(`${name}-postgres`,5432)}/auth_test`;
   await docker("exec", `${name}-postgres`, "psql", "-U", "auth_test", "-d", "auth_test", "-v", "ON_ERROR_STOP=1", "-c", "CREATE ROLE postgres NOLOGIN; CREATE SCHEMA auth AUTHORIZATION auth_test; ALTER ROLE auth_test SET search_path = auth, public;");
   if (supabaseStorage || postgresData) {
     await docker("exec",`${name}-postgres`,"psql","-U","auth_test","-d","auth_test","-v","ON_ERROR_STOP=1","-c","CREATE DATABASE app_data_test;");
-    databaseUrl = `postgresql://auth_test:${password}@127.0.0.1:${await portOf(`${name}-postgres`,5432)}/app_data_test`;
+    databaseUrl = `postgresql://auth_test:${password}@127.0.0.1:${new URL(authDatabaseUrl).port}/app_data_test`;
   }
   if (supabaseStorage) {
     dataFixture = await startSupabaseDataFixture({ directory,jwtSecret,databaseUrl,beforeMigrate: async () => {
@@ -233,7 +236,7 @@ try {
   await waitFor(async () => {
     return (await fetch(`${appOrigin}/api/health/live`, { signal: AbortSignal.timeout(1000) })).ok;
   }, "Production application", async () => web.exitCode === null && web.signalCode === null);
-  await command(process.execPath, ["node_modules/@playwright/test/cli.js", "test", "--config", "playwright.auth.config.ts", ...process.argv.slice(2).filter(arg => !["--chat","--container","--uploads","--supabase","--postgres","--convex","--storage-supabase"].includes(arg))], { env: { ...env, TEST_CHAT: chat ? "1" : "", TEST_CHAT_UPLOADS: uploads ? "1" : "", TEST_AUTH_ORIGIN: publicAuthOrigin, TEST_AUTH_ADMIN_KEY: admin, TEST_MAIL_ORIGIN: mailOrigin,
+  await command(process.execPath, ["node_modules/@playwright/test/cli.js", "test", "--config", "playwright.auth.config.ts", ...process.argv.slice(2).filter(arg => !["--chat","--container","--uploads","--supabase","--postgres","--convex","--storage-supabase"].includes(arg))], { env: { ...env, SUPABASE_AUTH_DATABASE_URL: authDatabaseUrl, TEST_CHAT: chat ? "1" : "", TEST_CHAT_UPLOADS: uploads ? "1" : "", TEST_AUTH_ORIGIN: publicAuthOrigin, TEST_AUTH_ADMIN_KEY: admin, TEST_MAIL_ORIGIN: mailOrigin,
     TEST_RECEIPT_GATE_HOST: chat ? join(directory, "gate") : "", TEST_MODEL_RECEIPTS_HOST: chat ? join(directory, "models.txt") : "",
     TEST_FAILURE_RECEIPTS_HOST: chat ? join(directory, "failures.txt") : "", TEST_CHAT_CONTAINER: containerMode ? `${name}-app` : "" }, stdio: "inherit" });
   if (supabaseData && existsSync(env.SQLITE_PATH)) throw new Error("Supabase mode created an unexpected SQLite application database.");

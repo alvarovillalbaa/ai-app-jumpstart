@@ -3,7 +3,7 @@ import { mkdirSync,mkdtempSync,rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect,it } from "vitest";
+import { expect,it,vi } from "vitest";
 import { SqliteRepository } from "../../lib/data/sqlite";
 import { sqliteAccessStore } from "../../lib/agent-access/sqlite";
 import { sqliteBudgetStore } from "../../lib/budgets/sqlite";
@@ -12,8 +12,11 @@ import { sqlitePreferenceStore } from "../../lib/preferences/sqlite";
 import { sqliteRequestLimitStore } from "../../lib/request-limits/sqlite";
 import { localUploadObjects } from "../../lib/uploads/local";
 import { inspectAccountClosure } from "../../scripts/inspect-account-closure";
+import { inspectSupabaseAuthSessionRows } from "../../scripts/inspect-account-auth-sessions";
 import { setSqliteAccountFence } from "../../scripts/fence-account-writes";
 import { installSqliteAccountFences } from "../../lib/account-closure/sqlite-fences";
+
+vi.mock("../../scripts/inspect-account-auth-sessions",() => ({ inspectSupabaseAuthSessionRows: vi.fn() }));
 
 it("joins the real SQLite row and local object observations without exposing identity or partial output",async () => {
   const dir = mkdtempSync(join(tmpdir(),"jumpstart-closure-observation-")),path = join(dir,"app.sqlite"),root = join(dir,"uploads");
@@ -36,6 +39,8 @@ it("joins the real SQLite row and local object observations without exposing ide
         remaining: { applicationRows: true,privateObjects: true,globalUnattributableRows: false,applicationWritesPossible: true } });
       expect(observed.workflow).toBeNull();
       expect(observed.remaining.workflowRows).toBeNull();
+      expect(observed.authSessionRows).toBeNull();
+      expect(observed.remaining.authSessionRows).toBeNull();
       expect(JSON.stringify(observed)).not.toContain(alice.tenant);
       expect(JSON.stringify(observed)).not.toContain(alice.subject);
       expect((await inspectAccountClosure("sqlite","local",bob,env)).objectCount).toBe(0);
@@ -80,6 +85,7 @@ it("joins the real SQLite row and local object observations without exposing ide
       const supabaseOwner = { tenant: "supabase:https://identity.example",subject: "715ed5db-f090-4b8c-a067-640ecee36aa0" };
       const authEnv = { ...env,AUTH_PROVIDER: "supabase",SUPABASE_AUTH_URL: "https://identity.example",
         SUPABASE_AUTH_ADMIN_KEY: "sb_secret_disposable_operator_fixture" };
+      const authDatabaseEnv = { ...authEnv,SUPABASE_AUTH_DATABASE_URL: "postgresql://operator:private@db.example.test/auth" };
       let authPresent = true;
       const request: typeof fetch = async input => {
         const url = new URL(input instanceof Request ? input.url : String(input));
@@ -92,7 +98,17 @@ it("joins the real SQLite row and local object observations without exposing ide
         .rejects.toThrow("requires AUTH_PROVIDER=supabase");
       const authObserved = await inspectAccountClosure("sqlite","local",supabaseOwner,authEnv,request);
       expect(authObserved).toMatchObject({ status: "retained_or_unattributable",authProvider: "supabase",
-        authIdentityApplicable: true,authIdentityPresent: true,remaining: { authIdentity: true } });
+        authIdentityApplicable: true,authIdentityPresent: true,authSessionRows: null,
+        remaining: { authIdentity: true,authSessionRows: null } });
+      await expect(inspectAccountClosure("sqlite","local",alice,env,fetch,{ authSessionsPostgres: true }))
+        .rejects.toThrow("requires AUTH_PROVIDER=supabase");
+      await expect(inspectAccountClosure("sqlite","local",supabaseOwner,authEnv,request,{ authSessionsPostgres: true }))
+        .rejects.toThrow("A Supabase Auth database URL is required");
+      vi.mocked(inspectSupabaseAuthSessionRows).mockResolvedValueOnce(2);
+      const withSessions = await inspectAccountClosure("sqlite","local",supabaseOwner,authDatabaseEnv,request,{ authSessionsPostgres: true });
+      expect(inspectSupabaseAuthSessionRows).toHaveBeenCalledWith(authDatabaseEnv.SUPABASE_AUTH_DATABASE_URL,supabaseOwner.subject,true);
+      expect(withSessions).toMatchObject({ authSessionRows: 2,remaining: { authSessionRows: 2 } });
+      expect(JSON.stringify(withSessions)).not.toContain(authDatabaseEnv.SUPABASE_AUTH_DATABASE_URL);
       expect(JSON.stringify(authObserved)).not.toContain(supabaseOwner.subject);
       expect(JSON.stringify(authObserved)).not.toContain("private@example.com");
       expect(JSON.stringify(authObserved)).not.toContain(authEnv.SUPABASE_AUTH_ADMIN_KEY);
@@ -100,6 +116,9 @@ it("joins the real SQLite row and local object observations without exposing ide
       expect(await inspectAccountClosure("sqlite","local",supabaseOwner,authEnv,request)).toMatchObject({
         status: "retained_or_unattributable",authIdentityApplicable: true,authIdentityPresent: false,
         remaining: { authIdentity: false,globalUnattributableRows: true } });
+      vi.mocked(inspectSupabaseAuthSessionRows).mockResolvedValueOnce(0);
+      expect(await inspectAccountClosure("sqlite","local",supabaseOwner,authDatabaseEnv,request,{ authSessionsPostgres: true }))
+        .toMatchObject({ authIdentityPresent: false,authSessionRows: 0,remaining: { authIdentity: false,authSessionRows: 0 } });
     } finally { db.close(); }
   } finally { rmSync(dir,{ recursive: true,force: true }); }
 });
