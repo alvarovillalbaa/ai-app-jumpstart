@@ -1,7 +1,7 @@
 import { defineHook } from "eve/hooks";
 import { getSessionAccessStore } from "../../lib/agent-access/store";
 import { recordRuntimeSession } from "../../lib/agent-access/runtime-receipt";
-import { runtimeBudgets, prepareRuntimeModelCall } from "#lib/budgets.ts";
+import { runtimeBudgets, prepareRuntimeModelCall, runtimeBudgetReservationReference } from "#lib/budgets.ts";
 import { installBudgetProvider } from "../../lib/budgets/model";
 import { persistRuntimeProjection } from "../../lib/agent-access/projection";
 import { observeRuntimeStream } from "../../lib/observability/runtime";
@@ -14,7 +14,7 @@ export default defineHook({
   events: {
     async "*"(event,ctx) {
       if (ctx.session.auth.initiator?.authenticator !== "jumpstart") return;
-      observeRuntimeStream(event,ctx);
+      observeRuntimeStream(event,ctx,undefined,event.type === "step.completed" ? runtimeBudgetReservationReference(event.data.turnId) : undefined);
       try { await persistRuntimeProjection(await getSessionAccessStore(),event,ctx); }
       catch {
         // The source event is already durable in Eve. A failed secondary copy

@@ -6,6 +6,7 @@ import { requestHash } from "../agent-access/signing";
 import { budgetPolicy, micros, type BudgetStore } from "./contract";
 import { costBasis, quotedEnvelopeMicros } from "./cost-basis";
 import { defaultMaxInputBytes, inputPayloadBytes, type ModelParams } from "./input";
+import { observeRuntimeBudgetAttempt, runtimeReference, type AuditSink, type RuntimeBudgetAttemptReference } from "../observability/runtime";
 
 export const runtimeBudgetSettings = z.object({ policy: budgetPolicy, estimateMicros: micros.positive(), maxModelCalls: z.number().int().min(1).max(1000), maxInputBytes: z.number().int().min(1).max(1024 * 1024).optional(), modelIds: z.array(z.string().min(1)).min(1).max(10), costBasis }).strict().superRefine((settings, ctx) => {
   if (settings.estimateMicros > settings.policy.dailyMicros) {
@@ -56,7 +57,7 @@ export function stableBudgetId(value: string) {
 /** Runtime-only lifecycle controller. No caller-provided policy or usage inputs. */
 export class RuntimeBudgets {
   constructor(private budgets: BudgetStore, private access: SessionAccessStore, private state: BudgetStateHandle,
-    private settings: RuntimeBudgetSettings, private clock = Date.now) {}
+    private settings: RuntimeBudgetSettings, private clock = Date.now, private auditSink: AuditSink = () => {}) {}
   private outputCaps() { return this.settings.costBasis.models.map(model => ({ id: model.id, limit: model.maxOutputTokens })); }
   private owner(ctx: Context) {
     const initiator = ctx.session.auth.initiator, current = ctx.session.auth.current;
@@ -101,10 +102,15 @@ export class RuntimeBudgets {
     if (!await this.access.ownsSession(call.owner,call.sessionId)) throw new Error("Session ownership is unavailable.");
     // Never use a replayable event/turn ID for a billed provider attempt. A retry
     // must consume a new durable slot even when restored state lost its count.
-    if (!await this.budgets.claimAttempt({ ...call.owner, operationId: run.operationId, attemptId: requestHash(`${call.eventId}:${randomUUID()}`),
+    const attemptId = requestHash(`${call.eventId}:${randomUUID()}`);
+    if (!await this.budgets.claimAttempt({ ...call.owner, operationId: run.operationId, attemptId,
       maxAttempts: Math.min(run.maxModelCalls,this.settings.maxModelCalls) })) throw new Error("AI model-call budget exhausted.");
     this.state.update(s => ({ ...s, providerCall: { ...call, calls: call.calls + 1 } }));
-    return Math.min(original,current);
+    const attempt: RuntimeBudgetAttemptReference = { attemptRef: attemptId,reservationRef: runtimeReference(run.operationId),
+      sessionRef: runtimeReference(call.sessionId),turnRef: runtimeReference(run.turnId),stepRef: runtimeReference(call.eventId),
+      modelRef: runtimeReference(call.modelId),providerRef: runtimeReference(provider),callKind: call.kind };
+    observeRuntimeBudgetAttempt(attempt,"claimed",this.auditSink);
+    return { outputCap: Math.min(original,current),attempt,auditSink: this.auditSink };
   }
   async beginStep(ctx: Context, eventId: string, modelId: string, continuationSequence?: number) {
     let run = this.state.get().turn;

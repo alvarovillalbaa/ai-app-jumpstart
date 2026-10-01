@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery, type QueryCtx } from "./_generated/server";
-import { admission, settlement, settlementCorrection, correctionEntry, lookup, dayOf, refusal, attempt, attemptOwner, outstandingOptions, outstandingEntry, pageOfOutstanding, ledgerOptions, ledgerEntry, pageOfLedger, ownerCorrectionEntry, pageOfOwnerCorrections } from "../lib/budgets/contract";
+import { admission, settlement, settlementCorrection, correctionEntry, lookup, dayOf, refusal, attempt, attemptOwner, attemptReferences, outstandingOptions, outstandingEntry, pageOfOutstanding, ledgerOptions, ledgerEntry, pageOfLedger, ownerCorrectionEntry, pageOfOwnerCorrections } from "../lib/budgets/contract";
 import { assertAccountOpen } from "./accountFence";
 
 async function state(ctx: QueryCtx, input: ReturnType<typeof lookup.parse>) {
@@ -138,4 +138,11 @@ export const attemptCount = internalQuery({ args: { input: v.any() }, handler: a
   const row = await ctx.db.query("budgetReservations").withIndex("by_operation",q => q.eq("operationId",input.operationId)).unique();
   if (!row || row.tenant!==input.tenant || row.subject!==input.subject) return 0;
   return (await ctx.db.query("budgetAttempts").withIndex("by_operation_attempt",q => q.eq("operationId",input.operationId)).take(1000)).length;
+} });
+export const listAttempts = internalQuery({ args: { input: v.any() }, handler: async (ctx,args) => {
+  const input = attemptOwner.parse(args.input);
+  const row = await ctx.db.query("budgetReservations").withIndex("by_operation",q => q.eq("operationId",input.operationId)).unique();
+  if (!row || row.tenant!==input.tenant || row.subject!==input.subject) return [];
+  const attempts = await ctx.db.query("budgetAttempts").withIndex("by_operation_attempt",q => q.eq("operationId",input.operationId)).take(1000);
+  return attemptReferences.parse(attempts.map(item => item.attemptId));
 } });

@@ -117,10 +117,16 @@ export function budgetContract(name: string, factory: () => Promise<BudgetStore>
       expect(await store.attemptCount({ ...owner(input), operationId: input.operationId })).toBe(2);
       const accepted = attempts[results.indexOf(true)];
       expect(await store.claimAttempt(accepted)).toBe(true);
+      const references = attempts.filter((_attempt,index) => results[index]).map(item => item.attemptId).sort();
+      expect(await store.listAttempts({ ...owner(input),operationId: input.operationId })).toEqual(references);
+      expect(await store.listAttempts({ ...owner(input),subject: "bob",operationId: input.operationId })).toEqual([]);
+      expect(await store.listAttempts({ ...owner(input),tenant: randomUUID(),operationId: input.operationId })).toEqual([]);
+      expect(await store.listAttempts({ ...owner(input),operationId: randomUUID() })).toEqual([]);
       expect(await store.claimAttempt({ ...accepted, subject: "bob" })).toBe(false);
       expect(await store.attemptCount({ ...owner(input), subject: "bob", operationId: input.operationId })).toBe(0);
       await store.settle({ ...owner(input), operationId: input.operationId, actualMicros: null });
       expect(await store.claimAttempt(accepted)).toBe(false);
+      expect(await store.listAttempts({ ...owner(input),operationId: input.operationId })).toEqual(references);
     });
     it("atomically reserves daily capacity under concurrent distinct requests", async () => {
       const results = await Promise.all(Array.from({ length: 6 }, () => store.reserve(next(input))));

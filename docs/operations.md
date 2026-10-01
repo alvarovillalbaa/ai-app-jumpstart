@@ -32,7 +32,7 @@ For an operator-wide read-only inventory, run `npm run starts:inspect -- list` f
 
 ## Correct an already-settled cost
 
-After reconciling a provider invoice or trace, use backend credentials for the target application database. PostgreSQL/Supabase must have applied `20260923173000_budget_corrections.sql`; Convex needs the updated schema/functions. The command does not use a browser token and is not exposed through REST or MCP.
+After reconciling a provider invoice or trace, use backend credentials for the target application database. PostgreSQL/Supabase must have applied `20260923173000_budget_corrections.sql` and `20261001100000_budget_attempt_inventory.sql`; Convex needs the updated schema/functions. The command does not use a browser token and is not exposed through REST or MCP.
 
 ```sh
 npm run budgets:reconcile -- show OPERATION_UUID --tenant TENANT --subject SUBJECT
@@ -42,7 +42,7 @@ npm run budgets:reconcile -- correct OPERATION_UUID --tenant TENANT --subject SU
   --evidence 'invoice:ticket-123'
 ```
 
-`correct` prints a preview without mutating anything. Add `--apply` to the same command after checking the owner, operation, current cost, model-attempt count and evidence. Amounts are integer micro-USD; `unknown` means the current settled amount is `null`. Use an actual amount of `0` only with proof that no billable work occurred. Keep the same correction UUID and inputs when retrying after a lost response. The backend accepts the correction only if the reservation is already settled and its current amount exactly matches `--expected`; a stale correction returns `conflict` and changes nothing. It appends an immutable entry with backend time, actor, reason and evidence reference. The CLI `show` output includes the latest 100 entries; retain the database audit table and backups for full history.
+`show` includes the number and exact references of durable provider attempts. Compare these with `runtime_budget_attempt.attemptRef` rows and their hashed `reservationRef`; attempt inventory is available only through this backend-credentialed, owner-scoped command. A missing terminal log does not prove a provider call was free. `correct` prints a preview without mutating anything. Add `--apply` to the same command after checking the owner, operation, current cost, model-attempt references and provider evidence. Amounts are integer micro-USD; `unknown` means the current settled amount is `null`. Use an actual amount of `0` only with proof that no billable work occurred. Keep the same correction UUID and inputs when retrying after a lost response. The backend accepts the correction only if the reservation is already settled and its current amount exactly matches `--expected`; a stale correction returns `conflict` and changes nothing. It appends an immutable entry with backend time, actor, reason and evidence reference. The CLI `show` output includes the latest 100 entries; retain the database audit table and backups for full history.
 
 This command cannot settle or refund a `reserved` operation. Investigate the runtime, attempts, binding and provider records first. A worker may still be running, so no elapsed-time rule or unverified zero is safe for outstanding starts. Provider cost envelopes, disputed-start recovery and automatic reconciliation remain release work.
 

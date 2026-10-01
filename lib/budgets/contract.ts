@@ -57,6 +57,7 @@ export function pageOfOwnerCorrections(rows: z.infer<typeof ownerCorrectionEntry
   return ownerCorrectionPage.parse({ items,nextCursor: rows.length > limit && last ? `${last.at}.${last.correctionId}` : null });
 }
 export const attempt = attemptOwner.extend({ attemptId: bodyHash, maxAttempts: z.number().int().min(1).max(1000) }).strict();
+export const attemptReferences = z.array(bodyHash).max(1000);
 export type Admission = z.infer<typeof admission>;
 export type Settlement = z.infer<typeof settlement>;
 export const admissionResult = z.discriminatedUnion("status", [
@@ -81,6 +82,7 @@ export interface BudgetStore {
   snapshot(input: z.infer<typeof lookup>): Promise<BudgetSnapshot>;
   claimAttempt(input: z.infer<typeof attempt>): Promise<boolean>;
   attemptCount(input: z.infer<typeof attemptOwner>): Promise<number>;
+  listAttempts(input: z.infer<typeof attemptOwner>): Promise<z.infer<typeof attemptReferences>>;
   close(): Promise<void>;
 }
 export const budgetCommand = z.discriminatedUnion("operation", [
@@ -96,6 +98,7 @@ export const budgetCommand = z.discriminatedUnion("operation", [
   lookup.extend({ operation: z.literal("budget.snapshot") }),
   attempt.extend({ operation: z.literal("budget.claimAttempt") }),
   attemptOwner.extend({ operation: z.literal("budget.attemptCount") }),
+  attemptOwner.extend({ operation: z.literal("budget.listAttempts") }),
 ]);
 export const dayOf = (now: number) => Math.floor(now / 86_400_000);
 export function refusal(state: BudgetSnapshot, input: Admission): AdmissionResult | null {

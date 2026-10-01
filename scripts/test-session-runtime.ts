@@ -64,7 +64,7 @@ function start(command: string, args: string[]) {
     for (const line of lines) {
       try {
         const row = JSON.parse(line);
-        if (["runtime_lifecycle","runtime_session_bound","runtime_step_usage"].includes(row.event)) {
+        if (["runtime_lifecycle","runtime_session_bound","runtime_step_usage","runtime_budget_attempt"].includes(row.event)) {
           if (auditRows.length<2000) auditRows.push(row);else auditOverflow = true;
         }
       } catch { /* Unrelated framework output is not an audit record. */ }
@@ -177,7 +177,20 @@ try {
   const modelAudit = auditRows.find(row => row.event === "runtime_lifecycle" && row.phase === "model.call.completed" && row.sessionRef === runtimeReference(recovered.sessionId!));
   assert.equal(modelAudit?.outcome,"completed");assert.ok(typeof modelAudit?.durationMs === "number");
   assert.equal(modelAudit?.modelRef,runtimeReference("openai/gpt-5.6-luna-fast"));
-  assert.ok(auditRows.some(row => row.event === "runtime_step_usage" && row.creationRequestId === creationRequestId));
+  const reservationRef = runtimeReference(input.operationId);
+  await eventually(async () => auditRows.some(row => row.event === "runtime_budget_attempt" && row.phase === "completed" && row.reservationRef === reservationRef),
+    "Provider budget-attempt usage was not observed.");
+  const budgetAttemptAudits = auditRows.filter(row => row.event === "runtime_budget_attempt" && row.reservationRef === reservationRef && row.sessionRef === runtimeReference(recovered.sessionId!));
+  const ledgerAttempts = await budgets.listAttempts({ ...alice,operationId: input.operationId });
+  assert.equal(ledgerAttempts.length,1,"The initial fixture turn must have one durable provider attempt.");
+  assert.deepEqual(budgetAttemptAudits.filter(row => row.phase === "claimed").map(row => row.attemptRef).toSorted(),ledgerAttempts,
+    "Runtime attempt references must match the owner-only ledger inventory.");
+  assert.deepEqual(budgetAttemptAudits.filter(row => row.phase === "completed").map(row => row.attemptRef).toSorted(),ledgerAttempts,
+    "Each completed provider invocation must retain the exact durable attempt reference.");
+  assert.ok(budgetAttemptAudits.filter(row => row.phase === "completed").every(row => typeof row.inputTokens === "number" && Number.isSafeInteger(row.inputTokens) &&
+    typeof row.outputTokens === "number" && Number.isSafeInteger(row.outputTokens)),
+    "The deterministic provider must report per-attempt token counts.");
+  assert.ok(auditRows.some(row => row.event === "runtime_step_usage" && row.creationRequestId === creationRequestId && row.reservationRef === reservationRef));
   await eventually(async () => (await store.listRuns(alice,input.operationId,{})).items.length === 1,"Owned run summary was not captured.");
   assert.equal((await store.listRuns(alice,input.operationId,{})).items[0].state,"unverified");
   const repair = await reconcileProjections(store,alice,input.operationId,{ resume: true },origin,aliceToken);
@@ -406,7 +419,7 @@ try {
   const privateAudit = JSON.stringify(auditRows);
   for (const value of [...secrets,"One owned turn","Continue the owned conversation","loop-budget-test","input-budget-test","private-provider-error"])
     assert.ok(!privateAudit.includes(value),"Runtime diagnostics captured private data.");
-  console.log("Runtime audit: native lifecycle/timing/usage, signed creation correlation, hashed identifiers, durable tool outcomes and private-payload exclusion passed.");
+  console.log("Runtime audit: native lifecycle/timing/usage, exact budget-attempt joins, signed creation correlation, hashed identifiers, durable tool outcomes and private-payload exclusion passed.");
   assert.equal(limits.length,await lines(receipts),"Every provider call must have one bounded request receipt.");
   assert.ok(limits.every(row => row.maxOutputTokens === 1),"Provider requests exceeded the admitted output limit.");
   assert.ok(limits.every(row => Number.isSafeInteger(row.inputBytes) && row.inputBytes > 0 && row.inputBytes <= budgetSettings.maxInputBytes),"Provider requests exceeded the admitted input payload limit.");

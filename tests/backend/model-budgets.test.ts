@@ -7,6 +7,7 @@ import { inputPayloadBytes, type ModelParams } from "../../lib/budgets/input";
 import { RuntimeBudgets, type RuntimeBudgetState } from "../../lib/budgets/runtime";
 import { sqliteAccessStore } from "../../lib/agent-access/sqlite";
 import { sqliteBudgetStore } from "../../lib/budgets/sqlite";
+import { runtimeReference } from "../../lib/observability/runtime";
 
 const owner = { tenant: "test", subject: "alice" };
 const settings = { policy: { id: "fixture", dailyMicros: 200, maxActive: 1, maxPerMinute: 10 }, estimateMicros: 100, maxModelCalls: 2, modelIds: ["fixture/model"],
@@ -16,6 +17,7 @@ const usage = { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0
 const response = { content: [{ type: "text" as const, text: "ok" }], finishReason: { unified: "stop" as const, raw: undefined }, usage, warnings: [] };
 const prompt = [{ role: "user" as const, content: [{ type: "text" as const, text: "private prompt" }] }];
 let access: ReturnType<typeof sqliteAccessStore>, budgets: ReturnType<typeof sqliteBudgetStore>, state: RuntimeBudgetState, runtime: RuntimeBudgets, operationId: string;
+let auditRows: Readonly<Record<string,unknown>>[];
 const handle = { get: () => state, update: (fn: (state: RuntimeBudgetState) => RuntimeBudgetState) => { state = fn(state); } };
 function context() {
   const auth = { authenticator: "jumpstart", principalType: "user", principalId: owner.subject, issuer: owner.tenant, attributes: { creationOperationId: operationId } };
@@ -30,9 +32,9 @@ function fake() {
   } });
 }
 beforeEach(async () => {
-  access = sqliteAccessStore(":memory:"); budgets = sqliteBudgetStore(":memory:"); state = { turn: null, compaction: null }; operationId = randomUUID();
+  access = sqliteAccessStore(":memory:"); budgets = sqliteBudgetStore(":memory:"); state = { turn: null, compaction: null }; operationId = randomUUID(); auditRows = [];
   await access.reserve({ ...owner, id: randomUUID(), operationId, requestHash: "a".repeat(64) }); await access.bind(owner, operationId, "session");
-  runtime = new RuntimeBudgets(budgets, access, handle, settings);
+  runtime = new RuntimeBudgets(budgets, access, handle, settings,Date.now,row => auditRows.push(row));
   await runtime.beginTurn(context()); await runtime.beginStep(context(), "event", "fixture/model");
 });
 afterEach(async () => { await access.close(); await budgets.close(); });
@@ -43,11 +45,14 @@ it("bounds both generated and streamed provider parameters without changing iden
   const params = { prompt, tools, providerOptions: { fixture: { safe: true } }, maxOutputTokens: 1000 };
   await wrapped.doGenerate(params);
   expect(provider.doGenerateCalls[0]).toEqual({ ...params, maxOutputTokens: 16 });
-  await wrapped.doStream({ ...params, maxOutputTokens: 4 });
+  const streamed = await wrapped.doStream({ ...params, maxOutputTokens: 4 });
+  const reader = streamed.stream.getReader();
+  while (!(await reader.read()).done) { /* consume the same stream returned by the model */ }
   expect(provider.doStreamCalls[0]).toEqual({ ...params, maxOutputTokens: 4 });
   expect(wrapped.modelId).toBe(provider.modelId); expect(wrapped.provider).toBe(provider.provider);
   expect(params.maxOutputTokens).toBe(1000);
   expect(await budgets.attemptCount({ ...owner, operationId })).toBe(2);
+  expect(auditRows.filter(row => row.event === "runtime_budget_attempt" && row.phase === "completed")).toHaveLength(2);
   await expect(wrapped.doGenerate(params)).rejects.toThrow("exhausted");
   expect(provider.doGenerateCalls).toHaveLength(1);
 });
@@ -61,6 +66,13 @@ it("counts AI SDK network retries inside one admitted step and blocks the next r
   expect(provider.doGenerateCalls).toHaveLength(2);
   expect(provider.doGenerateCalls.every(call => call.maxOutputTokens === 16)).toBe(true);
   expect(await budgets.attemptCount({ ...owner, operationId })).toBe(2);
+  const attempts = await budgets.listAttempts({ ...owner,operationId });
+  const claims = auditRows.filter(row => row.event === "runtime_budget_attempt" && row.phase === "claimed");
+  const failures = auditRows.filter(row => row.event === "runtime_budget_attempt" && row.phase === "failed");
+  expect(claims.map(row => row.attemptRef).toSorted()).toEqual(attempts);
+  expect(failures.map(row => row.attemptRef).toSorted()).toEqual(attempts);
+  expect(claims).toEqual(expect.arrayContaining([expect.objectContaining({ reservationRef: runtimeReference(operationId),callKind: "step" })]));
+  expect(JSON.stringify(auditRows)).not.toContain("retry fixture");
   await runtime.endTurn(context());
   expect(await budgets.snapshot({ ...owner, now: Date.now() })).toMatchObject({ chargedMicros: 100, unknownCosts: 1 });
 }, 15_000);
@@ -71,6 +83,36 @@ it("applies the provider boundary to the actual AI SDK streaming path", async ()
   expect(await result.text).toBe("ok");
   expect(provider.doStreamCalls[0].maxOutputTokens).toBe(16);
   expect(await budgets.attemptCount({ ...owner, operationId })).toBe(1);
+  const attempt = (await budgets.listAttempts({ ...owner,operationId }))[0];
+  expect(auditRows).toEqual(expect.arrayContaining([
+    expect.objectContaining({ event: "runtime_budget_attempt",phase: "completed",attemptRef: attempt,
+      reservationRef: runtimeReference(operationId),inputTokens: 1,outputTokens: 1 }),
+  ]));
+});
+
+it("records streamed EOF and consumer cancellation while forwarding the original chunks",async () => {
+  const prepare = (id: string,name: string,params: ModelParams) => runtime.prepareProviderCall(id,name,params);
+  const incomplete = new MockLanguageModelV4({ provider: "fixture",modelId: "model",doStream: { stream: new ReadableStream({
+    start(controller) { controller.enqueue({ type: "text-start",id: "one" });controller.close(); },
+  }) } });
+  const first = await modelWithBudget(incomplete,prepare).doStream({ prompt });
+  const firstReader = first.stream.getReader(),firstChunk = await firstReader.read();
+  expect(firstChunk.value).toEqual({ type: "text-start",id: "one" });
+  expect((await firstReader.read()).done).toBe(true);
+
+  const cancelled = new MockLanguageModelV4({ provider: "fixture",modelId: "model",doStream: { stream: new ReadableStream({
+    start(controller) { controller.enqueue({ type: "text-start",id: "two" }); },
+  }) } });
+  const second = await modelWithBudget(cancelled,prepare).doStream({ prompt });
+  const secondReader = second.stream.getReader();
+  expect((await secondReader.read()).value).toEqual({ type: "text-start",id: "two" });
+  await secondReader.cancel("private cancellation reason");
+
+  const references = await budgets.listAttempts({ ...owner,operationId });
+  const terminals = auditRows.filter(row => row.event === "runtime_budget_attempt" && (row.phase === "incomplete" || row.phase === "cancelled"));
+  expect(terminals.map(row => row.attemptRef).toSorted()).toEqual(references);
+  expect(terminals.map(row => row.phase).toSorted()).toEqual(["cancelled","incomplete"]);
+  expect(JSON.stringify(auditRows)).not.toContain("private cancellation reason");
 });
 
 it("preserves string model resolution through the configured provider and installs only once", async () => {

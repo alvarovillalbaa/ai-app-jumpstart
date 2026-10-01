@@ -1,7 +1,7 @@
 import { expect,it } from "vitest";
 import type { InstrumentationEvent,ProviderContext,JsonValue } from "eve/instrumentation";
 import { runtimeAuditProvider,metadataOnly } from "../../lib/observability/runtime-provider";
-import { runtimeReference,observeRuntimeStream } from "../../lib/observability/runtime";
+import { runtimeReference,observeRuntimeStream,observeRuntimeBudgetAttempt } from "../../lib/observability/runtime";
 import type { MessageStreamEvent } from "eve/client";
 import type { HookContext } from "eve/hooks";
 
@@ -84,4 +84,25 @@ it("reports runtime cost separately, keeps unavailable cost unknown and accepts 
   expect(rows.map(row => row.costMicros)).toEqual([0,2,null,null,null,null,null]);
   expect(rows[0]).toMatchObject({ creationRequestId: "ac37acb6-08ba-4c9a-9c09-014e3f3b42ea",costSource: "runtime_reported" });
   expect(rows[2]).toMatchObject({ costSource: "unknown" });expect(JSON.stringify(rows)).not.toContain("private-");
+  const correlated = { type: "step.completed",meta: { id: "private-event" },data: { turnId: "private-turn",usage: { costUsd: 0 } } } as unknown as MessageStreamEvent;
+  observeRuntimeStream(correlated,ctx,row => rows.push(row),runtimeReference("private-reservation"));
+  observeRuntimeStream(correlated,ctx,row => rows.push(row),"private-unvalidated-reservation");
+  expect(rows.at(-2)).toHaveProperty("reservationRef",runtimeReference("private-reservation"));
+  expect(rows.at(-1)).not.toHaveProperty("reservationRef");
+});
+it("correlates provider attempt phases with hashed metadata and token counts without changing execution on sink failure",() => {
+  const rows: Readonly<Record<string,unknown>>[] = [];
+  const reference = { attemptRef: runtimeReference("private-attempt"),reservationRef: runtimeReference("private-reservation"),
+    sessionRef: runtimeReference("private-session"),turnRef: runtimeReference("private-turn"),stepRef: runtimeReference("private-step"),
+    modelRef: runtimeReference("private-model"),providerRef: runtimeReference("private-provider"),callKind: "step" as const };
+  observeRuntimeBudgetAttempt(reference,"claimed",row => rows.push(row));
+  observeRuntimeBudgetAttempt(reference,"completed",row => rows.push(row),{ inputTokens: 0,outputTokens: 8 });
+  observeRuntimeBudgetAttempt(reference,"failed",row => rows.push(row),{ inputTokens: -1,outputTokens: undefined });
+  expect(rows).toMatchObject([
+    { event: "runtime_budget_attempt",phase: "claimed",...reference },
+    { event: "runtime_budget_attempt",phase: "completed",...reference,inputTokens: 0,outputTokens: 8 },
+    { event: "runtime_budget_attempt",phase: "failed",...reference,inputTokens: null,outputTokens: null },
+  ]);
+  expect(JSON.stringify(rows)).not.toMatch(/private-(attempt|reservation|session|turn|step|model|provider)/);
+  expect(() => observeRuntimeBudgetAttempt(reference,"failed",() => { throw new Error("private sink error"); })).not.toThrow();
 });

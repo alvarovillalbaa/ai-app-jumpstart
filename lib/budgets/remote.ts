@@ -3,7 +3,7 @@ import { z } from "zod";
 import { ConvexBackend } from "../data/convex-client";
 import { acquirePostgresPool } from "../data/postgres-pool";
 import type { Database } from "../data/supabase.generated";
-import { admission, admissionResult, settlement, settlementCorrection, correctionResult, correctionEntry, budgetInspection, lookup, snapshot, attempt, attemptOwner, reservationState, outstandingOptions, outstandingEntry, outstandingPage, pageOfOutstanding, ledgerOptions, ledgerEntry, ledgerPage, pageOfLedger, ownerCorrectionEntry, ownerCorrectionPage, pageOfOwnerCorrections, type BudgetStore } from "./contract";
+import { admission, admissionResult, settlement, settlementCorrection, correctionResult, correctionEntry, budgetInspection, lookup, snapshot, attempt, attemptOwner, attemptReferences, reservationState, outstandingOptions, outstandingEntry, outstandingPage, pageOfOutstanding, ledgerOptions, ledgerEntry, ledgerPage, pageOfLedger, ownerCorrectionEntry, ownerCorrectionPage, pageOfOwnerCorrections, type BudgetStore } from "./contract";
 
 type Rpc = (operation: string, input: object) => Promise<unknown>;
 function adapter(call: Rpc, getReservation: BudgetStore["getReservation"], inspectReservation: BudgetStore["inspectReservation"], listOutstanding: BudgetStore["listOutstanding"],
@@ -22,12 +22,13 @@ function adapter(call: Rpc, getReservation: BudgetStore["getReservation"], inspe
     snapshot: async input => snapshot.parse(await call("snapshot", lookup.parse(input))),
     claimAttempt: async input => z.boolean().parse(await call("claimAttempt", attempt.parse(input))),
     attemptCount: async input => z.number().int().nonnegative().parse(await call("attemptCount", attemptOwner.parse(input))),
+    listAttempts: async input => attemptReferences.parse(await call("listAttempts", attemptOwner.parse(input))),
     close,
   };
 }
 export function postgresBudgetStore(connectionString: string,poolMax = 5) {
   const { pool,release } = acquirePostgresPool(connectionString,poolMax);
-  return adapter(async (operation, input) => (await pool.query(operation === "claimAttempt" || operation === "attemptCount" ? "SELECT public.app_budget_attempt_command($1,$2::jsonb) AS result" : "SELECT public.app_budget_command($1,$2::jsonb) AS result", [operation, JSON.stringify(input)])).rows[0].result,
+  return adapter(async (operation, input) => (await pool.query(operation === "claimAttempt" || operation === "attemptCount" || operation === "listAttempts" ? "SELECT public.app_budget_attempt_command($1,$2::jsonb) AS result" : "SELECT public.app_budget_command($1,$2::jsonb) AS result", [operation, JSON.stringify(input)])).rows[0].result,
     async raw => {
       const input = attemptOwner.parse(raw);
       const result = await pool.query('SELECT request_hash AS "requestHash",status FROM public.app_budget_reservations WHERE operation_id=$1 AND tenant=$2 AND subject=$3', [input.operationId,input.tenant,input.subject]);
@@ -82,7 +83,7 @@ export function postgresBudgetStore(connectionString: string,poolMax = 5) {
 export function supabaseBudgetStore(url: string, secret: string) {
   const client = createClient<Database>(url, secret, { auth: { persistSession: false, autoRefreshToken: false }, global: { fetch: (input, init) => fetch(input, { ...init, redirect: "error", signal: AbortSignal.timeout(10000) }) } });
   return adapter(async (operation, input) => {
-    const { data, error } = await client.rpc(operation === "claimAttempt" || operation === "attemptCount" ? "app_budget_attempt_command" : "app_budget_command", { command: operation, input: z.json().parse(input) });
+    const { data, error } = await client.rpc(operation === "claimAttempt" || operation === "attemptCount" || operation === "listAttempts" ? "app_budget_attempt_command" : "app_budget_command", { command: operation, input: z.json().parse(input) });
     if (error) throw error; return data;
   }, async raw => {
     const input = attemptOwner.parse(raw);

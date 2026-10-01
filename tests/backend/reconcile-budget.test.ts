@@ -18,6 +18,8 @@ it("previews an operator correction, applies it once, and exposes its audit trai
   const owner = { tenant: randomUUID(),subject: "alice" },operationId = randomUUID(),correctionId = randomUUID();
   await budgets.reserve({ ...owner,operationId,requestHash: "a".repeat(64),estimateMicros: 60,
     policy: { id: "operator-test",dailyMicros: 100,maxActive: 1,maxPerMinute: 1 },now: Date.now() });
+  const attemptReferences = ["b".repeat(64),"a".repeat(64)];
+  for (const attemptId of attemptReferences) expect(await budgets.claimAttempt({ ...owner,operationId,attemptId,maxAttempts: 2 })).toBe(true);
   await budgets.settle({ ...owner,operationId,actualMicros: null });
   const env = { ...process.env,DATA_PROVIDER: "sqlite",SQLITE_PATH: path };
   const run = (...args: string[]) => spawnSync("npm",["run","budgets:reconcile","--",...args],
@@ -39,7 +41,8 @@ it("previews an operator correction, applies it once, and exposes its audit trai
   const shown = run("show",operationId,...flags);
   expect(shown.status).toBe(0);
   expect(JSON.parse(shown.stdout.slice(shown.stdout.indexOf("{")))).toMatchObject({
-    reservation: { status: "settled",actualMicros: 25 },recentCorrections: [{ correctionId,previousActualMicros: null,correctedActualMicros: 25 }],
+    reservation: { status: "settled",actualMicros: 25 },attempts: 2,attemptReferences: attemptReferences.toSorted(),
+    recentCorrections: [{ correctionId,previousActualMicros: null,correctedActualMicros: 25 }],
   });
   const direct = new DatabaseSync(path);
   try {

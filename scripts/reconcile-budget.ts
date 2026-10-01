@@ -44,11 +44,11 @@ let access: Awaited<ReturnType<typeof createSessionAccessStore>> | undefined;
 let budgets: Awaited<ReturnType<typeof createBudgetStore>> | undefined;
 try {
   access = await createSessionAccessStore(); budgets = await createBudgetStore();
-  const [reservation,conversation,attempts,corrections] = await Promise.all([
-    budgets.inspectReservation(key),access.getOperation(owner.data,id),budgets.attemptCount(key),budgets.listCorrections(key),
+  const [reservation,conversation,attemptReferences,corrections] = await Promise.all([
+    budgets.inspectReservation(key),access.getOperation(owner.data,id),budgets.listAttempts(key),budgets.listCorrections(key),
   ]);
   const view = { operationId: id,owner: owner.data,reservation,conversationStatus: conversation?.status ?? "missing",
-    sessionId: conversation?.sessionId ?? null,attempts,recentCorrections: corrections };
+    sessionId: conversation?.sessionId ?? null,attempts: attemptReferences.length,attemptReferences,recentCorrections: corrections };
   if (command === "show") console.log(JSON.stringify(view,null,2));
   else if (!apply) console.log(JSON.stringify({ ...view,proposedCorrection: requestedCorrection,
     wouldConflict: reservation?.status !== "settled" || reservation.actualMicros !== requestedCorrection!.expectedActualMicros ||

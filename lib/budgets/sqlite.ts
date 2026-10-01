@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { admission, settlement, settlementCorrection, correctionEntry, budgetInspection, lookup, snapshot, dayOf, refusal, attempt, attemptOwner, reservationState, outstandingOptions, outstandingEntry, pageOfOutstanding, ledgerOptions, ledgerEntry, pageOfLedger, ownerCorrectionEntry, pageOfOwnerCorrections, type Admission, type Settlement, type BudgetStore, type AdmissionResult } from "./contract";
+import { admission, settlement, settlementCorrection, correctionEntry, budgetInspection, lookup, snapshot, dayOf, refusal, attempt, attemptOwner, attemptReferences, reservationState, outstandingOptions, outstandingEntry, pageOfOutstanding, ledgerOptions, ledgerEntry, pageOfLedger, ownerCorrectionEntry, pageOfOwnerCorrections, type Admission, type Settlement, type BudgetStore, type AdmissionResult } from "./contract";
 import { installSqliteAccountFences } from "../account-closure/sqlite-fences";
 
 export function sqliteBudgetStore(path: string): BudgetStore {
@@ -154,6 +154,12 @@ export function sqliteBudgetStore(path: string): BudgetStore {
     async attemptCount(raw) {
       const input = attemptOwner.parse(raw);
       return Number(db.prepare("SELECT COUNT(*) AS n FROM app_budget_attempts a JOIN app_budget_reservations r ON r.operation_id=a.operation_id WHERE r.operation_id=? AND r.tenant=? AND r.subject=?").get(input.operationId,input.tenant,input.subject)?.n);
+    },
+    async listAttempts(raw) {
+      const input = attemptOwner.parse(raw);
+      const owned = db.prepare("SELECT 1 FROM app_budget_reservations WHERE operation_id=? AND tenant=? AND subject=?").get(input.operationId,input.tenant,input.subject);
+      if (!owned) return [];
+      return attemptReferences.parse(db.prepare("SELECT attempt_id FROM app_budget_attempts WHERE operation_id=? ORDER BY attempt_id").all(input.operationId).map(row => row.attempt_id));
     },
     async close() { db.close(); },
   };

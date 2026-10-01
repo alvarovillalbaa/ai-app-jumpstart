@@ -1,17 +1,72 @@
 import { gateway, wrapLanguageModel, wrapProvider, type LanguageModel, type LanguageModelMiddleware } from "ai";
 import type { ModelParams } from "./input";
+import { observeRuntimeBudgetAttempt, type RuntimeBudgetAttemptPhase } from "../observability/runtime";
+import type { AuditSink } from "../observability/runtime";
 
-type Prepare = (modelId: string, provider: string, params: ModelParams) => Promise<number | undefined>;
+type PreparedCall = { outputCap: number; attempt: Parameters<typeof observeRuntimeBudgetAttempt>[0]; auditSink: AuditSink };
+type Prepare = (modelId: string, provider: string, params: ModelParams) => Promise<PreparedCall | undefined>;
 function budgetMiddleware(prepare: Prepare): LanguageModelMiddleware {
+  const preparedByParams = new WeakMap<object,PreparedCall>();
+  const report = (prepared: PreparedCall,phase: RuntimeBudgetAttemptPhase,usage?: { inputTokens?: number; outputTokens?: number }) =>
+    observeRuntimeBudgetAttempt(prepared.attempt,phase,prepared.auditSink,usage);
   return {
     async transformParams({ params,model }) {
       const requested = params.maxOutputTokens;
       if (requested !== undefined && (!Number.isSafeInteger(requested) || requested < 1))
         throw new Error("Model output limit must be a positive safe integer.");
-      const cap = await prepare(model.modelId,model.provider,params);
-      if (cap === undefined) return params;
-      if (!Number.isSafeInteger(cap) || cap < 1) throw new Error("Model output budget is invalid.");
-      return { ...params,maxOutputTokens: Math.min(requested ?? cap,cap) };
+      const prepared = await prepare(model.modelId,model.provider,params);
+      if (prepared === undefined) return params;
+      if (!Number.isSafeInteger(prepared.outputCap) || prepared.outputCap < 1) throw new Error("Model output budget is invalid.");
+      const transformed = { ...params,maxOutputTokens: Math.min(requested ?? prepared.outputCap,prepared.outputCap) };
+      preparedByParams.set(transformed,prepared);
+      return transformed;
+    },
+    async wrapGenerate({ params,doGenerate }) {
+      const prepared = preparedByParams.get(params);
+      if (!prepared) return doGenerate();
+      preparedByParams.delete(params);
+      try {
+        const result = await doGenerate();
+        report(prepared,"completed",{ inputTokens: result.usage.inputTokens.total,outputTokens: result.usage.outputTokens.total });
+        return result;
+      } catch (error) {
+        report(prepared,"failed");
+        throw error;
+      }
+    },
+    async wrapStream({ params,doStream }) {
+      const prepared = preparedByParams.get(params);
+      if (!prepared) return doStream();
+      preparedByParams.delete(params);
+      let result;
+      try { result = await doStream(); }
+      catch (error) { report(prepared,"failed"); throw error; }
+      let terminal = false;
+      const finish = (phase: RuntimeBudgetAttemptPhase,usage?: { inputTokens?: number; outputTokens?: number }) => {
+        if (terminal) return;
+        terminal = true;
+        report(prepared,phase,usage);
+      };
+      const reader = result.stream.getReader();
+      const stream = new ReadableStream({
+        async pull(controller) {
+          try {
+            const item = await reader.read();
+            if (item.done) { finish("incomplete"); controller.close(); return; }
+            if (item.value.type === "finish") finish("completed",{ inputTokens: item.value.usage.inputTokens.total,outputTokens: item.value.usage.outputTokens.total });
+            else if (item.value.type === "error") finish("failed");
+            controller.enqueue(item.value);
+          } catch (error) {
+            finish("failed");
+            controller.error(error);
+          }
+        },
+        async cancel(reason) {
+          finish("cancelled");
+          await reader.cancel(reason);
+        },
+      }) as typeof result.stream;
+      return { ...result,stream };
     },
   };
 }
