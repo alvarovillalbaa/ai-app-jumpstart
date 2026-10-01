@@ -6,6 +6,7 @@ import { z } from "zod";
 
 export const nativeTables = ["workflow_runs", "workflow_steps", "workflow_events", "workflow_hooks",
   "workflow_stream_chunks", "workflow_waits", "workflow_event_slots", "workflow_invocations"];
+export const graphileTables = ["_private_jobs", "_private_job_queues", "_private_tasks"];
 export const terminalRunStatuses = new Set(["completed","failed","cancelled"]);
 
 export const linkedRunsCte = `WITH RECURSIVE linked(id) AS (
@@ -97,8 +98,10 @@ async function boundSessions(metadataProvider, owner, env,request) {
 
 /** Read-only inventory of PostgreSQL Workflow runs traceable to application session bindings. */
 export async function inspectAccountWorkflow(metadataProvider, owner, env,request = fetch) {
+  const jobPrefix = env.WORKFLOW_POSTGRES_JOB_PREFIX ?? "";
   if (!owner?.tenant || !owner?.subject || owner.tenant.length > 200 || owner.subject.length > 200 ||
-      !["sqlite", "postgres", "convex"].includes(metadataProvider) || !env.WORKFLOW_POSTGRES_URL)
+      !["sqlite", "postgres", "convex"].includes(metadataProvider) || !env.WORKFLOW_POSTGRES_URL ||
+      !/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/u.test(jobPrefix))
     throw new Error("Invalid Workflow account inspection configuration.");
   const ids = await boundSessions(metadataProvider, owner, env,request);
   const db = new Client({ connectionString: env.WORKFLOW_POSTGRES_URL, connectionTimeoutMillis: 5_000 });
@@ -112,6 +115,13 @@ export async function inspectAccountWorkflow(metadataProvider, owner, env,reques
     if (nativeTables.some(table => !present.has(table) || present.get(table)) ||
         [...present.keys()].some(table => table.startsWith("workflow_") && !nativeTables.includes(table)))
       throw new Error("Unsupported or restricted Workflow schema.");
+    const graphileSchema = await db.query(`SELECT tablename, row_security_active(format('graphile_worker.%I',tablename)::regclass) AS restricted
+      FROM pg_tables WHERE schemaname='graphile_worker' AND tablename=ANY($1::text[])`,[graphileTables]);
+    const presentGraphile = new Map(graphileSchema.rows.map(row => [row.tablename,row.restricted]));
+    if (graphileTables.some(table => !presentGraphile.has(table) || presentGraphile.get(table)))
+      throw new Error("Unsupported or restricted Graphile Worker schema.");
+    const flowTask = `${jobPrefix}flows`,taskNames = [flowTask,`${flowTask}_executor`];
+    const queuePrefix = `${flowTask}:`;
     const result = await db.query(`${linkedRunsCte}
       SELECT
         (SELECT count(*) FROM linked) AS runs,
@@ -136,6 +146,38 @@ export async function inspectAccountWorkflow(metadataProvider, owner, env,reques
         (SELECT count(*) FROM workflow.workflow_invocations WHERE run_id IS NULL OR run_id NOT IN (SELECT id FROM linked)) AS unattributed_invocations,
         (SELECT count(*) FROM workflow.workflow_runs WHERE attributes->>'$eve.type'='session' AND id NOT IN (SELECT id FROM linked)) AS other_session_roots`,
     [ids,[...terminalRunStatuses]]);
+    const graphileJobsResult = await db.query(`${linkedRunsCte}, linked_ids(id) AS (
+        SELECT id FROM linked UNION SELECT unnest($1::text[])
+      ), linked_queues AS (
+        SELECT $3::text || id || ':executor' AS queue_name FROM linked_ids
+      ), selected_jobs AS (
+        SELECT jobs.locked_by,jobs.payload,tasks.identifier AS task_identifier,
+          (COALESCE(queues.queue_name IN (SELECT queue_name FROM linked_queues),false) OR
+            (tasks.identifier=ANY($2::text[]) AND
+              COALESCE(jobs.payload->>'runId' IN (SELECT id FROM linked_ids),false))) AS is_linked
+        FROM graphile_worker._private_jobs jobs
+        JOIN graphile_worker._private_tasks tasks ON tasks.id=jobs.task_id
+        LEFT JOIN graphile_worker._private_job_queues queues ON queues.id=jobs.job_queue_id
+        WHERE tasks.identifier=ANY($2::text[]) OR
+          (queues.queue_name IS NOT NULL AND left(queues.queue_name,char_length($3))=$3 AND right(queues.queue_name,9)=':executor')
+      )
+      SELECT count(*) FILTER (WHERE is_linked) AS linked,
+        count(*) FILTER (WHERE NOT is_linked) AS unattributed,
+        count(*) FILTER (WHERE is_linked AND locked_by IS NOT NULL) AS locked_linked,
+        count(*) FILTER (WHERE is_linked AND task_identifier=$4 AND payload->>'__healthCheck'='true') AS pending_start_checks,
+        count(*) FILTER (WHERE is_linked AND NOT (task_identifier=ANY($2::text[]))) AS unsupported_linked
+      FROM selected_jobs`,[ids,taskNames,queuePrefix,flowTask]);
+    const graphileQueuesResult = await db.query(`${linkedRunsCte}, linked_ids(id) AS (
+        SELECT id FROM linked UNION SELECT unnest($1::text[])
+      ), linked_queues AS (
+        SELECT $2::text || id || ':executor' AS queue_name FROM linked_ids
+      )
+      SELECT count(*) FILTER (WHERE queue_name IN (SELECT queue_name FROM linked_queues)) AS linked,
+        count(*) FILTER (WHERE queue_name NOT IN (SELECT queue_name FROM linked_queues)) AS unattributed,
+        count(*) FILTER (WHERE queue_name IN (SELECT queue_name FROM linked_queues) AND locked_by IS NOT NULL) AS locked_linked
+      FROM graphile_worker._private_job_queues
+      WHERE queue_name IN (SELECT queue_name FROM linked_queues) OR
+        (left(queue_name,char_length($2))=$2 AND right(queue_name,9)=':executor')`,[ids,queuePrefix]);
     await db.query("COMMIT");
     const row = result.rows[0];
     const unattributedWorkflowRows = {
@@ -144,20 +186,30 @@ export async function inspectAccountWorkflow(metadataProvider, owner, env,reques
       eventSlots: count(row.unattributed_event_slots),invocations: count(row.unattributed_invocations),
     };
     const unattributedWorkflowRowCount = sumCounts(Object.values(unattributedWorkflowRows));
-    return { format: "ai-app-jumpstart-account-workflow-observation-v2", metadataProvider,
+    const jobRow = graphileJobsResult.rows[0],queueRow = graphileQueuesResult.rows[0];
+    const graphileJobs = { linked: count(jobRow.linked),unattributed: count(jobRow.unattributed),
+        lockedLinked: count(jobRow.locked_linked),pendingStartChecks: count(jobRow.pending_start_checks),
+        unsupportedLinked: count(jobRow.unsupported_linked) };
+    const graphileQueues = { linked: count(queueRow.linked),unattributed: count(queueRow.unattributed),
+      lockedLinked: count(queueRow.locked_linked) };
+    const graphile = { jobs: graphileJobs,executorQueues: graphileQueues,
+      linkedRowCount: sumCounts([graphileJobs.linked,graphileQueues.linked]),
+      unattributedRowCount: sumCounts([graphileJobs.unattributed,graphileQueues.unattributed]) };
+    return { format: "ai-app-jumpstart-account-workflow-observation-v3", metadataProvider,
       workflowProvider: "postgres", boundSessionCount: ids.length,
       linkedRuns: { runs: count(row.runs), terminalRuns: count(row.terminal_runs),
         nonterminalRuns: count(row.nonterminal_runs), steps: count(row.steps), events: count(row.events),
         hooks: count(row.hooks), streamChunks: count(row.stream_chunks), waits: count(row.waits),
         eventSlots: count(row.event_slots), invocations: count(row.invocations) },
       unattributedWorkflowRows,unattributedWorkflowRowCount,
+      graphile,
       otherSessionRoots: count(row.other_session_roots),
-      scope: "two read-only snapshots; linked PostgreSQL Workflow rows are reported separately from all global rows not linked to the selected bound sessions. Unattributed run and child-row counts include rootless/auxiliary rows, may belong to other accounts, and return no identifiers. Nonterminal linked runs are reported, not cancelled. Local/managed Workflow, Auth, providers, logs and backups are not included. No write fence or erasure certificate." };
+      scope: "two read-only snapshots; native PostgreSQL Workflow rows and Graphile jobs/executor queues under the configured job prefix are counted separately. Graphile jobs are linked by a bound-session run ID or its exact executor queue; global unmatched jobs and queues may belong to other accounts and return no identifiers. Unattributed native run and child-row counts include rootless/auxiliary rows. Pending start health checks, worker-held linked jobs/queues, and unsupported task jobs on linked queues are reported but not cancelled. Local/managed Workflow, Auth, providers, logs and backups are not included. No write fence or erasure certificate." };
   } catch (error) { await db.query("ROLLBACK").catch(() => {}); throw error; } finally { await db.end(); }
 }
 
 async function main(args, env) {
-  const usage = "Usage: npm run account:inspect:workflow -- --metadata sqlite|postgres|convex --read-only (set ACCOUNT_AUDIT_TENANT, ACCOUNT_AUDIT_SUBJECT, WORKFLOW_POSTGRES_URL and the selected application backend settings in the operator environment)";
+  const usage = "Usage: npm run account:inspect:workflow -- --metadata sqlite|postgres|convex --read-only (set ACCOUNT_AUDIT_TENANT, ACCOUNT_AUDIT_SUBJECT, WORKFLOW_POSTGRES_URL, WORKFLOW_POSTGRES_JOB_PREFIX and the selected application backend settings in the operator environment)";
   if (args.length !== 3 || args[0] !== "--metadata" || !["sqlite", "postgres", "convex"].includes(args[1]) ||
       args[2] !== "--read-only" || !env.ACCOUNT_AUDIT_TENANT || !env.ACCOUNT_AUDIT_SUBJECT) {
     console.error(usage); process.exitCode = 2; return;

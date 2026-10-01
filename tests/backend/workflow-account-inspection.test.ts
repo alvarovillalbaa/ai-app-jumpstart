@@ -35,6 +35,7 @@ it("counts only native Workflow runs linked to an owner's bound session and hide
         (id,tenant,subject,operation_id,request_hash,session_id,status) VALUES (?,?,?,?,?,?,?)`);
       statement.run(crypto.randomUUID(),owner.tenant,owner.subject,crypto.randomUUID(),"a".repeat(64),"owned-session","active");
       statement.run(crypto.randomUUID(),owner.tenant,owner.subject,crypto.randomUUID(),"c".repeat(64),"retired-session","revoked");
+      statement.run(crypto.randomUUID(),owner.tenant,owner.subject,crypto.randomUUID(),"d".repeat(64),"pending-session","active");
       statement.run(crypto.randomUUID(),owner.tenant,"other-owner",crypto.randomUUID(),"b".repeat(64),"other-session","active");
     } finally { sqlite.close(); }
     const migration = spawnSync(process.execPath,["scripts/migrate-workflow.mjs"],{
@@ -59,23 +60,40 @@ it("counts only native Workflow runs linked to an owner's bound session and hide
           ('other-session','foreign-invocation',$2,'foreign-fingerprint'),
           ('unlinked-auxiliary','aux-invocation',$2,'aux-fingerprint')`,
         [Buffer.from("private-invocation-payload"),Buffer.from("foreign-invocation-payload")]);
-      const env = { ACCOUNT_AUDIT_SQLITE_PATH: path,WORKFLOW_POSTGRES_URL: workflow.url };
+      const flowTask = "account_inspection_testflows";
+      for (const [task,payload,queue] of [
+        [flowTask + "_executor",{ runId: "owned-turn" },flowTask + ":owned-turn:executor"],
+        [flowTask,{ __healthCheck: true,runId: "owned-session" },null],
+        [flowTask,{ __healthCheck: true,runId: "pending-session" },null],
+        [flowTask,{ __healthCheck: true,runId: "other-session" },null],
+        [flowTask,{ maintenance: true },null],
+        [flowTask + "_executor",{ runId: "foreign-session" },flowTask + ":foreign-session:executor"],
+        ["foreign_workflow_task",{ fixture: true },flowTask + ":owned-turn:executor"],
+      ] as const) await pg.query("SELECT graphile_worker.add_job($1,$2::json,$3)",[task,JSON.stringify(payload),queue]);
+      await pg.query("UPDATE graphile_worker._private_jobs jobs SET locked_by='fixture-worker',locked_at=now()\n" +
+        "FROM graphile_worker._private_tasks tasks WHERE tasks.id=jobs.task_id\n" +
+        "AND tasks.identifier=$1 AND jobs.payload->>'runId'='owned-turn'",[flowTask + "_executor"]);
+      const env = { ACCOUNT_AUDIT_SQLITE_PATH: path,WORKFLOW_POSTGRES_URL: workflow.url,
+        WORKFLOW_POSTGRES_JOB_PREFIX: "account_inspection_test" };
       const observed = await inspectAccountWorkflow("sqlite",owner,env);
-      expect(observed).toMatchObject({ boundSessionCount: 2,
-        format: "ai-app-jumpstart-account-workflow-observation-v2",
+      expect(observed).toMatchObject({ boundSessionCount: 3,
+        format: "ai-app-jumpstart-account-workflow-observation-v3",
         linkedRuns: { runs: 4,terminalRuns: 3,nonterminalRuns: 1,events: 1,invocations: 1 },
-        unattributedWorkflowRows: { runs: 2,events: 1,invocations: 2 },unattributedWorkflowRowCount: 5,otherSessionRoots: 1 });
+        unattributedWorkflowRows: { runs: 2,events: 1,invocations: 2 },unattributedWorkflowRowCount: 5,otherSessionRoots: 1,
+        graphile: { jobs: { linked: 4,unattributed: 3,lockedLinked: 1,pendingStartChecks: 2,unsupportedLinked: 1 },
+          executorQueues: { linked: 1,unattributed: 1,lockedLinked: 0 },linkedRowCount: 5,unattributedRowCount: 4 } });
       expect(JSON.stringify(observed)).not.toContain(owner.tenant);
       expect(JSON.stringify(observed)).not.toContain(owner.subject);
       expect(await inspectAccountWorkflow("sqlite",{ ...owner,subject: "missing" },env)).toMatchObject({
         boundSessionCount: 0,linkedRuns: { runs: 0,terminalRuns: 0,nonterminalRuns: 0,invocations: 0 },
-        unattributedWorkflowRows: { runs: 6,events: 2,invocations: 3 },unattributedWorkflowRowCount: 11,otherSessionRoots: 2 });
+        unattributedWorkflowRows: { runs: 6,events: 2,invocations: 3 },unattributedWorkflowRowCount: 11,otherSessionRoots: 2,
+        graphile: { linkedRowCount: 0,unattributedRowCount: 9 } });
       await pg.query(`CREATE TABLE public.app_conversations
         (tenant text NOT NULL,subject text NOT NULL,session_id text)`);
       await pg.query(`INSERT INTO public.app_conversations (tenant,subject,session_id) VALUES ($1,$2,'owned-session')`,
         [owner.tenant,owner.subject]);
       expect(await inspectAccountWorkflow("postgres",owner,{ DATABASE_URL: workflow.url,
-        WORKFLOW_POSTGRES_URL: workflow.url })).toMatchObject({ boundSessionCount: 1,
+        WORKFLOW_POSTGRES_URL: workflow.url,WORKFLOW_POSTGRES_JOB_PREFIX: "account_inspection_test" })).toMatchObject({ boundSessionCount: 1,
         linkedRuns: { runs: 3,terminalRuns: 2,nonterminalRuns: 1,events: 1,invocations: 1 },
         unattributedWorkflowRows: { runs: 3,events: 1,invocations: 2 },unattributedWorkflowRowCount: 6 });
       const command = spawnSync(process.execPath,["scripts/inspect-account-workflow.mjs","--metadata","sqlite","--read-only"],{
@@ -83,6 +101,7 @@ it("counts only native Workflow runs linked to an owner's bound session and hide
           ACCOUNT_AUDIT_SUBJECT: owner.subject } });
       expect(command.status,command.stderr).toBe(0);
       expect(JSON.parse(command.stdout).linkedRuns.runs).toBe(4);
+      expect(JSON.parse(command.stdout).graphile.jobs.pendingStartChecks).toBe(2);
       expect(command.stdout).not.toContain(owner.subject);
 
       const auditSecret = "test-convex-workflow-audit-secret-".repeat(2);
@@ -104,40 +123,48 @@ it("counts only native Workflow runs linked to an owner's bound session and hide
       const convexRequest: typeof fetch = (url,init) => convex.fetch(
         new URL(url instanceof Request ? url.url : String(url)).pathname,init);
       const convexObservation = await inspectAccountWorkflow("convex",owner,{ WORKFLOW_POSTGRES_URL: workflow.url,
-        CONVEX_SITE_URL: "https://test.convex.site",CONVEX_AUDIT_SECRET: auditSecret },convexRequest);
+        WORKFLOW_POSTGRES_JOB_PREFIX: "account_inspection_test",CONVEX_SITE_URL: "https://test.convex.site",
+        CONVEX_AUDIT_SECRET: auditSecret },convexRequest);
       expect(convexObservation).toMatchObject({ boundSessionCount: 2,
         linkedRuns: { runs: 4,terminalRuns: 3,nonterminalRuns: 1,events: 1,invocations: 1 },
-        unattributedWorkflowRows: { runs: 2,events: 1,invocations: 2 },unattributedWorkflowRowCount: 5,otherSessionRoots: 1 });
+        unattributedWorkflowRows: { runs: 2,events: 1,invocations: 2 },unattributedWorkflowRowCount: 5,otherSessionRoots: 1,
+        graphile: { linkedRowCount: 4,unattributedRowCount: 5 } });
       expect(JSON.stringify(convexObservation)).not.toContain(owner.tenant);
       expect(JSON.stringify(convexObservation)).not.toContain(owner.subject);
 
       const closure = await inspectAccountClosure("sqlite","local",owner,{
         AUTH_PROVIDER: "api-key",ACCOUNT_AUDIT_SQLITE_PATH: path,UPLOAD_LOCAL_ROOT: uploadRoot,
-        WORKFLOW_POSTGRES_URL: workflow.url,
+        WORKFLOW_POSTGRES_URL: workflow.url,WORKFLOW_POSTGRES_JOB_PREFIX: "account_inspection_test",
       },fetch,{ workflowPostgres: true });
-      expect(closure).toMatchObject({ format: "ai-app-jumpstart-account-closure-observation-v4",
-        status: "retained_or_unattributable",workflow: { provider: "postgres",boundSessionCount: 2,
+      expect(closure).toMatchObject({ format: "ai-app-jumpstart-account-closure-observation-v5",
+        status: "retained_or_unattributable",workflow: { provider: "postgres",boundSessionCount: 3,
           linkedRuns: { runs: 4,terminalRuns: 3,nonterminalRuns: 1,events: 1,invocations: 1 },
-          unattributedRows: { runs: 2,events: 1,invocations: 2 },unattributedRowCount: 5 },
-        remaining: { workflowRows: true,workflowUnattributedRows: 5 } });
+          unattributedRows: { runs: 2,events: 1,invocations: 2 },unattributedRowCount: 5,
+          graphile: { linkedRowCount: 5,unattributedRowCount: 4 } },
+        remaining: { workflowRows: true,workflowUnattributedRows: 5,workflowGraphileRows: true,
+          workflowUnattributedGraphileRows: 4 } });
       expect(JSON.stringify(closure)).not.toContain(owner.tenant);
       expect(JSON.stringify(closure)).not.toContain(owner.subject);
       const noLinkedOwner = await inspectAccountClosure("sqlite","local",{ ...owner,subject: "unbound-owner" },{
         AUTH_PROVIDER: "api-key",ACCOUNT_AUDIT_SQLITE_PATH: path,UPLOAD_LOCAL_ROOT: uploadRoot,
-        WORKFLOW_POSTGRES_URL: workflow.url,
+        WORKFLOW_POSTGRES_URL: workflow.url,WORKFLOW_POSTGRES_JOB_PREFIX: "account_inspection_test",
       },fetch,{ workflowPostgres: true });
       expect(noLinkedOwner).toMatchObject({ status: "retained_or_unattributable",
-        remaining: { workflowRows: false,workflowUnattributedRows: 11 },
-        workflow: { linkedRuns: { runs: 0 },unattributedRowCount: 11,otherSessionRoots: 2 } });
+        remaining: { workflowRows: false,workflowUnattributedRows: 11,workflowGraphileRows: false,
+          workflowUnattributedGraphileRows: 9 },
+        workflow: { linkedRuns: { runs: 0 },unattributedRowCount: 11,
+          graphile: { linkedRowCount: 0,unattributedRowCount: 9 },otherSessionRoots: 2 } });
       const closureCommand = spawnSync(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/inspect-account-closure.ts",
         "--metadata","sqlite","--workflow-postgres","--read-only"],{
         cwd: process.cwd(),encoding: "utf8",env: { ...process.env,ACCOUNT_AUDIT_TENANT: owner.tenant,
           ACCOUNT_AUDIT_SUBJECT: owner.subject,ACCOUNT_AUDIT_SQLITE_PATH: path,AUTH_PROVIDER: "api-key",
           UPLOAD_STORAGE_PROVIDER: "local",UPLOAD_LOCAL_ROOT: uploadRoot,WORKFLOW_POSTGRES_URL: workflow.url,
+          WORKFLOW_POSTGRES_JOB_PREFIX: "account_inspection_test",
         } });
       expect(closureCommand.status,closureCommand.stderr).toBe(0);
       expect(JSON.parse(closureCommand.stdout).workflow.linkedRuns.runs).toBe(4);
       expect(JSON.parse(closureCommand.stdout).remaining.workflowUnattributedRows).toBe(5);
+      expect(JSON.parse(closureCommand.stdout).remaining.workflowUnattributedGraphileRows).toBe(4);
       expect(closureCommand.stdout).not.toContain(owner.tenant);
       expect(closureCommand.stdout).not.toContain(owner.subject);
       const incompleteCommand = spawnSync(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/inspect-account-closure.ts",

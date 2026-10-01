@@ -60,23 +60,28 @@ it("joins the real SQLite row and local object observations without exposing ide
       db.prepare("DELETE FROM app_records WHERE tenant=? AND subject=?").run(alice.tenant,alice.subject);
       await objects.delete(alice,id);
       expect(await inspectAccountClosure("sqlite","local",alice,env)).toMatchObject({ status: "unfenced_zero",ownerRowTotal: 0,objectCount: 0 });
-      const workflowObservation = { format: "ai-app-jumpstart-account-workflow-observation-v2",metadataProvider: "sqlite",
+      const workflowObservation = { format: "ai-app-jumpstart-account-workflow-observation-v3",metadataProvider: "sqlite",
         workflowProvider: "postgres",boundSessionCount: 0,
         linkedRuns: { runs: 0,terminalRuns: 0,nonterminalRuns: 0,steps: 0,events: 0,hooks: 0,streamChunks: 0,
           waits: 0,eventSlots: 0,invocations: 0 },
         unattributedWorkflowRows: { runs: 2,steps: 0,events: 0,hooks: 0,streamChunks: 0,waits: 0,eventSlots: 0,invocations: 0 },
-        unattributedWorkflowRowCount: 2,otherSessionRoots: 2,scope: "fixture" };
+        unattributedWorkflowRowCount: 2,graphile: { jobs: { linked: 0,unattributed: 0,lockedLinked: 0,
+          pendingStartChecks: 0,unsupportedLinked: 0 },executorQueues: { linked: 0,unattributed: 0,lockedLinked: 0 },
+          linkedRowCount: 0,unattributedRowCount: 0 },otherSessionRoots: 2,scope: "fixture" };
       vi.mocked(inspectAccountWorkflow).mockResolvedValueOnce(workflowObservation);
       expect(await inspectAccountClosure("sqlite","local",alice,env,fetch,{ workflowPostgres: true }))
-        .toMatchObject({ format: "ai-app-jumpstart-account-closure-observation-v4",status: "retained_or_unattributable",
+        .toMatchObject({ format: "ai-app-jumpstart-account-closure-observation-v5",status: "retained_or_unattributable",
           remaining: { workflowRows: false,workflowUnattributedRows: 2 } });
       vi.mocked(inspectAccountWorkflow).mockResolvedValueOnce({ ...workflowObservation,
         unattributedWorkflowRows: { ...workflowObservation.unattributedWorkflowRows,runs: 0 },
         unattributedWorkflowRowCount: 0,otherSessionRoots: 0 });
       expect(await inspectAccountClosure("sqlite","local",alice,env,fetch,{ workflowPostgres: true }))
-        .toMatchObject({ status: "unfenced_zero",remaining: { workflowRows: false,workflowUnattributedRows: 0 } });
+        .toMatchObject({ format: "ai-app-jumpstart-account-closure-observation-v5",status: "unfenced_zero",
+          remaining: { workflowRows: false,workflowUnattributedRows: 0,workflowGraphileRows: false,
+            workflowUnattributedGraphileRows: 0 } });
       expect(await inspectAccountClosure("sqlite","local",alice,env)).toMatchObject({
-        remaining: { workflowRows: null,workflowUnattributedRows: null } });
+        remaining: { workflowRows: null,workflowUnattributedRows: null,workflowGraphileRows: null,
+          workflowUnattributedGraphileRows: null } });
       expect(setSqliteAccountFence(path,alice)).toMatchObject({ status: "fenced",provider: "sqlite" });
       expect(await inspectAccountClosure("sqlite","local",alice,env)).toMatchObject({ status: "application_fenced_zero",
         applicationWriteFenced: true,remaining: { applicationRows: false,privateObjects: false,applicationWritesPossible: false } });
