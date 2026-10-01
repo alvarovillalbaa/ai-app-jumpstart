@@ -3,16 +3,19 @@ import { accessOwner, type AccessOwner } from "../agent-access/contract";
 import { ConversationBroker } from "../agent-access/broker";
 import { creationBody, requestHash } from "../agent-access/signing";
 import { budgetPolicy, micros, type BudgetStore } from "./contract";
+import { requireRecentCostReview, type CostBasis } from "./cost-basis";
 
 /** A server-side admission boundary; callers supply a message, never prices/limits. */
 export class BudgetedCreation {
   private policy: ReturnType<typeof budgetPolicy.parse>;
   constructor(private broker: ConversationBroker, private budgets: BudgetStore,
     policy: ReturnType<typeof budgetPolicy.parse>, private estimate: (message: string) => number,
-    private clock = Date.now) { this.policy = budgetPolicy.parse(policy); }
+    private costBasis: Pick<CostBasis,"reviewedAt">, private clock = Date.now) { this.policy = budgetPolicy.parse(policy); }
 
   async create(rawOwner: AccessOwner, rawInput: unknown) {
     const owner = accessOwner.parse(rawOwner),{ requested,body } = creationBody(rawInput);
+    try { requireRecentCostReview(this.costBasis.reviewedAt,new Date(this.clock())); }
+    catch { throw new AppError(503,"cost_review_required","A current provider pricing review is required before starting new AI work."); }
     const hash = requestHash(body);
     const result = await this.budgets.reserve({ ...owner, operationId: requested.operationId, requestHash: hash,
       estimateMicros: micros.positive().parse(this.estimate(requested.message)), policy: this.policy, now: this.clock() });

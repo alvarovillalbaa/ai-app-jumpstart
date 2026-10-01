@@ -34,8 +34,9 @@ const origin = `http://127.0.0.1:${port}`, aliceToken = randomBytes(32).toString
 const signing = { audience: "isolated-session-runtime", activeKey: "fixture", keys: { fixture: randomBytes(32).toString("hex") } };
 const database = join(directory, "app.sqlite"), receipts = join(directory, "model.txt"), failures = join(directory, "failures.txt"), gate = join(directory, "gate"), modelGate = join(directory, "model-gate");
 const limitReceipts = join(directory,"model-limits.txt");
+const freshReviewAt = new Date().toISOString().slice(0,10);
 const budgetSettings = { policy: { id: "fixture", dailyMicros: 60, maxActive: 2, maxPerMinute: 20 }, estimateMicros: 20, maxModelCalls: 1, maxInputBytes: 16_384, modelIds: ["openai/gpt-5.6-luna-fast"],
-  costBasis: { sourceUrl: "https://example.test/fixture-prices", reviewedAt: "2026-09-24", maxOtherMicros: 0,
+  costBasis: { sourceUrl: "https://example.test/fixture-prices", reviewedAt: freshReviewAt, maxOtherMicros: 0,
     models: ["openai/gpt-5.6-luna-fast"].map(id => ({ id, maxInputTokens: 1, maxOutputTokens: 1, inputMicrosPerMillion: 1_000_000, outputMicrosPerMillion: 1_000_000 })) } };
 const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: "production", EVE_DEV: "", EVE_TELEMETRY_DISABLED: "1", NITRO_PRESET: "node-server",
   HOST: "127.0.0.1", NITRO_HOST: "127.0.0.1", PORT: String(port), NITRO_PORT: String(port),
@@ -157,7 +158,7 @@ try {
     dispatches++; await realDispatch(body, owner);
     throw new Error("Fixture drops the accepted creation response");
   });
-  const creation = new BudgetedCreation(broker,budgets,runtimeReservationPolicy(budgetSettings),() => budgetSettings.estimateMicros);
+  const creation = new BudgetedCreation(broker,budgets,runtimeReservationPolicy(budgetSettings),() => budgetSettings.estimateMicros,budgetSettings.costBasis);
   const input = { message: "One owned turn", operationId: randomUUID() };
   let creationRequestId = "";
   await withRequestContext(async requestId => { creationRequestId = requestId;await creation.create(alice,input); });
@@ -285,7 +286,7 @@ try {
   }
   assert.equal(await lines(receipts),3,"Fenced Eve input must not reach the model.");
   const bob = { ...alice,subject: "bob" },oversizeOperation = randomUUID(),beforeInputDenial = await lines(failures);
-  await new BudgetedCreation(new ConversationBroker(store,realDispatch),budgets,runtimeReservationPolicy(budgetSettings),() => 20)
+  await new BudgetedCreation(new ConversationBroker(store,realDispatch),budgets,runtimeReservationPolicy(budgetSettings),() => 20,budgetSettings.costBasis)
     .create(bob,{ message: "input-budget-test" + "x".repeat(20_000),operationId: oversizeOperation });
   await eventually(async () => await lines(failures) > beforeInputDenial,"Oversize SDK input did not fail its turn.");
   await eventually(async () => (await budgets.snapshot({ ...bob,now: Date.now() })).active === 0,"Input denial did not release its reservation.");
@@ -297,7 +298,7 @@ try {
   await rm(gate);
   const failuresBefore = await lines(failures);
   let guardedCandidate: string | undefined;
-  const guarded = await new BudgetedCreation(new ConversationBroker(store, async (body, owner) => { guardedCandidate = await realDispatch(body, owner); return guardedCandidate; }),budgets,runtimeReservationPolicy(budgetSettings),() => 20).create(bob, { message: "Must never reach the model", operationId: randomUUID() });
+  const guarded = await new BudgetedCreation(new ConversationBroker(store, async (body, owner) => { guardedCandidate = await realDispatch(body, owner); return guardedCandidate; }),budgets,runtimeReservationPolicy(budgetSettings),() => 20,budgetSettings.costBasis).create(bob, { message: "Must never reach the model", operationId: randomUUID() });
   assert.equal(guarded.status, "starting"); assert.equal(guarded.sessionId, null);
   await store.revoke(bob, guarded.conversationId); await writeFile(gate, "ready");
   await eventually(async () => await lines(failures) > failuresBefore, "Revoked runtime binding did not fail its turn.");
@@ -305,7 +306,7 @@ try {
   assert.equal((await fetch(`${origin}/eve/v1/session/${guardedCandidate}/stream`, { headers: { authorization: `Bearer ${bobToken}` } })).status, 401);
   const loopBroker = new ConversationBroker(store,realDispatch), loopInput = { message: "loop-budget-test", operationId: randomUUID() };
   const failedBeforeLoop = await lines(failures);
-  await new BudgetedCreation(loopBroker,budgets,runtimeReservationPolicy(budgetSettings),() => 20).create(bob,loopInput);
+  await new BudgetedCreation(loopBroker,budgets,runtimeReservationPolicy(budgetSettings),() => 20,budgetSettings.costBasis).create(bob,loopInput);
   await eventually(async () => await lines(failures)>failedBeforeLoop, "Model-call cap did not stop the fixture tool loop.");
   const loop = await loopBroker.read(bob,loopInput.operationId); assert.ok(loop.sessionId);
   await eventually(async () => (await store.listProjections(bob,loopInput.operationId,{})).items.some(entry => entry.payload.kind === "run" && entry.payload.state === "failed"),"Failed turn boundary was not projected.");
@@ -319,14 +320,14 @@ try {
   // remaining quota through an explicit ordinary turn before testing that such
   // a response cannot grant any additional budget after runtime replacement.
   const finalBobInput = { message: "Use the remaining admitted quota", operationId: randomUUID() };
-  await new BudgetedCreation(loopBroker,budgets,runtimeReservationPolicy(budgetSettings),() => 20).create(bob,finalBobInput);
+  await new BudgetedCreation(loopBroker,budgets,runtimeReservationPolicy(budgetSettings),() => 20,budgetSettings.costBasis).create(bob,finalBobInput);
   await eventually(async () => (await budgets.snapshot({ ...bob, now: Date.now() })).chargedMicros === 40,"Final admitted turn did not settle.");
   assert.equal(await lines(receipts),5);
   if (postgresWorkflows) {
     const owner = { tenant: "fixture", subject: "carol" };
     const broker = new ConversationBroker(store,realDispatch);
     const input = { message: "Persist across a runtime replacement", operationId: randomUUID() };
-    await new BudgetedCreation(broker,budgets,runtimeReservationPolicy(budgetSettings),() => 20).create(owner,input);
+    await new BudgetedCreation(broker,budgets,runtimeReservationPolicy(budgetSettings),() => 20,budgetSettings.costBasis).create(owner,input);
     await eventually(async () => (await broker.read(owner,input.operationId)).status === "active", "PostgreSQL session never activated.");
     const receipt = await broker.read(owner,input.operationId); assert.ok(receipt.sessionId);
     await eventually(async () => (await budgets.snapshot({ ...owner, now: Date.now() })).chargedMicros === 20, "PostgreSQL session did not settle.");
@@ -370,7 +371,7 @@ try {
     const interruptedInput = { message: "inflight-restart-test", operationId: randomUUID() };
     const beforeInterrupted = await lines(receipts);
     const beforeInterruptedBudget = await budgets.snapshot({ ...owner, now: Date.now() });
-    await new BudgetedCreation(broker,budgets,runtimeReservationPolicy(budgetSettings),() => 20).create(owner,interruptedInput);
+    await new BudgetedCreation(broker,budgets,runtimeReservationPolicy(budgetSettings),() => 20,budgetSettings.costBasis).create(owner,interruptedInput);
     await eventually(async () => await lines(receipts) === beforeInterrupted+1, "Interrupted fixture model did not start.");
     const interruptedSession = await broker.read(owner,interruptedInput.operationId);
     assert.ok(interruptedSession.sessionId);

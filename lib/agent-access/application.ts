@@ -9,6 +9,6 @@ import { cancelPendingStart } from "./cancel-start";
 export async function chatApplication(settings: ReturnType<typeof requireChatSettings>) {
   const [access, budgets] = await Promise.all([getSessionAccessStore(), getBudgetStore()]);
   const broker = new ConversationBroker(access, creationTransport(settings.origin, settings.signing));
-  return { broker, budgets, creation: new BudgetedCreation(broker, budgets, runtimeReservationPolicy(settings.budget), () => settings.budget.estimateMicros),
+  return { broker, budgets, creation: new BudgetedCreation(broker, budgets, runtimeReservationPolicy(settings.budget), () => settings.budget.estimateMicros, settings.budget.costBasis),
     cancelStart: (owner: Parameters<typeof cancelPendingStart>[2], operation: string) => cancelPendingStart(access,budgets,owner,operation) };
 }
