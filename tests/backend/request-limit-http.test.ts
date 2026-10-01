@@ -45,12 +45,39 @@ it("fails closed on provider errors or invalid responses without returning priva
   vi.spyOn(console,"info").mockImplementation(() => {});
   const owner = { tenant: "org",subject: "alice" },env = { APP_REQUESTS_PER_MINUTE: "120" };
   const store = { claim: vi.fn(async () => { throw new Error("postgresql://private-secret@database"); }),snapshot: async () => null,health: async () => {},close: async () => {} };
+  const accessStore = { isFenced: vi.fn(async () => false) },accessFactory = vi.fn(async () => accessStore);
   const response = await handle(new Request("http://localhost:3000/api/v1/records"),async () => {
-    await admitDataRequest(owner,env,async () => store);return Response.json({ unexpected: true });
+    await admitDataRequest(owner,env,async () => store,accessFactory);return Response.json({ unexpected: true });
   });
   expect(response.status).toBe(503);expect(JSON.stringify(await response.json())).not.toContain("private-secret");
-  await expect(admitDataRequest(owner,env,async () => ({ claim: async () => ({ allowed: false,remaining: 1,resetAt: new Date().toISOString(),retryAfterSeconds: 0 }),snapshot: async () => null,health: async () => {},close: async () => {} }))).rejects.toMatchObject({ code: "request_limit_unavailable" });
+  await expect(admitDataRequest(owner,env,async () => ({ claim: async () => ({ allowed: false,remaining: 1,resetAt: new Date().toISOString(),retryAfterSeconds: 0 }),snapshot: async () => null,health: async () => {},close: async () => {} }),accessFactory)).rejects.toMatchObject({ code: "request_limit_unavailable" });
   const factory = vi.fn(async () => store);
-  await admitDataRequest(owner,{},factory);await admitDataRequest(owner,{ APP_REQUESTS_PER_MINUTE: "0" },factory);
+  accessFactory.mockClear();
+  await admitDataRequest(owner,{},factory,accessFactory);await admitDataRequest(owner,{ APP_REQUESTS_PER_MINUTE: "0" },factory,accessFactory);
   expect(factory).not.toHaveBeenCalled();
+  expect(accessFactory).toHaveBeenCalledTimes(2);
+});
+
+it("denies permanently fenced owners before quotas or application handlers run",async () => {
+  vi.spyOn(console,"info").mockImplementation(() => {});
+  const owner = { tenant: "org",subject: "alice" },env = { APP_REQUESTS_PER_MINUTE: "120" };
+  const claims = vi.fn(async () => ({ allowed: true,remaining: 119,resetAt: new Date().toISOString(),retryAfterSeconds: 0 }));
+  const limits = { claim: claims,snapshot: async () => null,health: async () => {},close: async () => {} };
+  const access = { isFenced: vi.fn(async () => true) };
+  const response = await handle(new Request("http://localhost:3000/api/v1/records"),async () => {
+    await admitDataRequest(owner,env,async () => limits,async () => access);return Response.json({ unexpected: true });
+  });
+  expect(response.status).toBe(403);
+  expect(await response.json()).toMatchObject({ error: { code: "account_fenced" } });
+  expect(access.isFenced).toHaveBeenCalledWith(owner);
+  expect(claims).not.toHaveBeenCalled();
+
+  const unavailable = await handle(new Request("http://localhost:3000/api/v1/records"),async () => {
+    await admitDataRequest(owner,{},async () => limits,async () => ({ isFenced: async () => { throw new Error("secret backend URL"); } }));
+    return Response.json({ unexpected: true });
+  });
+  expect(unavailable.status).toBe(503);
+  const error = JSON.stringify(await unavailable.json());
+  expect(error).toContain("account_state_unavailable");
+  expect(error).not.toContain("secret backend URL");
 });
