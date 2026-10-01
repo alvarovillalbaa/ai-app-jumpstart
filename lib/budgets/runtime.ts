@@ -4,7 +4,7 @@ import type { HookContext } from "eve/hooks";
 import { accessOwner, operationId, type AccessOwner, type SessionAccessStore } from "../agent-access/contract";
 import { requestHash } from "../agent-access/signing";
 import { budgetPolicy, micros, type BudgetStore } from "./contract";
-import { costBasis, quotedEnvelopeMicros } from "./cost-basis";
+import { costBasis, quotedEnvelopeMicros, requireRecentCostReview } from "./cost-basis";
 import { defaultMaxInputBytes, inputPayloadBytes, type ModelParams } from "./input";
 import { observeRuntimeBudgetAttempt, runtimeReference, type AuditSink, type RuntimeBudgetAttemptReference } from "../observability/runtime";
 
@@ -59,6 +59,9 @@ export class RuntimeBudgets {
   constructor(private budgets: BudgetStore, private access: SessionAccessStore, private state: BudgetStateHandle,
     private settings: RuntimeBudgetSettings, private clock = Date.now, private auditSink: AuditSink = () => {}) {}
   private outputCaps() { return this.settings.costBasis.models.map(model => ({ id: model.id, limit: model.maxOutputTokens })); }
+  private assertCurrentCostReview() {
+    requireRecentCostReview(this.settings.costBasis.reviewedAt,new Date(this.clock()));
+  }
   private owner(ctx: Context) {
     const initiator = ctx.session.auth.initiator, current = ctx.session.auth.current;
     if (initiator?.authenticator !== "jumpstart" || current?.authenticator !== "jumpstart" || current.principalId !== initiator.principalId || current.issuer !== initiator.issuer) throw new Error("Budget caller does not own this session.");
@@ -72,6 +75,21 @@ export class RuntimeBudgets {
   }
   async beginTurn(ctx: Context) {
     const owner = this.owner(ctx), creation = operationId.parse(ctx.session.auth.initiator!.attributes.creationOperationId);
+    try { this.assertCurrentCostReview(); }
+    catch (error) {
+      // Creation can be admitted just before UTC expiry and reach Eve just
+      // after it. Release that first-turn reservation only when the durable
+      // ledger proves no provider attempt began; preserve uncertain usage.
+      if (ctx.session.turn.sequence === 0 && await this.access.ownsSession(owner,ctx.session.id)) {
+        const input = { ...owner,operationId: creation };
+        const reservation = await this.budgets.getReservation(input);
+        if (reservation?.status === "reserved" && await this.budgets.attemptCount(input) === 0 &&
+            !await this.budgets.settle({ ...input,actualMicros: 0 })) {
+          throw new Error("Stale cost review left an unstarted reservation requiring reconciliation.");
+        }
+      }
+      throw error;
+    }
     const row = await this.access.getOperation(owner,creation);
     if (!row) throw new Error("Creation reservation missing.");
     const first = ctx.session.turn.sequence === 0;
@@ -88,6 +106,7 @@ export class RuntimeBudgets {
   }
   /** Called by model middleware for EVERY provider invocation, including SDK retries. */
   async prepareProviderCall(modelId: string, provider: string, params: ModelParams) {
+    this.assertCurrentCostReview();
     const saved = this.state.get(), call = saved.providerCall;
     if (!saved.enforced || !call || (call.modelId !== modelId && call.modelId !== `${provider}/${modelId}`))
       throw new Error("Model request has no matching admitted budget.");
@@ -113,6 +132,7 @@ export class RuntimeBudgets {
     return { outputCap: Math.min(original,current),attempt,auditSink: this.auditSink };
   }
   async beginStep(ctx: Context, eventId: string, modelId: string, continuationSequence?: number) {
+    this.assertCurrentCostReview();
     let run = this.state.get().turn;
     // Eve's approval response resumes with a blank event turn ID and no
     // turn.started, while ctx.session.turn carries the generated turn ID.
@@ -139,6 +159,7 @@ export class RuntimeBudgets {
     this.state.update(s => ({ ...s, providerCall: null, turn: { ...run, pending: false, reported: run.reported+1, knownMicros: run.knownMicros+amount, unknown: run.unknown || !known } }));
   }
   async beginCompaction(ctx: Context, eventId: string, modelId: string) {
+    this.assertCurrentCostReview();
     const active = this.state.get().turn;
     if (active?.open && active.turnId === ctx.session.turn.id) {
       await this.admitProvider(ctx,active,eventId,modelId,"compaction");

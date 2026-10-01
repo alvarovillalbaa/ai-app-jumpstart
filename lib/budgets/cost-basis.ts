@@ -25,7 +25,7 @@ export type CostBasis = z.infer<typeof costBasis>;
 const maxReviewAgeDays = 30;
 const millisecondsPerDay = 24 * 60 * 60 * 1000;
 
-/** Release preflight only: prompt an operator to refresh dated pricing assumptions. */
+/** Require a recent operator review before release or new paid runtime work. */
 export function requireRecentCostReview(reviewedAt: string, now = new Date()): void {
   const reviewDay = Date.parse(`${reviewedAt}T00:00:00Z`);
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());

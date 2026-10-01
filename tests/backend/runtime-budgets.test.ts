@@ -2,11 +2,12 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sqliteAccessStore } from "../../lib/agent-access/sqlite";
 import { sqliteBudgetStore } from "../../lib/budgets/sqlite";
-import { RuntimeBudgets, type RuntimeBudgetState } from "../../lib/budgets/runtime";
+import { RuntimeBudgets, runtimeReservationPolicy, type RuntimeBudgetState } from "../../lib/budgets/runtime";
 const owner = { tenant: "test", subject: "alice" };
 let access: ReturnType<typeof sqliteAccessStore>, budgets: ReturnType<typeof sqliteBudgetStore>, state: RuntimeBudgetState, runtime: RuntimeBudgets, operation: string;
+const freshReviewAt = new Date().toISOString().slice(0, 10);
 const settings = { policy: { id: "fixture", dailyMicros: 200, maxActive: 1, maxPerMinute: 10 }, estimateMicros: 100, maxModelCalls: 2, modelIds: ["fixture"],
-  costBasis: { sourceUrl: "https://example.test/fixture-prices", reviewedAt: "2026-09-24", maxOtherMicros: 0,
+  costBasis: { sourceUrl: "https://example.test/fixture-prices", reviewedAt: freshReviewAt, maxOtherMicros: 0,
     models: [{ id: "fixture", maxInputTokens: 1, maxOutputTokens: 1, inputMicrosPerMillion: 1_000_000, outputMicrosPerMillion: 1_000_000 }] } };
 function context(sequence = 0, id = `turn-${sequence}`) {
   const auth = { authenticator: "jumpstart", principalType: "user", principalId: owner.subject, issuer: owner.tenant, attributes: { creationOperationId: operation } };
@@ -26,6 +27,25 @@ beforeEach(async () => {
   runtime = new RuntimeBudgets(budgets,access,{ get: () => state, update: fn => { state = fn(state); } },settings);
 });
 afterEach(async () => { await access.close(); await budgets.close(); });
+it("blocks stale admission and settles an unstarted first-turn reservation at zero", async () => {
+  await budgets.reserve({ ...owner,operationId: operation,requestHash: "a".repeat(64),estimateMicros: settings.estimateMicros,
+    policy: runtimeReservationPolicy(settings),now: Date.parse("2026-10-01T12:00:00Z") });
+  const stale = new RuntimeBudgets(budgets,access,{ get: () => state, update: fn => { state = fn(state); } },
+    { ...settings,costBasis: { ...settings.costBasis,reviewedAt: "2026-08-31" } },() => Date.parse("2026-10-01T12:00:00Z"));
+  await expect(stale.beginTurn(context())).rejects.toThrow("older than 30 UTC days");
+  await expect(stale.beginCompaction(context(),"manual","fixture")).rejects.toThrow("older than 30 UTC days");
+  expect(await budgets.snapshot({ ...owner,now: Date.parse("2026-10-01T12:00:00Z") })).toMatchObject({ active: 0,reservedMicros: 0,chargedMicros: 0 });
+});
+it("rechecks review age at the provider boundary before claiming a billed attempt", async () => {
+  let now = Date.parse("2026-10-01T12:00:00Z");
+  const atBoundary = new RuntimeBudgets(budgets,access,{ get: () => state, update: fn => { state = fn(state); } },
+    { ...settings,costBasis: { ...settings.costBasis,reviewedAt: "2026-09-01" } },() => now);
+  await atBoundary.beginTurn(context());
+  await atBoundary.beginStep(context(),"expires-before-provider","fixture");
+  now = Date.parse("2026-10-02T00:00:00Z");
+  await expect(atBoundary.prepareProviderCall("fixture","fixture-provider",{ prompt: [] })).rejects.toThrow("older than 30 UTC days");
+  expect(await budgets.attemptCount({ ...owner,operationId: operation })).toBe(0);
+});
 it("settles complete known usage and independently admits a follow-up", async () => {
   await runtime.beginTurn(context()); await step(context(),"event-1","fixture"); runtime.completeStep(0.00001); await runtime.endTurn(context());
   expect(await budgets.snapshot({ ...owner, now: Date.now() })).toMatchObject({ chargedMicros: 10, active: 0, unknownCosts: 0 });

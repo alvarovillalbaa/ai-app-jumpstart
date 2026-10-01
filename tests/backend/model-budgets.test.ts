@@ -10,8 +10,9 @@ import { sqliteBudgetStore } from "../../lib/budgets/sqlite";
 import { runtimeReference } from "../../lib/observability/runtime";
 
 const owner = { tenant: "test", subject: "alice" };
+const freshReviewAt = new Date().toISOString().slice(0, 10);
 const settings = { policy: { id: "fixture", dailyMicros: 200, maxActive: 1, maxPerMinute: 10 }, estimateMicros: 100, maxModelCalls: 2, modelIds: ["fixture/model"],
-  costBasis: { sourceUrl: "https://example.test/fixture-prices", reviewedAt: "2026-09-24", maxOtherMicros: 0,
+  costBasis: { sourceUrl: "https://example.test/fixture-prices", reviewedAt: freshReviewAt, maxOtherMicros: 0,
     models: [{ id: "fixture/model", maxInputTokens: 1, maxOutputTokens: 16, inputMicrosPerMillion: 1_000_000, outputMicrosPerMillion: 1_000_000 }] } };
 const usage = { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } };
 const response = { content: [{ type: "text" as const, text: "ok" }], finishReason: { unified: "stop" as const, raw: undefined }, usage, warnings: [] };

@@ -192,8 +192,9 @@ try {
   }
   if (chat) {
     env.AI_CREATION_SIGNING_JSON = JSON.stringify({ audience: name, activeKey: "fixture", keys: { fixture: randomBytes(32).toString("hex") } });
+    const freshReviewAt = new Date().toISOString().slice(0, 10);
     env.AI_BUDGET_POLICY_JSON = JSON.stringify({ policy: { id: "fixture", dailyMicros: uploads ? 100 : 60, maxActive: 2, maxPerMinute: 20 }, estimateMicros: 20, maxModelCalls: 2, modelIds: ["model", "eve-mock/model"],
-      costBasis: { sourceUrl: "https://example.test/fixture-prices", reviewedAt: "2026-09-24", maxOtherMicros: 0,
+      costBasis: { sourceUrl: "https://example.test/fixture-prices", reviewedAt: freshReviewAt, maxOtherMicros: 0,
         models: ["model", "eve-mock/model"].map(id => ({ id, maxInputTokens: 1, maxOutputTokens: 1, inputMicrosPerMillion: 1_000_000, outputMicrosPerMillion: 1_000_000 })) } });
   }
   // The portable smoke checks Eve health even when account chat is disabled.

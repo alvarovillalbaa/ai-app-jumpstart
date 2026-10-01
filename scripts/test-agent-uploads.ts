@@ -26,10 +26,11 @@ const portServer = createServer();portServer.listen(0,"127.0.0.1");await once(po
 const address = portServer.address();if (!address || typeof address === "string") throw new Error("Fixture port unavailable.");
 const origin = `http://127.0.0.1:${address.port}`;await new Promise<void>(resolve => portServer.close(() => resolve()));
 const owner = { tenant: "fixture",subject: "alice" },aliceToken = randomBytes(32).toString("hex"),bobToken = randomBytes(32).toString("hex");
+const freshReviewAt = new Date().toISOString().slice(0,10);
 const signing = { audience: "isolated-session-runtime",activeKey: "fixture",keys: { fixture: randomBytes(32).toString("hex") } };
 const budgetSettings = parseRuntimeBudgetSettings({ policy: { id: "upload-fixture",dailyMicros: 1000,maxActive: 2,maxPerMinute: 100 },
   estimateMicros: 20,maxModelCalls: 2,maxInputBytes: 65536,modelIds: ["openai/gpt-5.6-luna-fast"],
-  costBasis: { sourceUrl: "https://example.test/fixture-prices",reviewedAt: "2026-09-24",maxOtherMicros: 0,
+  costBasis: { sourceUrl: "https://example.test/fixture-prices",reviewedAt: freshReviewAt,maxOtherMicros: 0,
     models: [{ id: "openai/gpt-5.6-luna-fast",maxInputTokens: 4096,maxOutputTokens: 1024,inputMicrosPerMillion: 1,outputMicrosPerMillion: 1 }] } });
 const env = Object.fromEntries(["PATH","HOME","TMPDIR","SystemRoot","CI"].flatMap(key => process.env[key] ? [[key,process.env[key]!]] : []));
 Object.assign(env,{ NODE_ENV: "production",APP_ORIGIN: origin,DATA_PROVIDER: "sqlite",SQLITE_PATH: database,
@@ -52,7 +53,7 @@ try {
     routesManifest: { rewrites: { beforeFiles: [{ source: "/eve/v1/:path+",destination: `${origin}/eve/v1/:path+` }] } } });
   const client = new Client({ host: origin,auth: { bearer: aliceToken },redirect: "error" });
   const broker = new ConversationBroker(access,creationTransport(origin,signing));
-  const creation = new BudgetedCreation(broker,budgets,runtimeReservationPolicy(budgetSettings),() => budgetSettings.estimateMicros);
+  const creation = new BudgetedCreation(broker,budgets,runtimeReservationPolicy(budgetSettings),() => budgetSettings.estimateMicros,budgetSettings.costBasis);
   // Native reads are proved by persisted scan timestamps and exact tool results.
   for (const scenario of ["approve","deny","revoke","reject","outage","foreign"] as const) {
     await writeFile(control,"clean");
