@@ -29,8 +29,11 @@ async function confirmedUser(request: APIRequestContext, email: string) {
   expect(response.status()).toBe(200);
 }
 async function tokenFor(request: APIRequestContext, email: string, pass = password) {
-  const response = await request.post(`${auth}/auth/v1/token?grant_type=password`, { headers: publicHeaders, data: { email, password: pass } });
-  expect(response.status()).toBe(200); return (await response.json()).access_token as string;
+  return (await sessionFor(request,email,pass)).access_token as string;
+}
+async function sessionFor(request: APIRequestContext,email: string,pass = password) {
+  const response = await request.post(`${auth}/auth/v1/token?grant_type=password`,{ headers: publicHeaders,data: { email,password: pass } });
+  expect(response.status()).toBe(200);return await response.json() as { access_token: string;refresh_token: string;user: { id: string } };
 }
 async function login(page: Page, email: string, pass = password) {
   await page.goto("/login"); await page.getByLabel("Email", { exact: true }).fill(email);
@@ -388,6 +391,46 @@ test("global sign-out rejects two sessions through REST, CLI and MCP", async ({ 
     }
   } finally {
     await Promise.all(mcpClients.map(client => client.close().catch(() => {})));
+  }
+});
+
+test("hard Auth deletion invalidates every refresh session and rejects stale access tokens",async ({ request }) => {
+  const email = `delete-auth-${randomUUID()}@example.test`;
+  await confirmedUser(request,email);
+  const [first,second] = await Promise.all([sessionFor(request,email),sessionFor(request,email)]);
+  expect(first.user.id).toBe(second.user.id);
+  const sessionId = (token: string) => JSON.parse(Buffer.from(token.split(".")[1],"base64url").toString()).session_id;
+  expect(sessionId(first.access_token)).toBeTruthy();
+  expect(sessionId(first.access_token)).not.toBe(sessionId(second.access_token));
+
+  const headers = (token: string) => ({ authorization: `Bearer ${token}` });
+  const profileResponse = await request.get("/api/v1/account/profile",{ headers: headers(first.access_token) });
+  expect(profileResponse.status()).toBe(200);
+  const profile = await profileResponse.json();
+  expect(profile.id).toBe(first.user.id);
+  const ownerRecord = await request.post("/api/v1/records",{ headers: headers(first.access_token),
+    data: { title: "Account deletion fixture",content: "Removed before Auth deletion." } });
+  expect(ownerRecord.status()).toBe(201);
+  const record = await ownerRecord.json();
+  expect((await request.delete(`/api/v1/records/${record.id}`,{ headers: headers(first.access_token) })).status()).toBe(204);
+  expect((await request.get(`/api/v1/records/${record.id}`,{ headers: headers(second.access_token) })).status()).toBe(404);
+
+  const admin = createClient(auth,process.env.TEST_AUTH_ADMIN_KEY!,{
+    auth: { persistSession: false,autoRefreshToken: false,detectSessionInUrl: false },
+  });
+  const deletion = await admin.auth.admin.deleteUser(profile.id,false);
+  expect(deletion.error).toBeNull();
+  const missing = await admin.auth.admin.getUserById(profile.id);
+  expect(missing.data.user).toBeNull();
+  expect(missing.error?.status).toBe(404);
+
+  for (const session of [first,second]) {
+    const refresh = await request.post(`${auth}/auth/v1/token?grant_type=refresh_token`,{
+      headers: publicHeaders,data: { refresh_token: session.refresh_token },
+    });
+    expect(refresh.status()).not.toBe(200);
+    expect(await refresh.json()).not.toHaveProperty("access_token");
+    expect((await request.get("/api/v1/records",{ headers: headers(session.access_token) })).status()).toBe(401);
   }
 });
 
