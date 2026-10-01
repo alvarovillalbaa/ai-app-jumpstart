@@ -68,11 +68,13 @@ try {
   const capture = chunk => { output = (output + chunk.toString()).slice(-16_000); };
   backend.stdout.on("data", capture); backend.stderr.on("data", capture);
   backend.on("error", error => { startupError = error; });
-  const deadline = Date.now() + 120_000;
+  // A fresh CI runner may need to download both the local backend and dashboard.
+  const startupTimeoutMs = 300_000;
+  const deadline = Date.now() + startupTimeoutMs;
   while (!output.includes("Convex functions ready")) {
     if (output.includes("Found ") && output.includes("error") && output.includes("TypeScript typecheck")) throw new Error("Local Convex TypeScript validation failed.");
     if (terminated || startupError || backend.exitCode !== null || backend.signalCode !== null) throw new Error("Local Convex backend stopped before becoming ready.");
-    if (Date.now() > deadline) throw new Error("Local Convex startup exceeded 120 seconds.");
+    if (Date.now() > deadline) throw new Error(`Local Convex startup exceeded ${startupTimeoutMs / 1000} seconds.`);
     await new Promise(resolve => setTimeout(resolve, 200));
   }
   // Opt-in regeneration uses the disposable deployment, never operator credentials.
