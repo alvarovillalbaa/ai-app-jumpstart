@@ -43,8 +43,11 @@ const readManifest = path => JSON.parse(readFileSync(resolve(path), "utf8"));
 const aws = readManifest("deploy/aws/task-definition.example.json");
 const azure = readManifest("deploy/azure/container-app.example.json");
 const gcp = readManifest("deploy/gcp/service.example.json");
+const awsApp = aws.containerDefinitions.find(c => c.name === "app");
+assert.equal(aws.containerDefinitions.length, 1, "AWS task-role credentials must not be shared with an ingress sidecar");
+assert.deepEqual(awsApp.portMappings.map(mapping => mapping.containerPort).sort((a, b) => a - b), [3000, 4274]);
+assert.equal(awsApp.environment.find(e => e.name === "EVE_LISTEN_HOST")?.value, "0.0.0.0");
 const cloudRoutes = [
-  { app: aws.containerDefinitions.find(c => c.name === "app"), ingress: aws.containerDefinitions.find(c => c.name === "ingress"), port: aws.containerDefinitions.find(c => c.name === "ingress")?.portMappings?.[0]?.containerPort },
   { app: azure.properties.template.containers.find(c => c.name === "app"), ingress: azure.properties.template.containers.find(c => c.name === "ingress"), port: azure.properties.configuration.ingress.targetPort },
   { app: gcp.spec.template.spec.containers.find(c => c.name === "app"), ingress: gcp.spec.template.spec.containers.find(c => c.name === "ingress"), port: gcp.spec.template.spec.containers.find(c => c.name === "ingress")?.ports?.[0]?.containerPort },
 ];
@@ -57,7 +60,6 @@ for (const { app, ingress: proxy, port } of cloudRoutes) {
   const appEnv = app.environment ?? app.env;
   assert.equal(appEnv.find(e => e.name === "APP_AGENT_READINESS")?.value, "local");
 }
-assert.equal(aws.containerDefinitions.find(c => c.name === "ingress").dependsOn[0].condition, "HEALTHY");
 assert.deepEqual(JSON.parse(gcp.spec.template.metadata.annotations["run.googleapis.com/container-dependencies"]), { ingress: ["app"] });
 
 try {

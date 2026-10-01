@@ -6,7 +6,7 @@ This uses Amplify's newer [self-managed hosting](https://docs.amplify.aws/nextjs
 
 ## Prepare the separate worker
 
-Follow the [AWS container recipe](cloud-containers.md#aws-ecsfargate) for a single long-running task with a PostgreSQL Workflow build, separate application/Workflow databases, verified TLS, migration jobs, IAM and combined readiness. The application image includes the private Next readiness process as well as Eve. For this topology, replace the ingress image with one built from `deploy/amplify-eve.Dockerfile` and pinned by digest. Its target port remains 8080; Next 3000 and Eve 4274 must remain private.
+Use a dedicated long-running worker task with a PostgreSQL Workflow build, separate application/Workflow databases, verified TLS, migration jobs, IAM and combined readiness. The regular [AWS container recipe](cloud-containers.md#aws-ecsfargate) uses one app container and ALB path routing; this Amplify worker instead needs a second guarded ingress container built from `deploy/amplify-eve.Dockerfile` and pinned by digest. The app image includes the private Next readiness process as well as Eve. Its Caddy target remains port 8080; Next 3000 and Eve 4274 must remain private. [ECS makes task-role credentials available to all containers in a task](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-iam-roles.html), so omit `taskRoleArn` unless the worker genuinely needs AWS API permissions; the worker uses its execution role for managed-secret injection.
 
 ```sh
 docker build --file deploy/amplify-eve.Dockerfile --tag your-registry/jumpstart-amplify-eve:review .

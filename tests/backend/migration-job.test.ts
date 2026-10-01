@@ -33,6 +33,10 @@ it("produces nine one-off jobs with the release digest, exact commands and only 
     expect(env.map(row => row.name).sort()).toEqual(operation === "workflow-apply" ? ["WORKFLOW_POSTGRES_JOB_PREFIX", "WORKFLOW_POSTGRES_URL"] : ["DATABASE_URL"]);
     for (const field of ["ports", "portMappings", "healthCheck", "probes", "startupProbe", "readinessProbe", "dependsOn"]) expect(app).not.toHaveProperty(field);
     expect(JSON.stringify(job)).not.toMatch(/AI_GATEWAY_API_KEY|SUPABASE_SECRET_KEY|AI_CREATION_SIGNING_JSON|ingress/);
+    if (provider === "aws") {
+      expect(job).not.toHaveProperty("taskRoleArn");
+      expect(job.executionRoleArn).toBe(source.executionRoleArn);
+    }
     if (provider === "azure") expect(job.properties?.configuration).toMatchObject({ triggerType: "Manual", replicaRetryLimit: 0, manualTriggerConfig: { parallelism: 1, replicaCompletionCount: 1 } });
     if (provider === "gcp") expect(job.spec?.template.spec).toMatchObject({ parallelism: 1, taskCount: 1, template: { spec: { maxRetries: 0 } } });
   }

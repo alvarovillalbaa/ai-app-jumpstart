@@ -68,7 +68,7 @@ export function migrationJob(provider: CloudProvider, input: unknown, operation:
     return {
       family: name, networkMode: source.networkMode, requiresCompatibilities: source.requiresCompatibilities,
       cpu: source.cpu, memory: source.memory, executionRoleArn: source.executionRoleArn,
-      taskRoleArn: source.taskRoleArn, runtimePlatform: source.runtimePlatform,
+      runtimePlatform: source.runtimePlatform,
       containerDefinitions: [{ name: "migrate", image: app.image, essential: true, user: app.user,
         stopTimeout: app.stopTimeout, entryPoint: ["node"], command: args,
         environment: jobEnv.filter(row => row.value !== undefined), secrets: jobEnv.filter(row => row.value === undefined),

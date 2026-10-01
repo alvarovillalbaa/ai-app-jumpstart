@@ -69,31 +69,28 @@ function probe(container: JsonObject,kind: string,path: string,port: number,labe
 export function validateCloudManifest(provider: CloudProvider,raw: unknown,template = false) {
   const manifest = object(raw,"manifest");
   if (!template && JSON.stringify(raw).includes("REPLACE_")) fail("unresolved REPLACE_ marker remains.");
-  let app: JsonObject,ingress: JsonObject,appEnv: Map<string,JsonObject>,ingressEnv: Map<string,JsonObject>;
+  let app: JsonObject,ingress: JsonObject | undefined,appEnv: Map<string,JsonObject>,ingressEnv: Map<string,JsonObject> | undefined;
   let secretNames = new Set<string>();
   if (provider === "aws") {
     const containers = array(manifest.containerDefinitions,"containerDefinitions");
-    app = named(containers,"app","containerDefinitions");ingress = named(containers,"ingress","containerDefinitions");
-    if (containers.length !== 2 || manifest.networkMode !== "awsvpc" ||
+    app = named(containers,"app","containerDefinitions");
+    if (containers.length !== 1 || manifest.networkMode !== "awsvpc" ||
         !array(manifest.requiresCompatibilities,"requiresCompatibilities").includes("FARGATE"))
-      fail("AWS must use two Fargate awsvpc containers.");
-    if (app.essential !== true || ingress.essential !== true) fail("AWS app and ingress must both be essential.");
+      fail("AWS must use one Fargate awsvpc app container.");
+    if (app.essential !== true) fail("AWS app must be essential.");
     if (manifest.executionRoleArn === manifest.taskRoleArn) fail("AWS execution and task roles must differ.");
     string(manifest.executionRoleArn,"executionRoleArn");string(manifest.taskRoleArn,"taskRoleArn");
     if (!template && ![manifest.executionRoleArn,manifest.taskRoleArn].every(value =>
       typeof value === "string" && /^arn:[^:]+:iam::\d{12}:role\/.+/.test(value)))
       fail("AWS execution and task roles must be IAM role ARNs.");
-    if (array(ingress.portMappings,"ingress.portMappings").length !== 1 ||
-        object(array(ingress.portMappings,"ingress.portMappings")[0],"ingress port").containerPort !== 8080 || app.portMappings !== undefined)
-      fail("only ingress may expose port 8080.");
-    const depends = array(ingress.dependsOn,"ingress.dependsOn").map(item => object(item,"ingress dependency"));
-    if (!depends.some(item => item.containerName === "app" && item.condition === "HEALTHY"))
-      fail("AWS ingress must wait for healthy app.");
+    const mappings = array(app.portMappings,"app.portMappings").map(item => object(item,"app port"));
+    if (mappings.length !== 2 || mappings.some(item => item.protocol !== "tcp") ||
+        mappings.map(item => item.containerPort).sort().join(",") !== "3000,4274")
+      fail("AWS app must expose only TCP ports 3000 and 4274 for ALB targets.");
     const health = child(app,"healthCheck","app");
     if (!JSON.stringify(health.command).includes("/api/health/ready"))
       fail("AWS app health check must include combined readiness.");
     appEnv = envMap([...array(app.environment,"app.environment"),...array(app.secrets,"app.secrets")],"app environment");
-    ingressEnv = envMap(array(ingress.environment,"ingress.environment"),"ingress environment");
   } else if (provider === "azure") {
     const properties = child(manifest,"properties","manifest"),templateNode = child(properties,"template","properties");
     const configuration = child(properties,"configuration","properties");
@@ -148,9 +145,13 @@ export function validateCloudManifest(provider: CloudProvider,raw: unknown,templ
     appEnv = envMap(array(app.env,"app.env"),"app environment");
     ingressEnv = envMap(array(ingress.env,"ingress.env"),"ingress environment");
   }
-  digest(app.image,"app image",template);digest(ingress.image,"ingress image",template);
-  expectValue(ingressEnv,"NEXT_UPSTREAM","127.0.0.1:3000");
-  expectValue(ingressEnv,"EVE_UPSTREAM","127.0.0.1:4274");
+  digest(app.image,"app image",template);
+  if (ingress) digest(ingress.image,"ingress image",template);
+  if (ingressEnv) {
+    expectValue(ingressEnv,"NEXT_UPSTREAM","127.0.0.1:3000");
+    expectValue(ingressEnv,"EVE_UPSTREAM","127.0.0.1:4274");
+  }
+  if (provider === "aws") expectValue(appEnv,"EVE_LISTEN_HOST","0.0.0.0");
   expectValue(appEnv,"AUTH_PROVIDER","supabase");
   if (!appEnv.has("APP_REQUESTS_PER_MINUTE")) fail("APP_REQUESTS_PER_MINUTE must be an explicit literal 0 or integer from 1 to 10000.");
   let requestLimitPerMinute: number;

@@ -9,9 +9,9 @@ const files: Record<CloudProvider,string> = {
   gcp: "deploy/gcp/service.example.json",
 };
 type FixtureEnv = { name: string;value?: string;secretRef?: string;valueFrom?: unknown };
-type FixtureContainer = { image: string;environment: FixtureEnv[];secrets: FixtureEnv[];env: FixtureEnv[];
+type FixtureContainer = { name?: string;image: string;environment: FixtureEnv[];secrets: FixtureEnv[];env: FixtureEnv[];
   healthCheck: { command: string[] };startupProbe: { httpGet: { path: string;port: number } };
-  portMappings?: { containerPort: number }[];ports?: { containerPort: number }[] };
+  portMappings?: { containerPort: number;protocol?: string }[];ports?: { containerPort: number }[] };
 type FixtureManifest = { containerDefinitions: FixtureContainer[];
   properties: { template: { containers: FixtureContainer[] } };
   spec: { template: { spec: { containers: FixtureContainer[] } } } };
@@ -208,8 +208,46 @@ it("rejects plaintext secrets and public app/Eve ports without echoing a secret"
       expect(String(error)).not.toContain("private-fixture-value");
     }
   }
-  const aws = filled("aws");aws.containerDefinitions[0].portMappings = [{ containerPort: 4274 }];
-  expect(() => validateCloudManifest("aws",aws)).toThrow("only ingress");
+  const aws = filled("aws");aws.containerDefinitions[0].portMappings = [
+    { containerPort: 3000,protocol: "tcp" },{ containerPort: 8080,protocol: "tcp" },
+  ];
+  expect(() => validateCloudManifest("aws",aws)).toThrow("only TCP ports 3000 and 4274");
+  const awsWithSidecar = filled("aws");(awsWithSidecar.containerDefinitions as unknown[]).push({ name: "ingress" });
+  expect(() => validateCloudManifest("aws",awsWithSidecar)).toThrow("one Fargate awsvpc app container");
   const gcp = filled("gcp");gcp.spec.template.spec.containers[1].ports = [{ containerPort: 3000 }];
   expect(() => validateCloudManifest("gcp",gcp)).toThrow("only GCP ingress");
+});
+
+it("keeps AWS task ports, Eve bind address and ALB path routing aligned",() => {
+  const task = filled("aws").containerDefinitions[0];
+  expect(task.portMappings).toEqual([
+    { containerPort: 3000,protocol: "tcp" },{ containerPort: 4274,protocol: "tcp" },
+  ]);
+  expect(task.environment.find(row => row.name === "EVE_LISTEN_HOST")?.value).toBe("0.0.0.0");
+
+  const template = JSON.parse(readFileSync("deploy/aws/alb-routing.example.json","utf8")) as {
+    Parameters: { SslPolicy: { Default: string } };
+    Resources: {
+      NextTargetGroup: { Type: string;Properties: { Port: number;TargetType: string;HealthCheckPath: string } };
+      EveTargetGroup: { Type: string;Properties: { Port: number;TargetType: string;HealthCheckPath: string } };
+      HttpsListener: { Properties: { SslPolicy: { Ref: string };DefaultActions: unknown[] } };
+      EveListenerRule: { Properties: { Conditions: unknown[];Actions: unknown[] } };
+    };
+  };
+  const { NextTargetGroup, EveTargetGroup, HttpsListener, EveListenerRule } = template.Resources;
+  expect(template.Parameters.SslPolicy.Default).toBe("ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09");
+  expect(NextTargetGroup).toMatchObject({ Type: "AWS::ElasticLoadBalancingV2::TargetGroup",Properties: {
+    Port: 3000,TargetType: "ip",HealthCheckPath: "/api/health/ready",
+  } });
+  expect(EveTargetGroup).toMatchObject({ Type: "AWS::ElasticLoadBalancingV2::TargetGroup",Properties: {
+    Port: 4274,TargetType: "ip",HealthCheckPath: "/eve/v1/health",
+  } });
+  expect(HttpsListener.Properties.SslPolicy.Ref).toBe("SslPolicy");
+  expect(HttpsListener.Properties.DefaultActions).toEqual([
+    { Type: "forward",TargetGroupArn: { Ref: "NextTargetGroup" } },
+  ]);
+  expect(EveListenerRule.Properties).toMatchObject({
+    Conditions: [{ Field: "path-pattern",PathPatternConfig: { Values: ["/eve/*","/.well-known/workflow/*"] } }],
+    Actions: [{ Type: "forward",TargetGroupArn: { Ref: "EveTargetGroup" } }],
+  });
 });
