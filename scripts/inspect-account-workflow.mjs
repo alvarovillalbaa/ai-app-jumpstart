@@ -23,6 +23,12 @@ function count(value) {
   return number;
 }
 
+function sumCounts(values) {
+  const total = values.reduce((sum,value) => sum + value,0);
+  if (!Number.isSafeInteger(total) || total < 0) throw new Error("Unsupported Workflow total.");
+  return total;
+}
+
 function validIds(rows) {
   if (!Array.isArray(rows) || rows.length > 100_000 || rows.some(row => typeof row.session_id !== "string" ||
       row.session_id.length === 0 || row.session_id.length > 512))
@@ -120,18 +126,33 @@ export async function inspectAccountWorkflow(metadataProvider, owner, env,reques
         (SELECT count(*) FROM workflow.workflow_waits WHERE run_id IN (SELECT id FROM linked)) AS waits,
         (SELECT count(*) FROM workflow.workflow_event_slots WHERE run_id IN (SELECT id FROM linked)) AS event_slots,
         (SELECT count(*) FROM workflow.workflow_invocations WHERE run_id IN (SELECT id FROM linked)) AS invocations,
+        (SELECT count(*) FROM workflow.workflow_runs WHERE id NOT IN (SELECT id FROM linked)) AS unattributed_runs,
+        (SELECT count(*) FROM workflow.workflow_steps WHERE run_id IS NULL OR run_id NOT IN (SELECT id FROM linked)) AS unattributed_steps,
+        (SELECT count(*) FROM workflow.workflow_events WHERE run_id IS NULL OR run_id NOT IN (SELECT id FROM linked)) AS unattributed_events,
+        (SELECT count(*) FROM workflow.workflow_hooks WHERE run_id IS NULL OR run_id NOT IN (SELECT id FROM linked)) AS unattributed_hooks,
+        (SELECT count(*) FROM workflow.workflow_stream_chunks WHERE run_id IS NULL OR run_id NOT IN (SELECT id FROM linked)) AS unattributed_stream_chunks,
+        (SELECT count(*) FROM workflow.workflow_waits WHERE run_id IS NULL OR run_id NOT IN (SELECT id FROM linked)) AS unattributed_waits,
+        (SELECT count(*) FROM workflow.workflow_event_slots WHERE run_id IS NULL OR run_id NOT IN (SELECT id FROM linked)) AS unattributed_event_slots,
+        (SELECT count(*) FROM workflow.workflow_invocations WHERE run_id IS NULL OR run_id NOT IN (SELECT id FROM linked)) AS unattributed_invocations,
         (SELECT count(*) FROM workflow.workflow_runs WHERE attributes->>'$eve.type'='session' AND id NOT IN (SELECT id FROM linked)) AS other_session_roots`,
     [ids,[...terminalRunStatuses]]);
     await db.query("COMMIT");
     const row = result.rows[0];
-    return { format: "ai-app-jumpstart-account-workflow-observation-v1", metadataProvider,
+    const unattributedWorkflowRows = {
+      runs: count(row.unattributed_runs),steps: count(row.unattributed_steps),events: count(row.unattributed_events),
+      hooks: count(row.unattributed_hooks),streamChunks: count(row.unattributed_stream_chunks),waits: count(row.unattributed_waits),
+      eventSlots: count(row.unattributed_event_slots),invocations: count(row.unattributed_invocations),
+    };
+    const unattributedWorkflowRowCount = sumCounts(Object.values(unattributedWorkflowRows));
+    return { format: "ai-app-jumpstart-account-workflow-observation-v2", metadataProvider,
       workflowProvider: "postgres", boundSessionCount: ids.length,
       linkedRuns: { runs: count(row.runs), terminalRuns: count(row.terminal_runs),
         nonterminalRuns: count(row.nonterminal_runs), steps: count(row.steps), events: count(row.events),
         hooks: count(row.hooks), streamChunks: count(row.stream_chunks), waits: count(row.waits),
         eventSlots: count(row.event_slots), invocations: count(row.invocations) },
+      unattributedWorkflowRows,unattributedWorkflowRowCount,
       otherSessionRoots: count(row.other_session_roots),
-      scope: "two read-only snapshots; linked PostgreSQL Workflow rows only. Nonterminal linked runs are reported, not cancelled. Other session roots are global and may belong to other accounts; unlinked auxiliary runs, local/managed Workflow, Auth, providers, logs and backups are not attributed. No write fence or erasure certificate." };
+      scope: "two read-only snapshots; linked PostgreSQL Workflow rows are reported separately from all global rows not linked to the selected bound sessions. Unattributed run and child-row counts include rootless/auxiliary rows, may belong to other accounts, and return no identifiers. Nonterminal linked runs are reported, not cancelled. Local/managed Workflow, Auth, providers, logs and backups are not included. No write fence or erasure certificate." };
   } catch (error) { await db.query("ROLLBACK").catch(() => {}); throw error; } finally { await db.end(); }
 }
 

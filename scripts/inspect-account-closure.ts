@@ -42,15 +42,15 @@ export async function inspectAccountClosure(metadataProvider: MetadataProvider,o
   const objects = await inspectAccountObjects(objectProvider,owner,env);
   const workflow = options.workflowPostgres ? await inspectAccountWorkflow(metadataProvider,owner,env,request) : null;
   const workflowRowsRemain = workflow ? Object.values(workflow.linkedRuns).some(count => count > 0) : null;
-  const workflowUnattributedRoots = workflow?.otherSessionRoots ?? null;
+  const workflowUnattributedRows = workflow?.unattributedWorkflowRowCount ?? null;
   const remaining = { applicationRows: rows.ownerRowTotal > 0,privateObjects: objects.objectCount > 0,
     globalUnattributableRows: rows.orphanRowTotal > 0,applicationWritesPossible: !rows.applicationWriteFenced,
     authIdentity: auth.authIdentityPresent,authSessionRows,workflowRows: workflowRowsRemain,
-    workflowUnattributedRoots };
+    workflowUnattributedRows };
   const observedDataRemains = remaining.applicationRows || remaining.privateObjects || remaining.globalUnattributableRows ||
     remaining.authIdentity || (remaining.authSessionRows ?? 0) > 0 || remaining.workflowRows === true ||
-    (remaining.workflowUnattributedRoots ?? 0) > 0;
-  return { format: "ai-app-jumpstart-account-closure-observation-v3",
+    (remaining.workflowUnattributedRows ?? 0) > 0;
+  return { format: "ai-app-jumpstart-account-closure-observation-v4",
     status: observedDataRemains ? "retained_or_unattributable"
       : rows.applicationWriteFenced ? "application_fenced_zero" : "unfenced_zero",
     metadataProvider,objectProvider,authProvider: auth.authProvider,
@@ -60,9 +60,10 @@ export async function inspectAccountClosure(metadataProvider: MetadataProvider,o
     ownerRows: rows.ownerRows,orphanRows: rows.orphanRows,ownerRowTotal: rows.ownerRowTotal,
     orphanRowTotal: rows.orphanRowTotal,objectCount: objects.objectCount,
     workflow: workflow ? { provider: "postgres",boundSessionCount: workflow.boundSessionCount,
-      linkedRuns: workflow.linkedRuns,otherSessionRoots: workflow.otherSessionRoots } : null,
+      linkedRuns: workflow.linkedRuns,unattributedRows: workflow.unattributedWorkflowRows,
+      unattributedRowCount: workflow.unattributedWorkflowRowCount,otherSessionRoots: workflow.otherSessionRoots } : null,
     inspectedEntities: Object.keys(rows.ownerRows).length,
-    scope: `SQLite/PostgreSQL row counts and permanent row-fence status share one read snapshot; Convex bounded counts and its fence query are separate snapshots. When Supabase Auth is configured, an operator lookup checks the exact registered user without returning identity fields; api-key mode has no Auth identity.${options.authSessionsPostgres ? " The --auth-sessions-postgres option counts rows in auth.sessions through the separately configured SUPABASE_AUTH_DATABASE_URL and compares user presence with the Auth admin lookup; this is a separate snapshot, returns no session identifiers, and counts table rows rather than active sessions. Pairing that URL with the selected Auth project remains an operator responsibility." : " Auth session rows are unknown unless --auth-sessions-postgres is selected."} Private objects are a separate observation.${workflow ? " Linked PostgreSQL Workflow runs and child-row counts use separate application-binding and Workflow read snapshots. The global count of session roots not linked to the selected owner is reported as workflowUnattributedRoots; any nonzero count prevents a zero status and may include other accounts. Auxiliary or unlinked runs are not attributed or erased." : " Workflow is not included unless --workflow-postgres is selected."} This does not fence in-flight work/object writes; local or managed Workflow, providers, logs, derived copies and backups are outside this report` };
+    scope: `SQLite/PostgreSQL row counts and permanent row-fence status share one read snapshot; Convex bounded counts and its fence query are separate snapshots. When Supabase Auth is configured, an operator lookup checks the exact registered user without returning identity fields; api-key mode has no Auth identity.${options.authSessionsPostgres ? " The --auth-sessions-postgres option counts rows in auth.sessions through the separately configured SUPABASE_AUTH_DATABASE_URL and compares user presence with the Auth admin lookup; this is a separate snapshot, returns no session identifiers, and counts table rows rather than active sessions. Pairing that URL with the selected Auth project remains an operator responsibility." : " Auth session rows are unknown unless --auth-sessions-postgres is selected."} Private objects are a separate observation.${workflow ? " Linked PostgreSQL Workflow rows and the counts of all run/child rows not linked to the selected bound sessions use separate application-binding and Workflow read snapshots. Any nonzero unattributed row count prevents a zero status and may include other accounts; no run IDs are returned and the rows are not attributed or erased. The global session-root count is included for context." : " Workflow is not included unless --workflow-postgres is selected."} This does not fence in-flight work/object writes; local or managed Workflow, providers, logs, derived copies and backups are outside this report` };
 }
 
 async function main(args: string[],env: NodeJS.ProcessEnv) {
