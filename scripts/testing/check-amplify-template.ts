@@ -3,7 +3,7 @@ import { App } from "aws-cdk-lib";
 import { Template } from "aws-cdk-lib/assertions";
 import { CachePolicy } from "aws-cdk-lib/aws-cloudfront";
 import type { DeployManifest } from "@aws-amplify/hosting";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { amplifyConfig } from "../../lib/deploy/amplify-config";
@@ -71,6 +71,10 @@ try {
   assert.ok(daily.Properties.Targets[0].DeadLetterConfig.Arn);
   const assembly = app.synth();
   assert.ok(assembly.stacks[0].template);
+  if (process.env.JUMPSTART_AMPLIFY_CFN_TEMPLATE_OUTPUT) {
+    await writeFile(process.env.JUMPSTART_AMPLIFY_CFN_TEMPLATE_OUTPUT,
+      `${JSON.stringify(assembly.stacks[0].template, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+  }
   // Baseline CSP must not appear in inline edge configuration either.
   const text = JSON.stringify(template.toJSON());
   assert.ok(!text.includes("baseline-would-overwrite-nonce"));
