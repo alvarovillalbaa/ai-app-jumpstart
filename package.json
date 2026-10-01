@@ -202,7 +202,7 @@
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "7.0.1",
     "@testing-library/react": "16.3.3",
-    "@types/node": "24.13.6",
+    "@types/node": "26.6.3",
     "@types/pg": "8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
