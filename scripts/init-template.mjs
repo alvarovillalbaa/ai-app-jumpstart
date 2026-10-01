@@ -5,13 +5,27 @@ import { readBoundedRegularFile,readBoundedRegularFileDetails } from "../lib/sec
 
 const MAX_TEMPLATE_INPUT_BYTES = 16 * 1024 * 1024;
 const readText = async path => (await readBoundedRegularFile(path,{ minBytes: 1,maxBytes: MAX_TEMPLATE_INPUT_BYTES })).toString("utf8");
+const sourceDeliveryLogMarker = "<!-- TEMPLATE_SOURCE_DELIVERY_LOG -->";
+const projectDeliveryLog = `<!-- PROJECT_DELIVERY_LOG -->
+# Delivery log
+
+Record evidence for this application's releases here. Keep one entry per release candidate and include:
+
+- Application commit and source template revision.
+- Deployment target, region and selected data, authentication and workflow providers.
+- Migration state and the tested backup/restore point.
+- Exact validation commands and results, including hosted acceptance checks.
+- Known gaps, external dependencies and rollback or recovery decisions.
+
+No application release checkpoints have been recorded yet.
+`;
 
 const usage = `Initialize this copy of AI App Jumpstart.
 
 Usage:
   npm run init:template -- --name "Acme Assistant" [--slug acme-assistant] [--apply]
 
-The command previews changes by default. --apply writes project identity fields.`;
+The command previews changes by default. --apply writes project identity fields and replaces the marked template delivery history with a project release-log starter. Later edits to that log are preserved.`;
 
 function parseArgs(args) {
   const options = { apply: false, help: false };
@@ -110,10 +124,11 @@ async function main() {
   const packageNext = { ...packageJson, name: slug };
   const lockPackages = { ...packageLock.packages, "": { ...packageLock.packages[""], name: slug } };
   const lockNext = { ...packageLock, name: slug, packages: lockPackages };
-  const [appConfigSource, supabaseSource, readmeSource] = await Promise.all([
+  const [appConfigSource, supabaseSource, readmeSource, deliveryLogSource] = await Promise.all([
     readText(join(root, "app.config.ts")),
     readText(join(root, "supabase/config.toml")),
     readText(join(root, "README.md")),
+    readText(join(root, "docs/DELIVERY.md")),
   ]);
   if (!readmeSource.startsWith("# ")) throw new Error("README.md must begin with a level-one title.");
   const appConfigNext = replaceTypeScriptString(
@@ -121,12 +136,16 @@ async function main() {
     "name", options.name, "app.config.ts",
   );
   const readmeNext = readmeSource.replace(/^# [^\r\n]*/u, `# ${options.name}`);
+  const deliveryLogNext = deliveryLogSource.startsWith(`${sourceDeliveryLogMarker}\n`)
+    ? projectDeliveryLog
+    : deliveryLogSource;
   const changes = [
     ["package.json", `${JSON.stringify(packageNext, null, 2)}\n`],
     ["package-lock.json", `${JSON.stringify(lockNext, null, 2)}\n`],
     ["app.config.ts", appConfigNext],
     ["supabase/config.toml", replaceTomlProjectId(supabaseSource, slug)],
     ["README.md", readmeNext],
+    ["docs/DELIVERY.md", deliveryLogNext],
   ];
   const changed = [];
   for (const [path, content] of changes) {

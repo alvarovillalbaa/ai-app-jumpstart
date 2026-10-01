@@ -14,14 +14,14 @@ The [AI usage view](docs/usage-budgets.md) at `/usage` shows the account's curre
 
 ## Start locally
 
-After this repository is enabled for GitHub's **Use this template** action, set the generated project's app identity before installing dependencies or starting local Supabase. This gives the new project a distinct npm name, displayed app name, MCP server name and Supabase CLI project ID:
+In a new repository created with GitHub's **Use this template** action, set the generated project's app identity before installing dependencies or starting local Supabase. This gives the new project a distinct npm name, displayed app name, MCP server name and Supabase CLI project ID:
 
 ```sh
 npm run init:template -- --name "Acme Assistant" --apply
 npm ci
 ```
 
-The package and Supabase IDs use the slug `acme-assistant` derived from the display name. Use `--slug your-own-slug` to choose a different lowercase, hyphen-separated ID. Without `--apply`, the command only previews the changes. It updates project identity fields and the README title; protocol names, database formats and stable API contracts remain unchanged. See [fresh-clone and hosted setup](docs/getting-started.md) before configuring providers.
+The package and Supabase IDs use the slug `acme-assistant` derived from the display name. Use `--slug your-own-slug` to choose a different lowercase, hyphen-separated ID. Without `--apply`, the command only previews the changes. It updates project identity fields and the README title, and replaces the marked upstream delivery history with a release-evidence starter; later edits to that log are preserved. Protocol names, database formats and stable API contracts remain unchanged. See [fresh-clone and hosted setup](docs/getting-started.md) before configuring providers.
 
 For browser accounts and a Supabase-backed application, follow the [fresh-clone guide](docs/getting-started.md) for either local or hosted Supabase. The following smaller SQLite/API-key path assumes the identity setup and dependency install above are complete.
 

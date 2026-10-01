@@ -11,17 +11,20 @@ const run = (...args) => spawnSync(process.execPath, [script, ...args], { cwd: d
 const readJson = async path => JSON.parse(await readFile(join(directory, path), "utf8"));
 
 try {
-  await mkdir(join(directory, "supabase"));
+  await Promise.all([mkdir(join(directory, "supabase")), mkdir(join(directory, "docs"))]);
   await writeFile(join(directory, "package.json"), `${JSON.stringify({ name: "ai-app-jumpstart", version: "0.1.0", scripts: {} }, null, 2)}\n`);
   await writeFile(join(directory, "package-lock.json"), `${JSON.stringify({ name: "ai-app-jumpstart", lockfileVersion: 3, packages: { "": { name: "ai-app-jumpstart", version: "0.1.0" } } }, null, 2)}\n`);
   await writeFile(join(directory, "app.config.ts"), 'export const appConfig = {\n  id: "ai-app-jumpstart",\n  name: "AI App Jumpstart",\n} as const;\n');
   await writeFile(join(directory, "supabase/config.toml"), 'project_id = "ai-app-jumpstart"\n');
   await writeFile(join(directory, "README.md"), "# AI App Jumpstart\n\nStable documentation stays in place.\n");
+  await writeFile(join(directory, "docs/DELIVERY.md"), "<!-- TEMPLATE_SOURCE_DELIVERY_LOG -->\n# Delivery status\n\nUpstream PR #1 evidence must not carry into a generated project.\n");
 
   const preview = run("--name", 'Acme "Cloud" Assistant');
   assert.equal(preview.status, 0, preview.stderr);
   assert.match(preview.stdout, /Preview only/);
   assert.equal((await readJson("package.json")).name, "ai-app-jumpstart", "preview must not write files");
+  assert.match(await readFile(join(directory, "docs/DELIVERY.md"), "utf8"), /Upstream PR #1 evidence/,
+    "preview must not replace template delivery history");
 
   const invalid = run("--name", "Acme Assistant", "--slug", "../shared", "--apply");
   assert.equal(invalid.status, 2);
@@ -37,10 +40,19 @@ try {
   assert.match(await readFile(join(directory, "app.config.ts"), "utf8"), /name: "Acme \\\"Cloud\\\" Assistant"/);
   assert.match(await readFile(join(directory, "supabase/config.toml"), "utf8"), /project_id = "acme-cloud-assistant"/);
   assert.match(await readFile(join(directory, "README.md"), "utf8"), /^# Acme "Cloud" Assistant/m);
+  const deliveryLogPath = join(directory, "docs/DELIVERY.md");
+  const deliveryLog = await readFile(deliveryLogPath, "utf8");
+  assert.match(deliveryLog, /^<!-- PROJECT_DELIVERY_LOG -->/);
+  assert.match(deliveryLog, /No application release checkpoints have been recorded yet\./);
+  assert.doesNotMatch(deliveryLog, /Upstream PR #1 evidence/);
 
+  const customizedDeliveryLog = `${deliveryLog}\nA project-specific release entry.\n`;
+  await writeFile(deliveryLogPath, customizedDeliveryLog);
   const repeat = run("--name", 'Acme "Cloud" Assistant', "--apply");
   assert.equal(repeat.status, 0, repeat.stderr);
   assert.match(repeat.stdout, /already initialized/);
+  assert.equal(await readFile(deliveryLogPath, "utf8"), customizedDeliveryLog,
+    "a later initialization must preserve the project's release evidence");
 
   const privateFile = join(directory,"private-input.txt"),readme = join(directory,"README.md");
   await writeFile(privateFile,"private target remains untouched\n");
@@ -49,7 +61,7 @@ try {
   const symlinked = run("--name","Changed Name","--apply");
   assert.equal(symlinked.status,1);
   assert.equal(await readFile(privateFile,"utf8"),"private target remains untouched\n");
-  console.log("Template initializer passed preview, validation, identity/lockfile synchronization, escaped display names, idempotent rerun and symlink refusal checks.");
+  console.log("Template initializer passed preview, validation, identity/lockfile synchronization, escaped display names, delivery-log reset/preservation, idempotent rerun and symlink refusal checks.");
 } catch (error) {
   console.error(`Template initializer contract failed: ${error instanceof Error ? error.message : "unknown error"}`);
   process.exitCode = 1;

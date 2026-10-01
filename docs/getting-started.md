@@ -2,14 +2,14 @@
 
 ## Initialize a repository created from this template
 
-Once GitHub's **Use this template** action is enabled for this repository, choose the generated app's name before installing dependencies or starting Supabase locally:
+In a new repository created with GitHub's **Use this template** action, choose the generated app's name before installing dependencies or starting Supabase locally:
 
 ```sh
 npm run init:template -- --name "Acme Assistant" --apply
 npm ci
 ```
 
-The initializer previews changes unless `--apply` is supplied. It updates the browser title and navigation name, MCP server identity, npm package and lockfile names, local Supabase `project_id`, and README heading. The ID defaults to a lowercase hyphen-separated slug derived from the name; pass `--slug acme-assistant` to set it explicitly. It changes no credentials, database schemas, protocol routes, saved-data formats or hosted resources. Select a different ID for each project so local Supabase services and their data remain isolated.
+The initializer previews changes unless `--apply` is supplied. It updates the browser title and navigation name, MCP server identity, npm package and lockfile names, local Supabase `project_id`, and README heading. It also replaces the marked source delivery history with an empty release-evidence starter, so another project's PR and test history is not presented as yours; after that first replacement, later edits to the log are preserved. The ID defaults to a lowercase hyphen-separated slug derived from the name; pass `--slug acme-assistant` to set it explicitly. It changes no credentials, database schemas, protocol routes, saved-data formats or hosted resources. Select a different ID for each project so local Supabase services and their data remain isolated.
 
 Use Node 24.15.0 or newer 24.x and `npm ci`. The checked-in `.nvmrc` selects the tested version with `nvm use`, and `.npmrc` makes `npm ci` fail on an unsupported Node version instead of continuing after an engine warning. Check `node --version` in the new checkout before installing, especially if your shell does not switch versions automatically. Keep `.env.local` private; `.env.example` lists all supported settings. The root application includes Next and Eve in one install. These steps leave account chat disabled so records and account access can be checked before model costs or workflow storage are configured.
 
