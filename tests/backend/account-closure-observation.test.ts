@@ -13,10 +13,12 @@ import { sqliteRequestLimitStore } from "../../lib/request-limits/sqlite";
 import { localUploadObjects } from "../../lib/uploads/local";
 import { inspectAccountClosure } from "../../scripts/inspect-account-closure";
 import { inspectSupabaseAuthSessionRows } from "../../scripts/inspect-account-auth-sessions";
+import { inspectAccountWorkflow } from "../../scripts/inspect-account-workflow.mjs";
 import { setSqliteAccountFence } from "../../scripts/fence-account-writes";
 import { installSqliteAccountFences } from "../../lib/account-closure/sqlite-fences";
 
 vi.mock("../../scripts/inspect-account-auth-sessions",() => ({ inspectSupabaseAuthSessionRows: vi.fn() }));
+vi.mock("../../scripts/inspect-account-workflow.mjs",() => ({ inspectAccountWorkflow: vi.fn() }));
 
 it("joins the real SQLite row and local object observations without exposing identity or partial output",async () => {
   const dir = mkdtempSync(join(tmpdir(),"jumpstart-closure-observation-")),path = join(dir,"app.sqlite"),root = join(dir,"uploads");
@@ -58,6 +60,19 @@ it("joins the real SQLite row and local object observations without exposing ide
       db.prepare("DELETE FROM app_records WHERE tenant=? AND subject=?").run(alice.tenant,alice.subject);
       await objects.delete(alice,id);
       expect(await inspectAccountClosure("sqlite","local",alice,env)).toMatchObject({ status: "unfenced_zero",ownerRowTotal: 0,objectCount: 0 });
+      const workflowObservation = { format: "ai-app-jumpstart-account-workflow-observation-v1",metadataProvider: "sqlite",
+        workflowProvider: "postgres",boundSessionCount: 0,
+        linkedRuns: { runs: 0,terminalRuns: 0,nonterminalRuns: 0,steps: 0,events: 0,hooks: 0,streamChunks: 0,
+          waits: 0,eventSlots: 0,invocations: 0 },otherSessionRoots: 2,scope: "fixture" };
+      vi.mocked(inspectAccountWorkflow).mockResolvedValueOnce(workflowObservation);
+      expect(await inspectAccountClosure("sqlite","local",alice,env,fetch,{ workflowPostgres: true }))
+        .toMatchObject({ format: "ai-app-jumpstart-account-closure-observation-v3",status: "retained_or_unattributable",
+          remaining: { workflowRows: false,workflowUnattributedRoots: 2 } });
+      vi.mocked(inspectAccountWorkflow).mockResolvedValueOnce({ ...workflowObservation,otherSessionRoots: 0 });
+      expect(await inspectAccountClosure("sqlite","local",alice,env,fetch,{ workflowPostgres: true }))
+        .toMatchObject({ status: "unfenced_zero",remaining: { workflowRows: false,workflowUnattributedRoots: 0 } });
+      expect(await inspectAccountClosure("sqlite","local",alice,env)).toMatchObject({
+        remaining: { workflowRows: null,workflowUnattributedRoots: null } });
       expect(setSqliteAccountFence(path,alice)).toMatchObject({ status: "fenced",provider: "sqlite" });
       expect(await inspectAccountClosure("sqlite","local",alice,env)).toMatchObject({ status: "application_fenced_zero",
         applicationWriteFenced: true,remaining: { applicationRows: false,privateObjects: false,applicationWritesPossible: false } });

@@ -107,17 +107,18 @@ it("counts only native Workflow runs linked to an owner's bound session and hide
         AUTH_PROVIDER: "api-key",ACCOUNT_AUDIT_SQLITE_PATH: path,UPLOAD_LOCAL_ROOT: uploadRoot,
         WORKFLOW_POSTGRES_URL: workflow.url,
       },fetch,{ workflowPostgres: true });
-      expect(closure).toMatchObject({ format: "ai-app-jumpstart-account-closure-observation-v2",
+      expect(closure).toMatchObject({ format: "ai-app-jumpstart-account-closure-observation-v3",
         status: "retained_or_unattributable",workflow: { provider: "postgres",boundSessionCount: 2,
           linkedRuns: { runs: 4,terminalRuns: 3,nonterminalRuns: 1,events: 1,invocations: 1 } },
-        remaining: { workflowRows: true } });
+        remaining: { workflowRows: true,workflowUnattributedRoots: 1 } });
       expect(JSON.stringify(closure)).not.toContain(owner.tenant);
       expect(JSON.stringify(closure)).not.toContain(owner.subject);
       const noLinkedOwner = await inspectAccountClosure("sqlite","local",{ ...owner,subject: "unbound-owner" },{
         AUTH_PROVIDER: "api-key",ACCOUNT_AUDIT_SQLITE_PATH: path,UPLOAD_LOCAL_ROOT: uploadRoot,
         WORKFLOW_POSTGRES_URL: workflow.url,
       },fetch,{ workflowPostgres: true });
-      expect(noLinkedOwner).toMatchObject({ status: "unfenced_zero",remaining: { workflowRows: false },
+      expect(noLinkedOwner).toMatchObject({ status: "retained_or_unattributable",
+        remaining: { workflowRows: false,workflowUnattributedRoots: 2 },
         workflow: { linkedRuns: { runs: 0 },otherSessionRoots: 2 } });
       const closureCommand = spawnSync(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/inspect-account-closure.ts",
         "--metadata","sqlite","--workflow-postgres","--read-only"],{
@@ -127,6 +128,7 @@ it("counts only native Workflow runs linked to an owner's bound session and hide
         } });
       expect(closureCommand.status,closureCommand.stderr).toBe(0);
       expect(JSON.parse(closureCommand.stdout).workflow.linkedRuns.runs).toBe(4);
+      expect(JSON.parse(closureCommand.stdout).remaining.workflowUnattributedRoots).toBe(1);
       expect(closureCommand.stdout).not.toContain(owner.tenant);
       expect(closureCommand.stdout).not.toContain(owner.subject);
       const incompleteCommand = spawnSync(process.execPath,["node_modules/tsx/dist/cli.mjs","scripts/inspect-account-closure.ts",
