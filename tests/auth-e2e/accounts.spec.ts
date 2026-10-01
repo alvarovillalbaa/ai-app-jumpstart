@@ -394,35 +394,52 @@ test("global sign-out rejects two sessions through REST, CLI and MCP", async ({ 
   }
 });
 
-test("hard Auth deletion invalidates every refresh session and rejects stale access tokens",async ({ request }) => {
+test("hard Auth deletion rejects every stale session through REST, CLI and MCP",async ({ request }) => {
   const email = `delete-auth-${randomUUID()}@example.test`;
   await confirmedUser(request,email);
   const [first,second] = await Promise.all([sessionFor(request,email),sessionFor(request,email)]);
+  const sessions = [first,second];
   expect(first.user.id).toBe(second.user.id);
   const sessionId = (token: string) => JSON.parse(Buffer.from(token.split(".")[1],"base64url").toString()).session_id;
   expect(sessionId(first.access_token)).toBeTruthy();
   expect(sessionId(first.access_token)).not.toBe(sessionId(second.access_token));
 
   const headers = (token: string) => ({ authorization: `Bearer ${token}` });
-  expect((await request.get("/api/v1/records",{ headers: headers(first.access_token) })).status()).toBe(200);
-  expect((await request.get("/api/v1/records",{ headers: headers(second.access_token) })).status()).toBe(200);
+  for (const session of sessions)
+    expect((await request.get("/api/v1/records",{ headers: headers(session.access_token) })).status()).toBe(200);
+  const mcpClients = sessions.map((_,index) => new Client({ name: `delete-auth-${index + 1}`,version: "1" }));
 
-  const admin = createClient(auth,process.env.TEST_AUTH_ADMIN_KEY!,{
-    auth: { persistSession: false,autoRefreshToken: false,detectSessionInUrl: false },
-  });
-  const deletion = await admin.auth.admin.deleteUser(first.user.id,false);
-  expect(deletion.error).toBeNull();
-  const missing = await admin.auth.admin.getUserById(first.user.id);
-  expect(missing.data.user).toBeNull();
-  expect(missing.error?.status).toBe(404);
+  try {
+    for (const [index,client] of mcpClients.entries()) {
+      await client.connect(new StreamableHTTPClientTransport(new URL("/api/mcp",process.env.APP_ORIGIN!),
+        { requestInit: { headers: headers(sessions[index].access_token) } }));
+      expect((await client.callTool({ name: "records_list",arguments: {} })).isError).not.toBe(true);
+    }
+    for (const session of sessions)
+      await runCli(["usage"],{ APP_API_URL: process.env.APP_ORIGIN,APP_API_TOKEN: session.access_token });
 
-  for (const session of [first,second]) {
-    const refresh = await request.post(`${auth}/auth/v1/token?grant_type=refresh_token`,{
-      headers: publicHeaders,data: { refresh_token: session.refresh_token },
+    const admin = createClient(auth,process.env.TEST_AUTH_ADMIN_KEY!,{
+      auth: { persistSession: false,autoRefreshToken: false,detectSessionInUrl: false },
     });
-    expect(refresh.status()).not.toBe(200);
-    expect(await refresh.json()).not.toHaveProperty("access_token");
-    expect((await request.get("/api/v1/records",{ headers: headers(session.access_token) })).status()).toBe(401);
+    const deletion = await admin.auth.admin.deleteUser(first.user.id,false);
+    expect(deletion.error).toBeNull();
+    const missing = await admin.auth.admin.getUserById(first.user.id);
+    expect(missing.data.user).toBeNull();
+    expect(missing.error?.status).toBe(404);
+
+    for (const [index,session] of sessions.entries()) {
+      const refresh = await request.post(`${auth}/auth/v1/token?grant_type=refresh_token`,{
+        headers: publicHeaders,data: { refresh_token: session.refresh_token },
+      });
+      expect(refresh.status()).not.toBe(200);
+      expect(await refresh.json()).not.toHaveProperty("access_token");
+      expect((await request.get("/api/v1/records",{ headers: headers(session.access_token) })).status()).toBe(401);
+      await expect(runCli(["usage"],{ APP_API_URL: process.env.APP_ORIGIN,APP_API_TOKEN: session.access_token })).rejects.toThrow();
+      const result = await mcpClients[index].callTool({ name: "records_list",arguments: {} }).catch(() => null);
+      expect(result === null || result.isError).toBe(true);
+    }
+  } finally {
+    await Promise.all(mcpClients.map(client => client.close().catch(() => {})));
   }
 });
 
