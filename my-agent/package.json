@@ -57,5 +57,8 @@
   },
   "engines": {
     "node": "24.x"
+  },
+  "overrides": {
+    "tar": "^7.5.21"
   }
 }
