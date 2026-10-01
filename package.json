@@ -209,17 +209,17 @@
     "ajv": "8.20.0",
     "ajv-formats": "2.1.1",
     "aws-cdk-lib": "2.271.0",
-    "constructs": "10.6.0",
-    "convex-test": "0.0.59",
+    "constructs": "10.8.1",
+    "convex-test": "0.0.60",
     "embedded-postgres": "18.4.0-beta.17",
     "eslint": "^9",
     "eslint-config-next": "16.3.8",
     "jsdom": "30.1.1",
-    "supabase": "2.117.0",
+    "supabase": "2.118.0",
     "tailwindcss": "^4",
     "tsx": "4.23.15",
     "typescript": "^5",
-    "vitest": "5.0.1"
+    "vitest": "5.0.2"
   },
   "overrides": {
     "ansi-to-react": {
