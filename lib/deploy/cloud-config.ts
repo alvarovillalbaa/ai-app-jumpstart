@@ -49,7 +49,11 @@ function requireSecret(env: Map<string,JsonObject>,name: string,provider: CloudP
     if (!secretNames.has(ref)) fail(`${name} refers to an absent Key Vault secret.`);
   } else {
     const ref = child(row.valueFrom,"secretKeyRef",`${name}.valueFrom`);
-    string(ref.name,`${name} secret name`);string(ref.key,`${name} secret version`);
+    string(ref.name,`${name} secret name`);
+    const version = string(ref.key,`${name} secret version`);
+    if (template && version === "REPLACE_WITH_VERSION") return;
+    if (!/^(?:latest|[1-9]\d*)$/.test(version))
+      fail(`${name} secret version must be latest or a positive version number.`);
   }
 }
 function digest(image: unknown,label: string,template: boolean) {

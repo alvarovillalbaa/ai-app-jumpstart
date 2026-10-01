@@ -9,6 +9,7 @@ export function filledCloudManifest(provider: CloudProvider) {
     .replaceAll("REPLACE_WITH_EXECUTION_ROLE_ARN", "arn:aws:iam::123456789012:role/fixture-execution")
     .replaceAll("REPLACE_WITH_TASK_ROLE_ARN", "arn:aws:iam::123456789012:role/fixture-task")
     .replaceAll("REPLACE_WITH_SERVICE_ACCOUNT_EMAIL", "jumpstart-runtime@fixture-project.iam.gserviceaccount.com")
+    .replaceAll("REPLACE_WITH_VERSION", "1")
     .replaceAll("REPLACE_WITH_MANAGED_IDENTITY_RESOURCE_ID", "fixture-identity")
     .replace(/REPLACE_WITH_[A-Z0-9_]+_SECRET_ARN/g, "arn:aws:secretsmanager:eu-west-1:123456789012:secret:fixture")
     .replace(/REPLACE_[A-Z0-9_]+/g, "fixture"));

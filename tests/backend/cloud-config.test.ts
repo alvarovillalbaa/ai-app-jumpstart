@@ -49,6 +49,23 @@ it("requires a user-managed Cloud Run service identity email",() => {
   }
 });
 
+it("requires Cloud Run environment secrets to use latest or a pinned Secret Manager version",() => {
+  const selectVersion = (manifest: FixtureManifest,key: string) => {
+    const entry = manifest.spec.template.spec.containers.flatMap(container => container.env).find(row => row.name === "SUPABASE_URL");
+    expect(entry).toBeDefined();
+    (entry!.valueFrom as { secretKeyRef: { key: string } }).secretKeyRef.key = key;
+  };
+  const latest = filled("gcp");selectVersion(latest,"latest");
+  expect(validateCloudManifest("gcp",latest)).toMatchObject({ provider: "gcp" });
+
+  for (const key of ["0","-1","REPLACE_WITH_VERSION","named-version","1/versions/2"]) {
+    const invalid = filled("gcp");selectVersion(invalid,key);
+    expect(() => validateCloudManifest("gcp",invalid)).toThrow(key.startsWith("REPLACE_WITH_")
+      ? "unresolved REPLACE_ marker" : "secret version must be latest or a positive version number");
+  }
+  expect(validateCloudManifest("gcp",templates.gcp,true)).toMatchObject({ provider: "gcp" });
+});
+
 it("requires Azure Key Vault secrets to use an identity attached to the app",() => {
   const valid = filled("azure");
   expect(validateCloudManifest("azure",valid)).toMatchObject({ provider: "azure" });
