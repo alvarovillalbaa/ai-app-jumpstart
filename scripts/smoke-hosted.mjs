@@ -22,6 +22,14 @@ function targetOrigin(value) {
   return url.origin;
 }
 
+function requireStagingAcknowledgment(origin, target) {
+  const hostname = new URL(origin).hostname;
+  if (["localhost", "127.0.0.1", "[::1]"].includes(hostname)) return;
+  if (target !== "staging") {
+    throw new Error("Refusing remote hosted smoke writes. Verify APP_API_URL is an isolated staging deployment, then set APP_SMOKE_TARGET=staging.");
+  }
+}
+
 function message(error) { return error instanceof Error ? error.message : "Unknown error"; }
 
 async function cliJson(origin, token, args) {
@@ -416,10 +424,11 @@ async function runAgentSmoke({ origin, token, otherToken, protection, request, m
 }
 
 /**
- * @param {{url: string,token: string,otherToken: string,accounts?: boolean,agent?: boolean,agentFollowUp?: boolean,browser?: boolean,accountBrowser?: boolean,requestLimit?: boolean,uploads?: boolean,uploadDownload?: boolean,contract?: boolean,modelReceipt?: {expectedModel: string,maxObservedMicros: number},browserAccounts?: import("./helpers/hosted-account-browser.mjs").AccountBrowserCredentials}} options
+ * @param {{url: string,token: string,otherToken: string,target?: string,accounts?: boolean,agent?: boolean,agentFollowUp?: boolean,browser?: boolean,accountBrowser?: boolean,requestLimit?: boolean,uploads?: boolean,uploadDownload?: boolean,contract?: boolean,modelReceipt?: {expectedModel: string,maxObservedMicros: number},browserAccounts?: import("./helpers/hosted-account-browser.mjs").AccountBrowserCredentials}} options
  */
-export async function runHostedSmoke({ url, token, otherToken, accounts = false, agent = false, agentFollowUp = false,browser = false,accountBrowser = false,requestLimit = false,uploads = false,uploadDownload = false,contract = false,modelReceipt,browserAccounts }) {
+export async function runHostedSmoke({ url, token, otherToken, target = process.env.APP_SMOKE_TARGET, accounts = false, agent = false, agentFollowUp = false,browser = false,accountBrowser = false,requestLimit = false,uploads = false,uploadDownload = false,contract = false,modelReceipt,browserAccounts }) {
   const origin = targetOrigin(url);
+  requireStagingAcknowledgment(origin, target);
   if (agent && !accounts) throw new Error("Agent smoke requires the two-account mode.");
   if (agentFollowUp && !agent) throw new Error("Agent follow-up smoke requires an explicit agent turn.");
   if (modelReceipt && !agent) throw new Error("Model receipt smoke requires an explicit agent turn.");
@@ -580,7 +589,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   } else {
     const agent = flags.has("--agent"),agentFollowUp = flags.has("--agent-follow-up"),accountBrowser = flags.has("--account-browser"),accounts = agent || flags.has("--accounts"), browser = flags.has("--browser"),requestLimit = flags.has("--request-limit"),uploadDownload = flags.has("--upload-download"),uploads = flags.has("--uploads") || uploadDownload,contract = flags.has("--contract"),modelReceipt = flags.has("--model-receipt")
       ? { expectedModel: process.env.APP_SMOKE_EXPECTED_MODEL,maxObservedMicros: Number(process.env.APP_SMOKE_MAX_OBSERVED_MICROS) } : undefined;
-    runHostedSmoke({ url: process.env.APP_API_URL, token: process.env.APP_API_TOKEN, otherToken: process.env.APP_API_OTHER_TOKEN, accounts, agent,agentFollowUp,browser,accountBrowser,requestLimit,uploads,uploadDownload,contract,modelReceipt,
+    runHostedSmoke({ url: process.env.APP_API_URL, token: process.env.APP_API_TOKEN, otherToken: process.env.APP_API_OTHER_TOKEN, target: process.env.APP_SMOKE_TARGET, accounts, agent,agentFollowUp,browser,accountBrowser,requestLimit,uploads,uploadDownload,contract,modelReceipt,
       browserAccounts: accountBrowser ? { primary: { email: process.env.APP_SMOKE_EMAIL,password: process.env.APP_SMOKE_PASSWORD },other: { email: process.env.APP_SMOKE_OTHER_EMAIL,password: process.env.APP_SMOKE_OTHER_PASSWORD } } : undefined })
       .then(({ origin }) => console.log(`Hosted smoke passed for ${origin}: readiness, Eve, web, ${accounts ? "Supabase accounts, " : ""}REST, keyed creation recovery/deletion, owner isolation, CLI and MCP${contract ? ", exact OpenAPI revision and REST response schemas" : ""}${requestLimit ? ", active owner request admission" : ""}${uploads ? ", private upload and cleanup" : ""}${uploadDownload ? ", fresh-scanned exact download bytes" : ""}${browser ? ", Chromium records UI" : ""}${agent ? ", one owned agent turn and source-stream read" : ""}${agentFollowUp ? ", second owned turn and projected context recall" : ""}${modelReceipt ? ", exact model and settled cost receipt" : ""}${accountBrowser ? ", real account sign-in/reload/logout and browser isolation" : ""}.`))
       .catch(error => { console.error(message(error)); process.exitCode = 1; });

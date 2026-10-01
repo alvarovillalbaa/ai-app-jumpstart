@@ -3,6 +3,15 @@ import { runHostedSmoke } from "../../scripts/smoke-hosted.mjs";
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
+it("refuses remote smoke writes without a staging acknowledgment before making a request", async () => {
+  const request = vi.fn();
+  vi.stubGlobal("fetch", request);
+
+  await expect(runHostedSmoke({ url: "https://app.example",token: "primary-token",otherToken: "other-token" }))
+    .rejects.toThrow("APP_SMOKE_TARGET=staging");
+  expect(request).not.toHaveBeenCalled();
+});
+
 it("recovers and deletes a keyed record after the create response is lost without retrying the write", async () => {
   const record = { id: "33b005d8-3320-4eac-b2d8-2d55c22ddb4b",revision: 1 };
   let creationKey = "", deleted = false, createCalls = 0, deletionCalls = 0;
@@ -37,7 +46,7 @@ it("recovers and deletes a keyed record after the create response is lost withou
     throw new Error(`Unexpected hosted smoke request: ${method} ${url.pathname}`);
   }));
 
-  await expect(runHostedSmoke({ url: "https://app.example",token: "primary-token",otherToken: "other-token" }))
+  await expect(runHostedSmoke({ url: "https://app.example",token: "primary-token",otherToken: "other-token",target: "staging" }))
     .rejects.toThrow("simulated lost create response");
   expect(deleted).toBe(true);
   expect(deletionCalls).toBe(1);

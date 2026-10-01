@@ -10,7 +10,7 @@ it("rejects absent, duplicate and malformed account configuration before any req
   const fetcher = vi.fn();vi.stubGlobal("fetch",fetcher);
   for (const browserAccounts of [undefined,{ ...credentials,other: credentials.primary },{ ...credentials,primary: { ...credentials.primary,email: "bad\naddress" } },
     { ...credentials,primary: { ...credentials.primary,password: "" } }]) {
-    await expect(runHostedSmoke({ url: "https://app.example",token: "primary-token",otherToken: "other-token",accounts: true,accountBrowser: true,browserAccounts }))
+    await expect(runHostedSmoke({ url: "https://app.example",token: "primary-token",otherToken: "other-token",target: "staging",accounts: true,accountBrowser: true,browserAccounts }))
       .rejects.toThrow(/Account browser smoke/);
   }
   expect(fetcher).not.toHaveBeenCalled();

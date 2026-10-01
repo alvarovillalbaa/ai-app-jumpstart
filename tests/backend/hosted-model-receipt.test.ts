@@ -42,13 +42,13 @@ describe("hosted model receipt",() => {
   });
 
   it("requires explicit agent mode and valid cost settings before contacting the deployment",async () => {
-    const base = { url: "https://staging.example",token: "owner-token",otherToken: "foreign-token",
+    const base = { url: "https://staging.example",token: "owner-token",otherToken: "foreign-token",target: "staging",
       accounts: true,modelReceipt: { expectedModel,maxObservedMicros: 30 } };
     await expect(runHostedSmoke(base)).rejects.toThrow("explicit agent turn");
     await expect(runHostedSmoke({ ...base,agent: true,modelReceipt: { expectedModel,maxObservedMicros: Number.NaN } }))
       .rejects.toThrow("positive integer");
     await expect(runHostedSmoke({ ...base,agent: true,agentFollowUp: true })).rejects.toThrow("separately");
-    await expect(runHostedSmoke({ url: base.url,token: base.token,otherToken: base.otherToken,agentFollowUp: true }))
+    await expect(runHostedSmoke({ url: base.url,token: base.token,otherToken: base.otherToken,target: "staging",agentFollowUp: true }))
       .rejects.toThrow("explicit agent turn");
   });
 });
