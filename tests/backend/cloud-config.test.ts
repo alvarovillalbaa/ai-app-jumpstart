@@ -13,7 +13,9 @@ type FixtureContainer = { name?: string;image: string;environment: FixtureEnv[];
   healthCheck: { command: string[] };startupProbe: { httpGet: { path: string;port: number } };
   portMappings?: { containerPort: number;protocol?: string }[];ports?: { containerPort: number }[] };
 type FixtureManifest = { containerDefinitions: FixtureContainer[];
-  properties: { template: { containers: FixtureContainer[] } };
+  identity?: { type: string; userAssignedIdentities: Record<string,unknown> };
+  properties: { configuration: { secrets: { name: string; keyVaultUrl: string; identity: string }[] };
+    template: { containers: FixtureContainer[] } };
   spec: { template: { spec: { containers: FixtureContainer[] } } } };
 const providers = Object.keys(files) as CloudProvider[];
 const templates = Object.fromEntries(providers.map(provider => [provider,
@@ -31,6 +33,25 @@ it("accepts the three authored templates and filled release-shaped manifests",()
     expect(validateCloudManifest(provider,templates[provider],true)).toMatchObject({ provider,dataProvider: "supabase" });
     expect(validateCloudManifest(provider,filled(provider))).toMatchObject({ provider,dataProvider: "supabase",secretReferences: 8,requestLimitPerMinute: 120 });
   }
+});
+
+it("requires Azure Key Vault secrets to use an identity attached to the app",() => {
+  const valid = filled("azure");
+  expect(validateCloudManifest("azure",valid)).toMatchObject({ provider: "azure" });
+
+  const unattached = filled("azure");
+  unattached.identity!.userAssignedIdentities = {};
+  expect(() => validateCloudManifest("azure",unattached)).toThrow("needs an attached user-assigned identity");
+
+  const multiple = filled("azure");
+  const secondIdentity = "/subscriptions/fixture/other-identity";
+  multiple.identity!.userAssignedIdentities[secondIdentity] = {};
+  multiple.properties.configuration.secrets[0].identity = secondIdentity;
+  expect(validateCloudManifest("azure",multiple)).toMatchObject({ provider: "azure" });
+
+  const mismatch = filled("azure");
+  mismatch.properties.configuration.secrets[0].identity = "/subscriptions/fixture/unattached-identity";
+  expect(() => validateCloudManifest("azure",mismatch)).toThrow("must use an identity attached to the app");
 });
 
 it("accepts PostgreSQL and Convex application data with unchanged Supabase identity",() => {

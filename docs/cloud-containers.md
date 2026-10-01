@@ -71,7 +71,7 @@ For uploads, generate the [one-container cleanup task definition](cloud-cleanup.
 
 ## Azure Container Apps
 
-Start from `deploy/azure/container-app.example.json`. Provision a Container Apps environment with a dedicated workload profile that keeps at least one profile instance running, an application replica minimum of one, a user-assigned managed identity, and Key Vault access for that identity. Configure registry pull access separately for private images. The example uses versioned Key Vault references and HTTPS ingress to the Caddy container on port 8080. Size the dedicated workload profile for both containers (the example requests 2.25 CPU and 4.5 GiB per replica). Bind the chosen custom domain/certificate and configure matching Supabase redirects.
+Start from `deploy/azure/container-app.example.json`. Provision a Container Apps environment with a dedicated workload profile that keeps at least one profile instance running, an application replica minimum of one, a user-assigned managed identity, and Key Vault access for that identity. Each Key Vault secret reference must name an identity attached under `identity.userAssignedIdentities`; this supports separate identities for different secrets. `npm run check:cloud-templates` verifies that every referenced identity is attached. Configure registry pull access separately for private images. The example uses versioned Key Vault references and HTTPS ingress to the Caddy container on port 8080. Size the dedicated workload profile for both containers (the example requests 2.25 CPU and 4.5 GiB per replica). Bind the chosen custom domain/certificate and configure matching Supabase redirects.
 
 ```sh
 az containerapp create --name YOUR_APP --resource-group YOUR_RESOURCE_GROUP \

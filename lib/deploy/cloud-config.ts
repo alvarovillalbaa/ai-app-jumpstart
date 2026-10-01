@@ -102,12 +102,20 @@ export function validateCloudManifest(provider: CloudProvider,raw: unknown,templ
     const scale = child(templateNode,"scale","template");
     if (scale.minReplicas !== 1 || scale.maxReplicas !== 1) fail("Azure needs one dedicated replica until rollout is proven.");
     string(properties.workloadProfileName,"workloadProfileName");
-    if (child(manifest,"identity","manifest").type !== "UserAssigned") fail("Azure needs a user-assigned identity.");
+    const identity = child(manifest,"identity","manifest");
+    if (identity.type !== "UserAssigned") fail("Azure needs a user-assigned identity.");
+    const attachedIdentities = object(identity.userAssignedIdentities,"identity.userAssignedIdentities");
+    const identityIds = Object.keys(attachedIdentities);
+    if (!identityIds.length) fail("Azure needs an attached user-assigned identity for Key Vault secrets.");
+    for (const id of identityIds) object(attachedIdentities[id],"attached user-assigned identity");
+    const attachedIdentityIds = new Set(identityIds);
     probe(app,"Readiness","/api/health/ready",3000,"app");
     probe(ingress,"Readiness","/api/health/ready",8080,"ingress");
     secretNames = new Set(array(configuration.secrets,"configuration.secrets").map(item => {
       const secret = object(item,"configuration secret");
-      const url = string(secret.keyVaultUrl,"Key Vault URL");string(secret.identity,"Key Vault identity");
+      const url = string(secret.keyVaultUrl,"Key Vault URL");
+      if (!attachedIdentityIds.has(string(secret.identity,"Key Vault identity")))
+        fail("Azure Key Vault secrets must use an identity attached to the app.");
       if (!template) {
         try { const parsed = new URL(url);if (parsed.protocol !== "https:" || !parsed.pathname.startsWith("/secrets/") ||
           parsed.pathname.split("/").filter(Boolean).length < 3 || parsed.username || parsed.password) throw new Error(); }
