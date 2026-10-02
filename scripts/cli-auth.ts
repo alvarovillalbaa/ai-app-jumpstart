@@ -215,8 +215,12 @@ export async function runCliAuth(args: string[], env: Record<string, string | un
   };
   if (extra.length || !["login", "status", "logout"].includes(action)) throw new Error("Use auth login, auth status, or auth logout.");
 
+  const configuredToken = env.APP_API_TOKEN?.trim();
   const apiOrigin = apiOriginFrom(env);
-  if (action === "status" && env.APP_API_TOKEN?.trim()) return { status: "authenticated", source: "APP_API_TOKEN", apiOrigin };
+  if (action === "status" && configuredToken) return { status: "authenticated", source: "APP_API_TOKEN", apiOrigin };
+  if (action === "logout" && configuredToken) {
+    throw new Error("APP_API_TOKEN is environment-provided and cannot be revoked by auth logout. Unset it to sign out of the saved Supabase session.");
+  }
   const directory = sessionDirectory(env, dependencies.configRoot);
   const settings = authConfiguration(env);
   const file = sessionFile(apiOrigin, settings.url, directory);
@@ -231,7 +235,7 @@ export async function runCliAuth(args: string[], env: Record<string, string | un
   }
 
   if (action === "login") {
-    if (env.APP_API_TOKEN?.trim()) throw new Error("APP_API_TOKEN takes precedence. Unset it before creating a saved Supabase session.");
+    if (configuredToken) throw new Error("APP_API_TOKEN takes precedence. Unset it before creating a saved Supabase session.");
     if (await readSession(file, apiOrigin, settings.url)) throw new Error("A saved session already exists for this deployment. Run auth logout before switching accounts.");
     const input = await (dependencies.promptCredentials ?? promptCredentials)();
     const email = z.string().email().safeParse(input.email.trim());

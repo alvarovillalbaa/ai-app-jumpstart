@@ -89,6 +89,14 @@ it("uses an environment API token before loading or refreshing a saved session",
   expect(createClient).not.toHaveBeenCalled();
 });
 
+it("does not claim logout while an environment API token remains active", async () => {
+  const createClient = vi.fn();
+  await expect(run(["auth", "logout"], {
+    APP_API_URL: "https://app.example", APP_API_TOKEN: "automation-token",
+  }, fetch, { createClient })).rejects.toThrow("cannot be revoked by auth logout");
+  expect(createClient).not.toHaveBeenCalled();
+});
+
 it("does not persist a failed sign-in response or expose provider diagnostics", async () => {
   const root = await mkdtemp(join(tmpdir(), "jumpstart-cli-auth-failure-"));
   const dependencies: CliAuthDependencies = {
