@@ -41,7 +41,20 @@ Conversation metadata uses `GET /api/v1/conversations`, `GET /api/v1/conversatio
 
 ## CLI
 
-Set `APP_API_TOKEN` and optionally `APP_API_URL` in `.env.local`, then:
+Set `APP_API_URL` in `.env.local` for the target deployment. Use a server-issued `APP_API_TOKEN` for automation, or sign in interactively with a Supabase account:
+
+```sh
+npm run app -- auth login
+npm run app -- auth status
+npm run app -- list
+npm run app -- auth logout
+```
+
+Interactive login asks for an email and password, does not create an account, and does not echo the password. Configure `SUPABASE_AUTH_URL` (or `SUPABASE_URL`) and the public `SUPABASE_PUBLISHABLE_KEY` in `.env.local`. The CLI stores the returned access and refresh tokens in a mode-`0600` file on POSIX systems under the user's XDG config directory, separated by application and Auth origins; Windows uses the current user's roaming config directory and inherited ACLs. The password and public key are not stored in that file. One account session is kept per target; run `auth logout` before switching accounts. The saved session is refreshed before it expires. `APP_API_TOKEN`, when set, takes precedence over the saved session and is never written to disk. Unset `APP_API_TOKEN` before using `auth logout`, because environment tokens cannot be revoked by the CLI. Logout removes the saved session and attempts to revoke that device's Supabase refresh session; its JSON result reports whether remote revocation succeeded. [Supabase notes](https://supabase.com/docs/guides/auth/signout) that already-issued access tokens remain valid until their expiry.
+
+For administrator-issued API keys or pre-provisioned registered-user tokens, set `APP_API_TOKEN` in `.env.local` instead. Credentials are never accepted as command arguments. The CLI rejects remote HTTP, follows no redirects, retries no writes, and exits nonzero on failures. For a protected Vercel deployment, an optional `VERCEL_AUTOMATION_BYPASS_SECRET` environment value is sent as an HTTP header to the configured `APP_API_URL`; set it only for the intended Vercel target.
+
+Then run commands such as:
 
 ```sh
 npm run app -- list
@@ -53,11 +66,11 @@ npm run app -- update RECORD_UUID ./replacement.json
 npm run app -- delete RECORD_UUID 2
 ```
 
-Use `npm run --silent app -- list` for JSON pipelines. Files contain the REST payload. The CLI rejects remote HTTP, follows no redirects, retries no writes, and exits nonzero on failures. Credentials are never command arguments. For a protected Vercel deployment, an optional `VERCEL_AUTOMATION_BYPASS_SECRET` environment value is sent as an HTTP header to the configured `APP_API_URL`; set it only for the intended Vercel target.
+Use `npm run --silent app -- list` for JSON pipelines. Files contain the REST payload.
 
 A current registered-user token can read selected Supabase Auth profile fields at `GET /api/v1/account/profile`, `npm run app -- account profile`, or the MCP `account_profile` tool and `account:///profile` resource. The snapshot includes contact addresses, account timestamps, linked provider names and user-editable metadata. It excludes credentials, sessions, MFA factors, provider identity details and arbitrary server-controlled Auth metadata. User metadata is exported as data and never grants application permissions. API keys, anonymous accounts and revoked tokens cannot read the profile.
 
-For conversation metadata, set `APP_API_TOKEN` to a current registered-user access token and run:
+For conversation metadata, sign in with `npm run app -- auth login` or set `APP_API_TOKEN` to a current registered-user access token, then run:
 
 ```sh
 npm run app -- conversations list --limit 20
@@ -67,7 +80,7 @@ npm run app -- conversations runs OPERATION_UUID
 npm run app -- conversations update OPERATION_UUID ./conversation-patch.json
 ```
 
-An update file contains `{"revision":1,"title":"New title"}`, `{"revision":1,"archived":true}`, or both fields. Use `archived:false` to restore. Omit the cursor for the first page and preserve the archive filter between pages. A stale revision returns a nonzero error; read current metadata before editing again. Tokens are short-lived; the CLI does not implement login or refresh and never stores them. Supply a fresh token after expiration. Commands manage metadata only and do not dispatch model work, cancel runs or delete transcripts.
+An update file contains `{"revision":1,"title":"New title"}`, `{"revision":1,"archived":true}`, or both fields. Use `archived:false` to restore. Omit the cursor for the first page and preserve the archive filter between pages. A stale revision returns a nonzero error; read current metadata before editing again. Commands manage metadata only and do not dispatch model work, cancel runs or delete transcripts.
 
 ### Export visible application data
 
