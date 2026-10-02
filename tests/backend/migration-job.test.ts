@@ -66,7 +66,10 @@ it("preserves identity-based Azure registry access and rejects credential-bearin
   const source = filledCloudManifest("azure");
   source.properties.configuration.registries = [{ server: "registry.example", identity: "fixture-identity" }];
   expect(migrationJob("azure", source, "workflow-apply", "migration").properties?.configuration.registries).toEqual(source.properties.configuration.registries);
-  source.properties.configuration.registries[0].passwordSecretRef = "registry-password";
+  source.properties.configuration.secrets.push({ name: "registry-password",
+    keyVaultUrl: "https://fixture.vault.azure.net/secrets/registry-password/version1", identity: "fixture-identity" });
+  source.properties.configuration.registries = [{ server: "registry.example", username: "fixture-user",
+    passwordSecretRef: "registry-password" }];
   expect(() => migrationJob("azure", source, "workflow-apply", "migration")).toThrow("identity-based");
 });
 

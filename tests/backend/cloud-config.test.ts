@@ -13,8 +13,11 @@ type FixtureContainer = { name?: string;image: string;environment: FixtureEnv[];
   healthCheck: { command: string[] };startupProbe: { httpGet: { path: string;port: number } };
   portMappings?: { containerPort: number;protocol?: string }[];ports?: { containerPort: number }[] };
 type FixtureManifest = { containerDefinitions: FixtureContainer[];
-  properties: { template: { containers: FixtureContainer[] } };
-  spec: { template: { spec: { containers: FixtureContainer[] } } } };
+  identity?: { type: string; userAssignedIdentities?: Record<string,unknown> };
+  properties: { configuration: { secrets: { name: string; keyVaultUrl: string; identity: string }[];
+    registries?: { server: string; identity?: string; username?: string; passwordSecretRef?: string; password?: string }[] };
+    template: { containers: FixtureContainer[] } };
+  spec: { template: { spec: { serviceAccountName?: string;containers: FixtureContainer[] } } } };
 const providers = Object.keys(files) as CloudProvider[];
 const templates = Object.fromEntries(providers.map(provider => [provider,
   JSON.parse(readFileSync(files[provider],"utf8"))])) as Record<CloudProvider,FixtureManifest>;
@@ -31,6 +34,129 @@ it("accepts the three authored templates and filled release-shaped manifests",()
     expect(validateCloudManifest(provider,templates[provider],true)).toMatchObject({ provider,dataProvider: "supabase" });
     expect(validateCloudManifest(provider,filled(provider))).toMatchObject({ provider,dataProvider: "supabase",secretReferences: 8,requestLimitPerMinute: 120 });
   }
+});
+
+it("keeps shared runtime settings and logical secret names aligned across clouds",() => {
+  const runtimeNames = ["APP_ORIGIN","DATA_PROVIDER","AUTH_PROVIDER","AI_CHAT_ENABLED","APP_REQUESTS_PER_MINUTE",
+    "APP_AGENT_READINESS","AI_RUNTIME_ORIGIN","WORKFLOW_EXPECTED_PROVIDER","WORKFLOW_POSTGRES_JOB_PREFIX"];
+  const runtimeValues = providers.map(provider => {
+    const application = app(provider,templates[provider]);
+    const values = provider === "aws" ? application.environment : application.env;
+    return Object.fromEntries(values.map(row => [row.name,row.value]));
+  });
+  for (const name of runtimeNames) {
+    expect(runtimeValues.map(values => values[name]),name).toEqual(runtimeValues.map(() => runtimeValues[0][name]));
+  }
+
+  const secretNames = providers.map(provider => {
+    const application = app(provider,templates[provider]);
+    const secrets = provider === "aws" ? application.secrets : application.env.filter(row => row.secretRef || row.valueFrom);
+    return secrets.map(row => row.name).sort();
+  });
+  expect(secretNames[1]).toEqual(secretNames[0]);
+  expect(secretNames[2]).toEqual(secretNames[0]);
+  expect(secretNames[0]).toEqual([
+    "AI_BUDGET_POLICY_JSON","AI_CREATION_SIGNING_JSON","AI_GATEWAY_API_KEY","SUPABASE_AUTH_URL",
+    "SUPABASE_PUBLISHABLE_KEY","SUPABASE_SECRET_KEY","SUPABASE_URL","WORKFLOW_POSTGRES_URL",
+  ]);
+});
+
+it("requires a user-managed Cloud Run service identity email",() => {
+  const valid = filled("gcp");
+  expect(valid.spec.template.spec.serviceAccountName).toBe("jumpstart-runtime@fixture-project.iam.gserviceaccount.com");
+  expect(validateCloudManifest("gcp",valid)).toMatchObject({ provider: "gcp" });
+
+  for (const serviceAccountName of ["run@fixture-project.iam.gserviceaccount.com","x@fixture-project.iam.gserviceaccount.com",
+    "123456789-compute@developer.gserviceaccount.com","not-an-email"]) {
+    const invalid = filled("gcp");
+    invalid.spec.template.spec.serviceAccountName = serviceAccountName;
+    expect(() => validateCloudManifest("gcp",invalid)).toThrow("must be a user-managed IAM service account email");
+  }
+});
+
+it("requires Cloud Run environment secrets to use latest or a pinned Secret Manager version",() => {
+  const selectVersion = (manifest: FixtureManifest,key: string) => {
+    const entry = manifest.spec.template.spec.containers.flatMap(container => container.env).find(row => row.name === "SUPABASE_URL");
+    expect(entry).toBeDefined();
+    (entry!.valueFrom as { secretKeyRef: { key: string } }).secretKeyRef.key = key;
+  };
+  const latest = filled("gcp");selectVersion(latest,"latest");
+  expect(validateCloudManifest("gcp",latest)).toMatchObject({ provider: "gcp" });
+
+  for (const key of ["0","-1","REPLACE_WITH_VERSION","named-version","1/versions/2"]) {
+    const invalid = filled("gcp");selectVersion(invalid,key);
+    expect(() => validateCloudManifest("gcp",invalid)).toThrow(key.startsWith("REPLACE_WITH_")
+      ? "unresolved REPLACE_ marker" : "secret version must be latest or a positive version number");
+  }
+  expect(validateCloudManifest("gcp",templates.gcp,true)).toMatchObject({ provider: "gcp" });
+});
+
+it("requires Azure Key Vault secrets to use an identity attached to the app",() => {
+  const valid = filled("azure");
+  expect(validateCloudManifest("azure",valid)).toMatchObject({ provider: "azure" });
+
+  const unattached = filled("azure");
+  unattached.identity!.userAssignedIdentities = {};
+  expect(() => validateCloudManifest("azure",unattached)).toThrow("needs an attached user-assigned identity");
+
+  const multiple = filled("azure");
+  const secondIdentity = "/subscriptions/fixture/other-identity";
+  multiple.identity!.userAssignedIdentities![secondIdentity] = {};
+  multiple.properties.configuration.secrets[0].identity = secondIdentity;
+  expect(validateCloudManifest("azure",multiple)).toMatchObject({ provider: "azure" });
+
+  const mismatch = filled("azure");
+  mismatch.properties.configuration.secrets[0].identity = "/subscriptions/fixture/unattached-identity";
+  expect(() => validateCloudManifest("azure",mismatch)).toThrow("must use an identity enabled on the app");
+});
+
+it("validates Azure registry pull identities against the identities enabled on the app",() => {
+  const userAssigned = filled("azure");
+  userAssigned.properties.configuration.registries = [{ server: "registry.example",identity: "fixture-identity" }];
+  expect(validateCloudManifest("azure",userAssigned)).toMatchObject({ provider: "azure" });
+
+  const hybrid = filled("azure");
+  hybrid.identity!.type = "SystemAssigned, UserAssigned";
+  hybrid.properties.configuration.registries = [{ server: "registry.example",identity: "system" }];
+  expect(validateCloudManifest("azure",hybrid)).toMatchObject({ provider: "azure" });
+
+  const systemOnly = filled("azure");
+  systemOnly.identity = { type: "SystemAssigned" };
+  for (const secret of systemOnly.properties.configuration.secrets) secret.identity = "system";
+  systemOnly.properties.configuration.registries = [{ server: "registry.example",identity: "system" }];
+  expect(validateCloudManifest("azure",systemOnly)).toMatchObject({ provider: "azure" });
+
+  const unattached = filled("azure");
+  unattached.properties.configuration.registries = [{ server: "registry.example",identity: "/subscriptions/fixture/unattached-identity" }];
+  expect(() => validateCloudManifest("azure",unattached)).toThrow("registry identity must be enabled on the app");
+
+  const systemWithoutIdentity = filled("azure");
+  systemWithoutIdentity.properties.configuration.registries = [{ server: "registry.example",identity: "system" }];
+  expect(() => validateCloudManifest("azure",systemWithoutIdentity)).toThrow("registry identity must be enabled on the app");
+});
+
+it("requires Azure registry credentials to reference a declared Key Vault secret without mixing auth modes",() => {
+  const credentials = filled("azure");
+  credentials.properties.configuration.secrets.push({ name: "registry-password",
+    keyVaultUrl: "https://fixture.vault.azure.net/secrets/registry-password/version1",identity: "fixture-identity" });
+  credentials.properties.configuration.registries = [{ server: "registry.example",username: "fixture-user",
+    passwordSecretRef: "registry-password" }];
+  expect(validateCloudManifest("azure",credentials)).toMatchObject({ provider: "azure" });
+
+  const missingSecret = filled("azure");
+  missingSecret.properties.configuration.registries = [{ server: "registry.example",username: "fixture-user",
+    passwordSecretRef: "unlisted-secret" }];
+  expect(() => validateCloudManifest("azure",missingSecret)).toThrow("passwordSecretRef must name a declared Key Vault secret");
+
+  const mixed = filled("azure");
+  mixed.properties.configuration.registries = [{ server: "registry.example",identity: "fixture-identity",
+    username: "fixture-user",passwordSecretRef: "model-key" }];
+  expect(() => validateCloudManifest("azure",mixed)).toThrow("must not be combined");
+
+  const plaintext = filled("azure");
+  plaintext.properties.configuration.registries = [{ server: "registry.example",password: "private-password" }];
+  try { validateCloudManifest("azure",plaintext);throw new Error("Expected rejection."); }
+  catch (error) { expect(String(error)).toContain("passwords must use a secret reference");expect(String(error)).not.toContain("private-password"); }
 });
 
 it("accepts PostgreSQL and Convex application data with unchanged Supabase identity",() => {

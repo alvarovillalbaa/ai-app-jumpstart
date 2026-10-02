@@ -49,7 +49,11 @@ function requireSecret(env: Map<string,JsonObject>,name: string,provider: CloudP
     if (!secretNames.has(ref)) fail(`${name} refers to an absent Key Vault secret.`);
   } else {
     const ref = child(row.valueFrom,"secretKeyRef",`${name}.valueFrom`);
-    string(ref.name,`${name} secret name`);string(ref.key,`${name} secret version`);
+    string(ref.name,`${name} secret name`);
+    const version = string(ref.key,`${name} secret version`);
+    if (template && version === "REPLACE_WITH_VERSION") return;
+    if (!/^(?:latest|[1-9]\d*)$/.test(version))
+      fail(`${name} secret version must be latest or a positive version number.`);
   }
 }
 function digest(image: unknown,label: string,template: boolean) {
@@ -102,12 +106,31 @@ export function validateCloudManifest(provider: CloudProvider,raw: unknown,templ
     const scale = child(templateNode,"scale","template");
     if (scale.minReplicas !== 1 || scale.maxReplicas !== 1) fail("Azure needs one dedicated replica until rollout is proven.");
     string(properties.workloadProfileName,"workloadProfileName");
-    if (child(manifest,"identity","manifest").type !== "UserAssigned") fail("Azure needs a user-assigned identity.");
+    const identity = child(manifest,"identity","manifest");
+    const identityTypes = string(identity.type,"identity.type").split(",").map(value => value.trim());
+    const allowedIdentityTypes = new Set(["SystemAssigned","UserAssigned"]);
+    if (!identityTypes.length || identityTypes.some(value => !allowedIdentityTypes.has(value)) ||
+        new Set(identityTypes).size !== identityTypes.length)
+      fail("Azure needs a system-assigned or user-assigned identity.");
+    const hasSystemIdentity = identityTypes.includes("SystemAssigned");
+    const hasUserAssignedIdentity = identityTypes.includes("UserAssigned");
+    const attachedIdentities = identity.userAssignedIdentities === undefined ? {} :
+      object(identity.userAssignedIdentities,"identity.userAssignedIdentities");
+    const identityIds = Object.keys(attachedIdentities);
+    if (hasUserAssignedIdentity && !identityIds.length)
+      fail("Azure needs an attached user-assigned identity for its UserAssigned identity type.");
+    if (!hasUserAssignedIdentity && identityIds.length)
+      fail("Azure userAssignedIdentities requires the UserAssigned identity type.");
+    for (const id of identityIds) object(attachedIdentities[id],"attached user-assigned identity");
+    const attachedIdentityIds = new Set(identityIds);
+    const identityIsEnabled = (value: string) => value === "system" ? hasSystemIdentity : attachedIdentityIds.has(value);
     probe(app,"Readiness","/api/health/ready",3000,"app");
     probe(ingress,"Readiness","/api/health/ready",8080,"ingress");
     secretNames = new Set(array(configuration.secrets,"configuration.secrets").map(item => {
       const secret = object(item,"configuration secret");
-      const url = string(secret.keyVaultUrl,"Key Vault URL");string(secret.identity,"Key Vault identity");
+      const url = string(secret.keyVaultUrl,"Key Vault URL");
+      if (!identityIsEnabled(string(secret.identity,"Key Vault identity")))
+        fail("Azure Key Vault secrets must use an identity enabled on the app.");
       if (!template) {
         try { const parsed = new URL(url);if (parsed.protocol !== "https:" || !parsed.pathname.startsWith("/secrets/") ||
           parsed.pathname.split("/").filter(Boolean).length < 3 || parsed.username || parsed.password) throw new Error(); }
@@ -117,11 +140,34 @@ export function validateCloudManifest(provider: CloudProvider,raw: unknown,templ
     }));
     if (secretNames.size !== array(configuration.secrets,"configuration.secrets").length)
       fail("Azure secret names must be unique.");
+    if (configuration.registries !== undefined) {
+      const registries = array(configuration.registries,"configuration.registries");
+      if (!registries.length) fail("Azure registry configuration must include at least one registry.");
+      for (const item of registries) {
+        const registry = object(item,"configuration registry"),server = string(registry.server,"registry server");
+        if (/\s|\/|\\|[?#]|:\/\//.test(server)) fail("Azure registry server must be a hostname, without a URL path.");
+        if (registry.password !== undefined) fail("Azure registry passwords must use a secret reference.");
+        if (registry.identity !== undefined) {
+          if (!identityIsEnabled(string(registry.identity,"registry identity")))
+            fail("Azure registry identity must be enabled on the app.");
+          if (registry.username !== undefined || registry.passwordSecretRef !== undefined)
+            fail("Azure registry identity must not be combined with username or passwordSecretRef.");
+        } else {
+          string(registry.username,"registry username");
+          const passwordSecretRef = string(registry.passwordSecretRef,"registry passwordSecretRef");
+          if (!secretNames.has(passwordSecretRef))
+            fail("Azure registry passwordSecretRef must name a declared Key Vault secret.");
+        }
+      }
+    }
     appEnv = envMap(array(app.env,"app.env"),"app environment");
     ingressEnv = envMap(array(ingress.env,"ingress.env"),"ingress environment");
   } else {
     const spec = child(child(child(manifest,"spec","manifest"),"template","spec"),"spec","template");
-    string(spec.serviceAccountName,"Cloud Run serviceAccountName");
+    const serviceAccountName = string(spec.serviceAccountName,"Cloud Run serviceAccountName");
+    const serviceAccountEmail = /^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$/;
+    if (!(template && serviceAccountName === "REPLACE_WITH_SERVICE_ACCOUNT_EMAIL") && !serviceAccountEmail.test(serviceAccountName))
+      fail("Cloud Run serviceAccountName must be a user-managed IAM service account email.");
     const containers = array(spec.containers,"spec.containers");
     app = named(containers,"app","spec.containers");ingress = named(containers,"ingress","spec.containers");
     if (containers.length !== 2 || array(ingress.ports,"ingress.ports").length !== 1 ||
