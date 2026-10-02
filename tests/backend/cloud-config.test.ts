@@ -36,6 +36,31 @@ it("accepts the three authored templates and filled release-shaped manifests",()
   }
 });
 
+it("keeps shared runtime settings and logical secret names aligned across clouds",() => {
+  const runtimeNames = ["APP_ORIGIN","DATA_PROVIDER","AUTH_PROVIDER","AI_CHAT_ENABLED","APP_REQUESTS_PER_MINUTE",
+    "APP_AGENT_READINESS","AI_RUNTIME_ORIGIN","WORKFLOW_EXPECTED_PROVIDER","WORKFLOW_POSTGRES_JOB_PREFIX"];
+  const runtimeValues = providers.map(provider => {
+    const application = app(provider,templates[provider]);
+    const values = provider === "aws" ? application.environment : application.env;
+    return Object.fromEntries(values.map(row => [row.name,row.value]));
+  });
+  for (const name of runtimeNames) {
+    expect(runtimeValues.map(values => values[name]),name).toEqual(runtimeValues.map(() => runtimeValues[0][name]));
+  }
+
+  const secretNames = providers.map(provider => {
+    const application = app(provider,templates[provider]);
+    const secrets = provider === "aws" ? application.secrets : application.env.filter(row => row.secretRef || row.valueFrom);
+    return secrets.map(row => row.name).sort();
+  });
+  expect(secretNames[1]).toEqual(secretNames[0]);
+  expect(secretNames[2]).toEqual(secretNames[0]);
+  expect(secretNames[0]).toEqual([
+    "AI_BUDGET_POLICY_JSON","AI_CREATION_SIGNING_JSON","AI_GATEWAY_API_KEY","SUPABASE_AUTH_URL",
+    "SUPABASE_PUBLISHABLE_KEY","SUPABASE_SECRET_KEY","SUPABASE_URL","WORKFLOW_POSTGRES_URL",
+  ]);
+});
+
 it("requires a user-managed Cloud Run service identity email",() => {
   const valid = filled("gcp");
   expect(valid.spec.template.spec.serviceAccountName).toBe("jumpstart-runtime@fixture-project.iam.gserviceaccount.com");
