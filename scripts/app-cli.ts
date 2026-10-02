@@ -20,6 +20,7 @@ import { uploadDownloadLink } from "../lib/uploads/download-link-contract";
 import { readPublicFailure } from "../lib/http/public-failure";
 import { limitSnapshot } from "../lib/request-limits/contract";
 import { readBoundedRegularFile } from "../lib/security/read-bounded-file.mjs";
+import { cliAccessToken, runCliAuth, type CliAuthDependencies } from "./cli-auth";
 
 const seedPage = z.object({
   items: z.array(recordInput.extend({ id: recordId }).passthrough()),
@@ -30,7 +31,8 @@ async function readUploadFile(file: string): Promise<Buffer> {
   return readBoundedRegularFile(file,{ minBytes: 1,maxBytes: MAX_API_UPLOAD_BYTES });
 }
 
-export async function run(args: string[], env: Record<string, string | undefined> = process.env, request = fetch): Promise<unknown> {
+export async function run(args: string[], env: Record<string, string | undefined> = process.env, request = fetch,
+  authDependencies: CliAuthDependencies = {}): Promise<unknown> {
   const [command, ...rest] = args;
   if (!command || command === "help") return {
     records: "npm run app -- <list [cursor] | get ID | create JSON_FILE [--key UUID] | creation UUID | update ID JSON_FILE | delete ID REVISION>",
@@ -39,22 +41,25 @@ export async function run(args: string[], env: Record<string, string | undefined
     artifacts: "npm run app -- artifacts <list [--limit N] [--cursor CURSOR] | get ARTIFACT_UUID | update ARTIFACT_UUID patch.json | versions ARTIFACT_UUID [--limit N] [--before N] | delete ARTIFACT_UUID>",
     uploads: "npm run app -- uploads <list | get UPLOAD_UUID | review UPLOAD_UUID | review-update UPLOAD_UUID decision.json | text UPLOAD_UUID | put FILE | scan UPLOAD_UUID | link UPLOAD_UUID | download UPLOAD_UUID OUTPUT_FILE | download-link LINK_JSON_FILE OUTPUT_FILE | delete UPLOAD_UUID> (scan/download/link/text require uploads:download and scan-on-read; processing approval also requires uploads:write)",
     account: "npm run app -- account <profile | preferences | preferences update JSON_FILE | request-limit> (current registered-user token required)",
+    auth: "npm run app -- auth <login | status | logout> (interactive Supabase user session; saved per API and Auth origin)",
     usage: "npm run app -- usage [reservations|corrections [--limit N] [--cursor CURSOR]] (verified user token required)",
     export: "npm run app -- export <records OUTPUT.ndjson | application OUTPUT.ndjson | source-events OPERATION_UUID OUTPUT.ndjson | verify FILE.ndjson> (private, no-clobber; verification works offline)",
     environment: "APP_API_URL (default http://localhost:3000), APP_API_TOKEN (server-issued credential)",
     note: "Record files contain title/content and, for update, revision. Conversation updates contain revision plus title and/or archived. Upload metadata/writes use uploads:read/write; download separately requires uploads:download or a registered user plus an enabled private scanner. Output is JSON. Errors exit nonzero. Writes are never automatically retried.",
   };
+  if (command === "auth") return runCliAuth(rest,env,authDependencies);
   if (command === "export" && rest.length === 2 && rest[0] === "verify") return verifyExport(rest[1]);
   const origin = new URL(env.APP_API_URL ?? "http://localhost:3000");
   if (origin.username || origin.password || origin.pathname !== "/" || origin.search || origin.hash || !["http:", "https:"].includes(origin.protocol)) throw new Error("APP_API_URL must be an HTTP(S) origin without credentials, path, query or fragment.");
   if (origin.protocol !== "https:" && !["localhost", "127.0.0.1", "[::1]"].includes(origin.hostname)) throw new Error("Use HTTPS for remote servers.");
-  if (!env.APP_API_TOKEN) throw new Error("Set APP_API_TOKEN.");
+  const token = await cliAccessToken(env,authDependencies);
+  if (!token) throw new Error("Set APP_API_TOKEN or sign in with npm run app -- auth login.");
   const send = async (path: string, method = "GET", body?: string | Buffer, extraHeaders: Record<string,string> = {}) => {
     const pathname = new URL(path,origin).pathname;
     const response = await request(new URL(path, origin), {
       method, body: typeof body === "string" ? body : body ? new Blob([Uint8Array.from(body)]) : undefined,
       redirect: "error", signal: AbortSignal.timeout(pathname.endsWith("/download") || pathname.endsWith("/scan") ? 60_000 : pathname.endsWith("/reconcile") || body && typeof body !== "string" ? 30_000 : 15_000),
-      headers: { authorization: `Bearer ${env.APP_API_TOKEN}`, "content-type": body && typeof body !== "string" ? "application/octet-stream" : "application/json",
+      headers: { authorization: `Bearer ${token}`, "content-type": body && typeof body !== "string" ? "application/octet-stream" : "application/json",
         ...extraHeaders,
         ...(env.VERCEL_AUTOMATION_BYPASS_SECRET ? { "x-vercel-protection-bypass": env.VERCEL_AUTOMATION_BYPASS_SECRET } : {}) },
     });

@@ -1,6 +1,6 @@
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { mkdtemp,readFile,rm } from "node:fs/promises";
+import { mkdtemp,readFile,readdir,rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -57,6 +57,35 @@ async function emailLink(request: APIRequestContext, email: string) {
   if (!link || new URL(link).origin !== auth) throw new Error("Local Auth did not send an expected verification link.");
   return link;
 }
+
+test("CLI login refreshes an owner session and revokes it on logout",async ({ request }) => {
+  const email = `cli-session-${randomUUID()}@example.test`,root = await mkdtemp(join(tmpdir(),"jumpstart-cli-login-"));
+  const env = {
+    APP_API_URL: process.env.APP_ORIGIN!,SUPABASE_AUTH_URL: auth,
+    SUPABASE_PUBLISHABLE_KEY: process.env.SUPABASE_PUBLISHABLE_KEY!,
+  };
+  const dependencies = { configRoot: root,promptCredentials: async () => ({ email,password }) };
+  try {
+    await confirmedUser(request,email);
+    expect(await runCli(["auth","login"],env,fetch,dependencies)).toMatchObject({ status: "authenticated",source: "saved-session" });
+    expect(await runCli(["auth","status"],env,fetch,dependencies)).toMatchObject({ status: "authenticated",source: "saved-session" });
+    const sessionDirectory = join(root,"ai-app-jumpstart","auth"),[name] = await readdir(sessionDirectory);
+    const savedBeforeRefresh = JSON.parse(await readFile(join(sessionDirectory,name),"utf8")) as { accessToken: string;refreshToken: string };
+    expect(savedBeforeRefresh.accessToken).not.toContain(email);
+
+    const profile = await runCli(["account","profile"],env,fetch,{ ...dependencies,now: () => Date.now()+3_600_000 }) as { email: string };
+    expect(profile).toMatchObject({ email });
+    const savedAfterRefresh = JSON.parse(await readFile(join(sessionDirectory,name),"utf8")) as { accessToken: string;refreshToken: string };
+    expect(savedAfterRefresh.refreshToken).not.toBe(savedBeforeRefresh.refreshToken);
+
+    expect(await runCli(["auth","logout"],env,fetch,dependencies)).toMatchObject({ status: "signed-out",savedSessionRemoved: true,remoteRevoked: true });
+    const revoked = await request.post(`${auth}/auth/v1/token?grant_type=refresh_token`,{
+      headers: publicHeaders,data: { refresh_token: savedAfterRefresh.refreshToken },
+    });
+    expect(revoked.status()).not.toBe(200);
+    expect(await readdir(sessionDirectory)).toEqual([]);
+  } finally { await rm(root,{ recursive: true,force: true }); }
+});
 
 // This suite is explicitly selected by --supabase; other modes keep their own
 // SQLite contracts. No hosted account or optional credential enables this case.
