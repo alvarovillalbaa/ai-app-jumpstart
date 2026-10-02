@@ -50,7 +50,7 @@ For a local production process, run `npm run build:local` then `npm start`. The 
 
 - Browser: `/records`.
 - REST: `/api/v1/records` and `/api/v1/records/{id}`.
-- CLI: `npm run app -- help`; configure `APP_API_TOKEN` and optionally `APP_API_URL` in `.env.local`.
+- CLI: `npm run app -- help`; configure `APP_API_URL` and sign in with `npm run app -- auth login` using Supabase, or set `APP_API_TOKEN` for automation.
 - MCP: `/api/mcp`, Streamable HTTP with the same bearer token; CRUD tools and `records:///UUID` resources.
 
 All share validation, owner isolation, scopes, pagination and revision checks. Verified user tokens also unlock retained conversation metadata, saved activity, run summaries and existing artifacts through REST, CLI and MCP, even with account chat disabled. Creating or continuing chat and reading/reconciling the live Eve source still require enabled account chat. See [data access](docs/data-access.md).
