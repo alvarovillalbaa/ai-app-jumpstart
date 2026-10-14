@@ -143,7 +143,7 @@
     "@base-ui/react": "^1.8.0",
     "@hookform/resolvers": "5.9.1",
     "@jumpstart/workflow-postgres": "file:packages/workflow-postgres",
-    "@modelcontextprotocol/sdk": "1.30.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@radix-ui/react-use-controllable-state": "^1.2.6",
     "@rive-app/react-webgl2": "^4.34.2",
     "@shadcn/react": "^0.3.1",
